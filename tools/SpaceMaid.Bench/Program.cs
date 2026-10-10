@@ -1,10 +1,36 @@
 using System.Diagnostics;
 using System.Text.Json;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.Analysis;
+
+if (args.Length == 1 && args[0] == "--classify")
+{
+    long heapBefore = GC.GetTotalMemory(true), preparationBefore = GC.GetAllocatedBytesForCurrentThread();
+    var preparation = Stopwatch.StartNew(); FileTypeClassifier.Prepare(); preparation.Stop();
+    long preparationAllocated = GC.GetAllocatedBytesForCurrentThread() - preparationBefore;
+    long retained = GC.GetTotalMemory(true) - heapBefore;
+    string[] names = ["photo.JPG", "source.C", "types.d.ts", "archive.tar.gz", "drawing.svg.gz", "accounts-wal",
+        "sample.safetensors", "sample.gguf", "sample.kicad_pcb", "sample.geojson", "sample.woff2", "sample.dat",
+        "Dockerfile", ".env.local", "unknown.unlisted_extension_987", "README"];
+    int checksum = 0;
+    for (int i = 0; i < 5000; i++) checksum += (int)FileTypeClassifier.Classify(names[i % names.Length]);
+    var lookups = new Stopwatch();
+    long before = GC.GetAllocatedBytesForCurrentThread();
+    lookups.Start();
+    for (int i = 0; i < 100000; i++) checksum += (int)FileTypeClassifier.Classify(names[i % names.Length]);
+    lookups.Stop();
+    long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+    Console.WriteLine(JsonSerializer.Serialize(new { FileTypeClassifier.ExtensionCount, FileTypeClassifier.FormatCount,
+        PreparationMs = preparation.Elapsed.TotalMilliseconds, PreparationAllocatedBytes = preparationAllocated,
+        RetainedManagedBytes = retained, LookupCount = 100000, WarmLookupMs = lookups.Elapsed.TotalMilliseconds,
+        WarmLookupAllocatedBytes = allocated, Checksum = checksum,
+        Note = "Filename-only microbenchmark; excludes UI rendering and filesystem scanning." }, new JsonSerializerOptions { WriteIndented = true }));
+    return 0;
+}
 
 if (args.Length == 0)
 {
-    Console.WriteLine("Usage: SpaceMaid.Bench <drive-or-folder> [--standard] [--log-directory <path>]");
+    Console.WriteLine("Usage: SpaceMaid.Bench <drive-or-folder> [--standard] [--log-directory <path>] | --classify");
     return 1;
 }
 using var cancellation = new CancellationTokenSource();

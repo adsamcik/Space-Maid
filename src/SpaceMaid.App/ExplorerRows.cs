@@ -12,7 +12,7 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
     public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
     private bool Unmeasured => Scan.IsUnmeasuredDirectory(Entry.FileIndex);
-    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{TypeDescription}" : Unmeasured ? $"{Path}\n{SizeNote}" : Path;
+    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{FileTypeClassifier.DescribeDetails(Name)}" : Unmeasured ? $"{Path}\n{SizeNote}" : Path;
     public Thickness Indent => new(Depth * 14, 0, 0, 0);
     public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName && !Unmeasured;
     public string Expander => CanExpand ? Expanded ? "⌄" : "›" : "";

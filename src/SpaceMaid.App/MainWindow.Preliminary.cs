@@ -60,7 +60,7 @@ public partial class MainWindow
 internal sealed record PreliminaryRow(PreliminaryFile File, bool HasAllocationData)
 {
     public string PathText => File.Path ?? "Path pending…";
-    public string EntryTooltip => $"{PathText}\n{SpaceMaid.Core.Analysis.FileTypeClassifier.Describe(File.Name)}";
+    public string EntryTooltip => $"{PathText}\n{SpaceMaid.Core.Analysis.FileTypeClassifier.DescribeDetails(File.Name)}";
     public string Allocated => HasAllocationData ? SizeText.Format(File.AllocatedBytes) : "—";
     public string Logical => SizeText.Format(File.LogicalBytes);
 }

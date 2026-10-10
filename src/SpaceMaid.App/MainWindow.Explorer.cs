@@ -45,6 +45,7 @@ public partial class MainWindow
 
     internal async Task InitializeExplorerAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> opportunities, CancellationToken token)
     {
+        await _classificationReady.WaitAsync(token);
         ClearExplorer();
         _snapshot = scan;
         _scanStale = false;
@@ -319,7 +320,7 @@ public partial class MainWindow
         text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes) + (isHeader ? $" · {share}" : ""), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = isHeader ? 11 : 12 });
         if (!isHeader) text.Children.Add(new TextBlock { Text = share, Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
         string type = contribution.Link >= 0 && !scan.Entry(contribution.Link).IsDirectory
-            ? FileTypeClassifier.Describe(contribution.Name) : "";
+            ? FileTypeClassifier.DescribeDetails(contribution.Name) : "";
         var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" + (type.Length > 0 ? $"\n{type}" : "") };
         if (isHeader)
         {

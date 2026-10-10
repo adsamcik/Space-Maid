@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private string? _scanLogPath;
     private HelperLayoutSource? _scanHelper;
     private bool _fastEnabled;
+    private readonly Task _classificationReady = Task.Run(FileTypeClassifier.Prepare);
     internal string LogDirectory { get; set; } = ScanLog.DefaultDirectory;
 
     public MainWindow()

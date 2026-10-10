@@ -174,15 +174,17 @@ public sealed class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("EntryTypeText")).Visibility);
                 var tile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
                 Assert.Equal(8192, Assert.IsType<SpaceContribution>(tile.DataContext).Bytes);
-                Assert.Contains("Inferred type: Binary / executable / library (.dll)", Assert.IsType<string>(tile.ToolTip));
+                Assert.Contains("Inferred type: Ambiguous (.dll)", Assert.IsType<string>(tile.ToolTip));
+                Assert.Contains("Candidates:", Assert.IsType<string>(tile.ToolTip));
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((StackPanel)window.FindName("EntryDetail")).DataContext is ExplorerRow { Entry.IsDirectory: false }, TimeSpan.FromSeconds(10));
                 Assert.Equal(Path.Join(bin, "sample.dll"), Assert.IsType<ExplorerRow>(((StackPanel)window.FindName("EntryDetail")).DataContext).Path);
                 var typeText = (TextBlock)window.FindName("EntryTypeText");
-                Assert.Equal("Inferred type: Binary / executable / library (.dll)", typeText.Text);
+                Assert.Contains("Inferred type: Ambiguous (.dll)", typeText.Text);
                 Assert.Equal(Visibility.Visible, typeText.Visibility);
                 var fileContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(tree.SelectedIndex));
                 Assert.Contains(Descendants(fileContainer).OfType<Grid>(), cell => cell.ToolTip is string tooltip && tooltip.Contains(typeText.Text));
+                Render(window, Path.Join(FindRepository(), "artifacts", "ui", "registry-ambiguous-selection.png"), 1220, 910);
 
                 stage = "constructing cleanup review";
                 var scan = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false).GetAwaiter().GetResult();
