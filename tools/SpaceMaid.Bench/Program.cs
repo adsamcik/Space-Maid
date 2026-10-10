@@ -15,7 +15,8 @@ try
     var scan = await new VolumeScanner().ScanAsync(args[0], cancellationToken: cancellation.Token,
         preferFast: !args.Contains("--standard"));
     Console.WriteLine(JsonSerializer.Serialize(new {
-        scan.RootPath, scan.Backend, scan.FileCount, scan.NameCount,
+        scan.RootPath, scan.Backend, scan.FallbackReason, scan.FileCount, scan.RegularFileCount,
+        scan.DirectoryCount, scan.NameCount, scan.WarningCount,
         scan.LogicalBytes, scan.AllocatedBytes, scan.HasAllocationData,
         scan.IncludesAllDataStreams, scan.HasCompleteVolumeLinks,
         ElapsedMs = timer.Elapsed.TotalMilliseconds,

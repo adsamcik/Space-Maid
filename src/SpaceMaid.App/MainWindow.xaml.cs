@@ -61,6 +61,8 @@ public partial class MainWindow : Window
 
     private void ClearResults()
     {
+        ClearExplorer();
+        _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
         _snapshot = null;
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
         _rows.Clear();
@@ -70,6 +72,7 @@ public partial class MainWindow : Window
         EmptyCaption.Text = "Scan a drive to review build output, caches,\nenvironments, and files left by coding agents.";
         ScannedSizeText.Text = CandidateText.Text = "—";
         OpportunityHeading.Text = "Opportunities";
+        OpportunitiesTab.Content = "Opportunities";
         CandidateCaption.Text = "An estimate, subject to review";
         DetailsButton.Visibility = Visibility.Collapsed;
         UpdateSelection();
@@ -93,12 +96,16 @@ public partial class MainWindow : Window
             StatusText.Text = "Finding development clutter…";
             var result = await Task.Run(() =>
             {
+                var timer = Stopwatch.StartNew();
                 var opportunities = OpportunityDetector.Find(scan, work.Token);
-                return (Opportunities: opportunities, Total: CleanupPlanner.Create(scan, opportunities, work.Token));
+                var total = CleanupPlanner.Create(scan, opportunities, work.Token);
+                return (Opportunities: opportunities, Total: total, Elapsed: timer.Elapsed);
             }, work.Token);
             if (_closing) return;
             work.Token.ThrowIfCancellationRequested();
             _snapshot = scan;
+            _detectionElapsed = result.Elapsed;
+            var presentation = Stopwatch.StartNew();
             foreach (var opportunity in result.Opportunities)
             {
                 var row = new OpportunityRow(opportunity, scan.HasAllocationData);
@@ -113,8 +120,12 @@ public partial class MainWindow : Window
             EmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             EmptyCaption.Text = "No matching development clutter was found in the accessible files.";
             if (_rows.Count > 0) OpportunityGrid.SelectedIndex = 0;
-            StatusText.Text = $"{scan.Backend} · {scan.FileCount:N0} file objects · {(scan.Metrics.Acquisition + scan.Metrics.Aggregation).TotalSeconds:0.00}s"
-                + (scan.Warnings.Count > 0 ? " · Coverage warnings — see scan details" : "");
+            OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
+            await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
+            _presentationElapsed = presentation.Elapsed;
+            _scanStatus = $"{scan.Backend} · {scan.RegularFileCount:N0} files · {scan.DirectoryCount:N0} folders · {(scan.Metrics.Acquisition + scan.Metrics.Aggregation + _detectionElapsed + _presentationElapsed).TotalSeconds:0.00}s"
+                + (scan.WarningCount > 0 ? $" · {scan.WarningCount:N0} coverage warnings" : "");
+            StatusText.Text = _scanStatus;
             DetailsButton.Visibility = Visibility.Visible;
             try
             {
@@ -125,11 +136,11 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            if (!_closing) { StatusText.Text = "Scan cancelled."; EmptyCaption.Text = "Start another scan when you're ready."; }
+            if (!_closing) { ClearResults(); StatusText.Text = "Scan cancelled."; EmptyCaption.Text = "Start another scan when you're ready."; TreeHint.Text = "Scan cancelled. Start another scan when you're ready."; }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
-            if (!_closing) { StatusText.Text = $"Scan could not finish: {ex.Message}"; EmptyCaption.Text = "Check that the drive is connected and accessible, then try again."; }
+            if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; EmptyCaption.Text = "Check that the drive is connected and accessible, then try again."; }
         }
         finally
         {
@@ -146,6 +157,7 @@ public partial class MainWindow : Window
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         OpportunityGrid.IsEnabled = !busy;
+        ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
     }
 
@@ -199,15 +211,7 @@ public partial class MainWindow : Window
     private void Details_Click(object sender, RoutedEventArgs e)
     {
         if (_snapshot is not { } scan) return;
-        var notes = new List<string> { $"Target: {scan.RootPath}", scan.Backend,
-            $"Metadata: {scan.Metrics.Acquisition.TotalSeconds:0.000}s; totals: {scan.Metrics.Aggregation.TotalSeconds:0.000}s.",
-            $"Managed allocation during scan: {SizeText.Format(scan.Metrics.ManagedAllocatedBytes)}.",
-            "File totals can differ from drive usage because filesystem metadata and reserved storage are not fully attributed.",
-            "A live scan is an observation, not a point-in-time snapshot." };
-        if (!scan.IncludesAllDataStreams) notes.Add("Alternate data streams are not fully included in standard scanning.");
-        if (!scan.HasCompleteVolumeLinks) notes.Add("Hard links outside accessible/scanned locations remain unverified.");
-        notes.AddRange(scan.Warnings);
-        MessageBox.Show(this, string.Join("\n\n", notes), "Scan details", MessageBoxButton.OK, MessageBoxImage.Information);
+        new ScanDetailsWindow(scan, _detectionElapsed, _presentationElapsed) { Owner = this }.ShowDialog();
     }
 
     private void Elevate_Click(object sender, RoutedEventArgs e) => RequestElevation();
@@ -217,5 +221,5 @@ public partial class MainWindow : Window
         else StatusText.Text = error is null ? "Continuing without administrator access. Standard scanning is available."
             : $"Could not enable fast scanning: {error}. Standard scanning is available.";
     }
-    private void Window_Closing(object? sender, CancelEventArgs e) { _closing = true; _work?.Cancel(); }
+    private void Window_Closing(object? sender, CancelEventArgs e) { _closing = true; _work?.Cancel(); _browseWork?.Cancel(); }
 }

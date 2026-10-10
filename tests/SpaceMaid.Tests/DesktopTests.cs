@@ -38,6 +38,17 @@ public sealed class DesktopTests
                 app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/SpaceMaid.App;component/Styles.xaml", UriKind.Relative) });
                 stage = "constructing main window";
                 var window = new MainWindow();
+                // Exercise real native layout offscreen. Detached content can be
+                // remeasured with an unbounded viewport by ScrollIntoView.
+                window.ShowActivated = false;
+                window.ShowInTaskbar = false;
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -10000; window.Top = -10000;
+                Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+                {
+                    foreach (var choice in app.Windows.OfType<StartupWindow>().ToArray()) choice.Close();
+                }));
+                window.Show();
                 var picker = (ComboBox)window.FindName("DrivePicker");
                 var fixtureDrive = new DriveInfo(fixture.Path);
                 picker.ItemsSource = new[] { new DriveChoice(fixture.Path, "Controlled scan fixture", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };
@@ -55,6 +66,21 @@ public sealed class DesktopTests
                 Assert.Equal("1 location selected", ((TextBlock)window.FindName("SelectionText")).Text);
                 Assert.Equal(row.Item, ((StackPanel)window.FindName("DetailPanel")).DataContext);
 
+                stage = "navigating the real folder tree and treemap";
+                var tree = (ListBox)window.FindName("SpaceTree");
+                var explorer = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                Assert.True(tree.Items.Count >= 2);
+                var navigation = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
+                PumpUntil(() => navigation.IsCompleted, TimeSpan.FromSeconds(10));
+                navigation.GetAwaiter().GetResult();
+                Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                var map = (TreemapPanel)window.FindName("SpaceMap");
+                var tile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
+                Assert.Equal(8192, Assert.IsType<SpaceContribution>(tile.DataContext).Bytes);
+                tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((StackPanel)window.FindName("EntryDetail")).DataContext is ExplorerRow { Entry.IsDirectory: false }, TimeSpan.FromSeconds(10));
+                Assert.Equal(Path.Join(bin, "sample.dll"), Assert.IsType<ExplorerRow>(((StackPanel)window.FindName("EntryDetail")).DataContext).Path);
+
                 stage = "constructing cleanup review";
                 var scan = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false).GetAwaiter().GetResult();
                 var plan = CleanupPlanner.Create(scan, OpportunityDetector.Find(scan));
@@ -64,6 +90,9 @@ public sealed class DesktopTests
                 Assert.False(clean.IsEnabled);
                 Assert.Equal(bin, Assert.IsType<Opportunity>(Assert.Single(((ListBox)review.FindName("LocationList")).Items.Cast<object>())).Path);
                 var startup = new StartupWindow();
+                var details = new ScanDetailsWindow(scan, TimeSpan.FromMilliseconds(4), TimeSpan.FromMilliseconds(8));
+                Assert.Contains("files", ((TextBlock)details.FindName("CountsText")).Text);
+                Assert.Equal("No skipped-path warnings", ((TextBlock)details.FindName("CoverageText")).Text);
                 Assert.Contains(Descendants(startup.Content as DependencyObject).OfType<Button>(), b => Equals(b.Content, "Continue without admin"));
 
                 string artifactRoot = FindRepository();
@@ -74,14 +103,51 @@ public sealed class DesktopTests
                     app.ThemeMode = mode;
                     PumpUntil(() => true, TimeSpan.FromSeconds(1));
                     string theme = mode == ThemeMode.Light ? "light" : "dark";
-                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"main-{theme}.png"), 1220, 790);
+                    ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"explorer-{theme}.png"), 1220, 910);
+                    ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"main-{theme}.png"), 1220, 910);
                     Render(review, Path.Join(artifactRoot, "artifacts", "ui", $"review-{theme}.png"), 860, 700);
+                    Render(details, Path.Join(artifactRoot, "artifacts", "ui", $"details-{theme}.png"), 700, 680);
                 }
 #pragma warning restore WPF0001
                 Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 305);
+                ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", "explorer-compact.png"), 1020, 790);
+                Assert.InRange(window.ActualWidth, 1019, 1021);
+                Assert.True(((FrameworkElement)window.Content).RenderSize.Width <= 1020, "Compact rendering used the previous window width.");
+                var detailPanel = (StackPanel)window.FindName("EntryDetail");
+                Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The treemap overlaps its selected-entry details.");
+
+                stage = "checking wide-folder UI virtualization";
+                var wideBuilder = new ScanBuilder();
+                wideBuilder.RootIndex = wideBuilder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+                for (int i = 0; i < 50_000; i++)
+                {
+                    int file = wideBuilder.AddFile(new(new((ulong)i + 2), FileAttributes.Normal, 4096, 4096, 0));
+                    wideBuilder.AddLink(file, new(1), $"file-{i}.bin");
+                }
+                var wideScan = wideBuilder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+                stage = "binding the wide-folder indexed source";
+                var wideLoad = window.InitializeExplorerAsync(wideScan, [], CancellationToken.None);
+                PumpUntil(() => wideLoad.IsCompleted, TimeSpan.FromSeconds(10));
+                wideLoad.GetAwaiter().GetResult();
+                var wideContent = (FrameworkElement)window.Content;
+                stage = "measuring the wide-folder window";
+                window.UpdateLayout();
+                Assert.Equal(50_001, tree.Items.Count);
+                int realized = Descendants(tree).OfType<ListBoxItem>().Count();
+                Assert.True(realized is > 0 and <= 100, $"The wide folder realized {realized:N0} containers.");
+                stage = "scrolling to the final wide-folder entry";
+                var wideRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                tree.SelectedIndex = wideRows.Count - 1;
+                tree.ScrollIntoView(tree.SelectedItem);
+                wideContent.UpdateLayout();
+                PumpUntil(() => tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1) is not null, TimeSpan.FromSeconds(10));
+                Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100, "Scrolling realized the whole wide folder.");
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
                 stage = "closing windows";
-                startup.Close(); review.Close(); window.Close();
+                startup.Close(); review.Close(); details.Close(); window.Close();
             }
             catch (Exception ex) { failure = ex; }
             finally { stage = "shutting down WPF"; app?.Shutdown(); }
@@ -127,9 +193,18 @@ public sealed class DesktopTests
     private static void Render(Window window, string path, int width, int height)
     {
         var content = (FrameworkElement)window.Content;
-        content.Measure(new Size(width, height));
-        content.Arrange(new Rect(0, 0, width, height));
-        content.UpdateLayout();
+        if (window.IsVisible)
+        {
+            window.Width = width;
+            window.Height = Math.Max(window.MinHeight, height + 30);
+            window.UpdateLayout();
+        }
+        else
+        {
+            content.Measure(new Size(width, height));
+            content.Arrange(new Rect(0, 0, width, height));
+            content.UpdateLayout();
+        }
         PumpUntil(() => true, TimeSpan.FromSeconds(1));
         var visual = new DrawingVisual();
         using (var drawing = visual.RenderOpen())
