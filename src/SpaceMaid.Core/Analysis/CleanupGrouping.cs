@@ -19,7 +19,11 @@ public static class CleanupGrouping
         var definitions = new[]
         {
             ("build", "Build files", "Usually rebuildable", "Compiled output and temporary build files. Stop builds first; keep anything you added yourself."),
-            ("cache", "Package caches", "Downloads may be needed again", "Cached NuGet, Gradle, npm and pip downloads. Tools will download missing packages again."),
+            ("cache", "Package caches", "Downloads may be needed again", "Cached package downloads, including NuGet, Gradle, npm, pip, uv and Cargo archives. Keep packages needed for offline work."),
+            ("tools", "Tool caches", "Recreated when tools run", "Project build, test and analysis caches. Stop the tools first; review custom files and expect slower first runs."),
+            ("tests", "Test results & reports", "Keep evidence you need", "Test reports, traces and run results. Preserve failure evidence and useful recordings before cleanup."),
+            ("downloads", "Downloaded tooling", "Needed again for builds or tests", "Gradle distributions and Playwright browsers. Stop using them first; keep tooling needed offline. Reinstalling may require downloads."),
+            ("editor", "Editor workspace data", "Local settings may be lost", "Visual Studio workspace data and caches. Close Visual Studio first; preserve personal settings, breakpoints and other local state."),
             ("dependencies", "Installed dependencies", "Reinstall before working", "Project node_modules folders. Keep local changes and make sure you can reinstall packages."),
             ("old-worktrees", worktreeGroup.Item1, worktreeGroup.Item2, worktreeGroup.Item3),
             ("environments", "Python environments", "Review first", "Virtual environments can be recreated if their interpreter and dependencies are recorded."),
@@ -58,6 +62,10 @@ public static class CleanupGrouping
         {
             "Build output" => "build",
             "Package caches" => "cache",
+            "Tool caches" => "tools",
+            "Test artifacts" => "tests",
+            "Downloaded tooling" => "downloads",
+            "Editor workspace data" => "editor",
             "Dependencies" => "dependencies",
             "Python environments" => "environments",
             "Agent files" => "agent",

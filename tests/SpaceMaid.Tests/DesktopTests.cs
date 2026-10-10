@@ -645,6 +645,8 @@ public sealed class DesktopTests
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 stage = "browsing thousands of grouped opportunities and retaining hidden selections";
                 CheckOpportunityBrowser(window, app, artifactRoot);
+                stage = "browsing additional cleanup categories by tool and project";
+                CheckAdditionalCleanupCategories(window, app, artifactRoot);
                 stage = "validating stale selections before cleanup review";
                 CheckOpportunityValidation(window, app, artifactRoot);
                 stage = "confirming batch cleanup and refreshing its affected folders";
@@ -822,12 +824,13 @@ public sealed class DesktopTests
             Assert.Equal(1000, build.Children.Sum(child => child.Matches.Count));
             window.UpdateLayout();
             var container = cards.ItemContainerGenerator.ContainerFromItem(build);
+            Assert.Single(Descendants(container).OfType<Expander>()).IsExpanded = true; window.UpdateLayout();
             var checkbox = Descendants(container).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, csharp));
             checkbox.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.True(csharp.Checked); Assert.Null(build.Checked);
             Assert.Equal("1 group selected · 400 folders", selection.Text);
             Descendants(container).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, csharp)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("BuildScopeText")).Text);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
             Assert.Equal(200, navigation.Items.Count); Assert.Equal(2, list.Items.Count);
             Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
             ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -840,12 +843,12 @@ public sealed class DesktopTests
             var chosen = csharp.Matches.Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
             publish.Invoke(window, [scan, locations, groups, chosen, ((OpportunityRow)list.SelectedItem).Path, true]);
             Assert.Equal(2, list.Items.Count); Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("BuildScopeText")).Text);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
             var withoutProject = locations.Where(item => !item.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || !chosen.Contains(item.Path)).ToArray();
             publish.Invoke(window, [scan, withoutProject, OpportunityGrouping.Build(scan, withoutProject), chosen, null, true]);
             Assert.Empty(list.Items); Assert.Equal(199, navigation.Items.Count);
             Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-            Assert.Contains("No matching build folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);
+            Assert.Contains("No matching folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);
             Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
             publish.Invoke(window, [scan, locations, groups, chosen, null, true]);
             Assert.Equal(2, list.Items.Count); // Restoring the project keeps the same scope.
@@ -869,12 +872,12 @@ public sealed class DesktopTests
             var remaining = locations.Where(item => !chosen.Contains(item.Path)).ToArray();
             publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), chosen, null, true]);
             Assert.Empty(navigation.Items); Assert.Empty(list.Items);
-            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("BuildScopeText")).Text);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
             ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Empty(list.Items); // A disappeared classification does not expose unrelated findings.
             publish.Invoke(window, [scan, locations, groups, chosen, null, true]);
             ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BuildScopeText")).Visibility);
+            Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("CleanupScopeText")).Visibility);
             build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
             Assert.Null(build.Checked); Assert.True(build.Children.Single(row => row.Name == "C# / .NET").Checked);
             ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -968,6 +971,106 @@ public sealed class DesktopTests
 
         (int Index, ulong Identity) Folder(ulong parent, string name)
         { ulong identity = id++; int index = builder.AddFile(new(new(identity), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(index, new(parent), name); return (index, identity); }
+    }
+
+    private static void CheckAdditionalCleanupCategories(MainWindow window, Application app, string artifactRoot)
+    {
+        var builder = new ScanBuilder(); ulong next = 2;
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        var items = new List<(int Index, string Title, string Category)>();
+        for (int project = 0; project < 2; project++)
+        {
+            ulong repo = next++; Folder(repo, 1, project == 0 ? "photo-tools" : "web-client"); Folder(next++, repo, ".git");
+            Add(repo, ".pytest_cache", "pytest cache", "Tool caches", 1.4);
+            Add(repo, ".ruff_cache", "Ruff cache", "Tool caches", 0.8);
+            Add(repo, "test-results", "Playwright test results", "Test artifacts", 0.9);
+            Add(repo, "playwright-report", "Playwright HTML report", "Test artifacts", 0.4);
+            if (project != 0) continue;
+            foreach (string title in new[] { "Cargo", "Maven", "Gradle", "CMake", "SvelteKit", "Nuxt" })
+                Add(repo, title + "-output", title + " build output", "Build output", 0.6);
+            Add(repo, "TestResults", ".NET test results", "Test artifacts", 0.2);
+            Add(repo, ".vs", "Visual Studio workspace data", "Editor workspace data", 0.5);
+            Add(repo, "dists", "Gradle wrapper downloads", "Downloaded tooling", 0.8);
+            Add(repo, "uv-cache", "uv cache", "Package caches", 0.3);
+        }
+        var scan = builder.Build(@"G:\Github", "Illustrative cleanup categories", TimeSpan.Zero, 0, default);
+        var locations = items.Select(item => OpportunityGroupingTests.Finding(scan, item.Index, item.Category) with { Title = item.Title }).ToArray();
+        var groups = OpportunityGrouping.Build(scan, locations);
+        var load = window.InitializeExplorerAsync(scan, locations, default);
+        PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+        var publish = typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
+        publish.Invoke(window, [scan, locations, groups, null, null, false]);
+        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
+        var list = (ListBox)window.FindName("OpportunityGrid");
+        var navigation = (ListBox)window.FindName("OpportunityGroupList");
+        var scope = (TextBlock)window.FindName("CleanupScopeText");
+        Assert.Equal(6, cards.Items.Count); Assert.Empty(list.Items);
+        Assert.Contains(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "Downloaded tooling");
+        Assert.Contains(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "Editor workspace data");
+        window.UpdateLayout();
+        foreach (string name in new[] { "Tool caches", "Test results & reports" })
+        {
+            var root = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == name);
+            Assert.Equal(2, root.Children.Count); Assert.Equal("By tool and project", root.BreakdownHeading);
+            var container = cards.ItemContainerGenerator.ContainerFromItem(root);
+            Assert.False(Assert.Single(Descendants(container).OfType<Expander>()).IsExpanded);
+        }
+        ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · Additional cleanup categories";
+        ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
+        ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "Illustrative inventory · Shared files counted once";
+        ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(CleanupPlanner.Create(scan, locations).EstimatedBytes);
+        ((TextBlock)window.FindName("CandidateCaption")).Text = "6 cleanup groups · Review required";
+        // Every breakdown starts collapsed so the top-level checklist remains short.
+        var build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
+        Assert.Equal(5, build.Children.Count);
+        Assert.False(Assert.Single(Descendants(cards.ItemContainerGenerator.ContainerFromItem(build)).OfType<Expander>()).IsExpanded);
+#pragma warning disable WPF0001
+        foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+        {
+            app.ThemeMode = mode;
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-categories-{(mode == ThemeMode.Light ? "light" : "dark")}.png"), 1220, 910);
+        }
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-categories-compact-dark.png"), 1020, 790);
+#pragma warning restore WPF0001
+        foreach (var (name, tool) in new[] { ("Tool caches", "pytest"), ("Test results & reports", "Playwright") })
+        {
+            window.UpdateLayout();
+            var root = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == name);
+            var child = root.Children.Single(row => row.Name == tool);
+            var container = cards.ItemContainerGenerator.ContainerFromItem(root);
+            Assert.Single(Descendants(container).OfType<Expander>()).IsExpanded = true; window.UpdateLayout();
+            Descendants(container).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, child)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.True(child.Checked); Assert.Null(root.Checked);
+            Descendants(container).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, child)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(name + " › " + tool, scope.Text); Assert.Equal(2, navigation.Items.Count);
+            int perProject = tool == "Playwright" ? 2 : 1;
+            Assert.Equal(perProject, list.Items.Count); Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
+            var selected = child.Matches.Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
+            string projectPath = ((OpportunityGroupRow)navigation.SelectedItem).Path;
+            var remaining = locations.Where(item => !selected.Contains(item.Path) || !item.Path.StartsWith(projectPath + "\\", StringComparison.Ordinal)).ToArray();
+            publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), selected, null, true]);
+            Assert.Empty(list.Items); Assert.Single(navigation.Items.Cast<object>());
+            Assert.Contains("No matching folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);
+            publish.Invoke(window, [scan, locations, groups, selected, null, true]);
+            Assert.Equal(perProject, list.Items.Count);
+            ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(perProject * 2, list.Items.Count);
+            if (tool == "Playwright") Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-test-projects-dark.png"), 1220, 910);
+            ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        }
+        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 1;
+
+        int Folder(ulong id, ulong parent, string name)
+        { int file = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(file, new(parent), name); return file; }
+        void Add(ulong parent, string name, string title, string category, double gib)
+        {
+            ulong id = next++; int folder = Folder(id, parent, name);
+            int data = builder.AddFile(new(new(next++), FileAttributes.Normal, GiB(gib), GiB(gib), 0)); builder.AddLink(data, new(id), "data");
+            items.Add((folder, title, category));
+        }
     }
 
     private static void CheckOpportunityValidation(MainWindow window, Application app, string artifactRoot)

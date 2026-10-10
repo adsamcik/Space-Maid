@@ -57,6 +57,7 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public string Kind => Group.Kind;
     public IReadOnlyList<OpportunityGroupRow> Children { get; } = showChildren ? CreateChildren(group, matches) : [];
     public bool HasChildren => Children.Count > 0;
+    public string BreakdownHeading => Group.Key == "cleanup:build" ? "By language and project" : "By tool and project";
     public string ProjectCount => $"{Group.Children?.Count ?? 0:N0} {(Group.Children?.Count == 1 ? "project" : "projects")}";
     public bool CanSelectGroup => Group.Key != "cleanup:worktrees";
     public string SelectionHint => CanSelectGroup ? "Select this group for fresh validation and cleanup review."

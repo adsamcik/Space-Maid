@@ -58,6 +58,7 @@ public partial class MainWindow
             {
                 "Agent files" => SpaceKind.Agent,
                 "Git worktrees" => SpaceKind.Project,
+                "Test artifacts" or "Editor workspace data" => SpaceKind.Other,
                 _ => SpaceKind.Cache
             };
             kinds[opportunity.DirectoryIndex] = kind;

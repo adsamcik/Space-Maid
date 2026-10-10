@@ -5,7 +5,8 @@ namespace SpaceMaid.Core.Analysis;
 public sealed record OpportunityGroup(string Key, string Name, string Path, string Kind,
     IReadOnlyList<Opportunity> Locations, long ObservedBytes, string Summary = "", IReadOnlyList<OpportunityGroup>? Children = null);
 public sealed record OpportunityGroupSet(IReadOnlyList<OpportunityGroup> Projects, IReadOnlyList<OpportunityGroup> Types,
-    IReadOnlyList<OpportunityGroup>? BuildLanguages = null);
+    IReadOnlyList<OpportunityGroup>? BuildLanguages = null,
+    IReadOnlyDictionary<string, IReadOnlyList<OpportunityGroup>>? CleanupBreakdowns = null);
 
 // Uses the existing inventory only. Git markers establish folder context,
 // not repository identity, clean status, branch integration or abandonment.
@@ -77,11 +78,56 @@ public static class OpportunityGrouping
                 UnionBytes(findings), "Classified from detected build folders and project-marker filenames. This does not classify the whole project.",
                 Array.AsReadOnly(children)));
         }
+        var breakdowns = new Dictionary<string, IReadOnlyList<OpportunityGroup>>(StringComparer.Ordinal);
+        foreach (var (category, key) in new[] { ("Tool caches", "cleanup:tools"), ("Test artifacts", "cleanup:tests") })
+        {
+            var toolGroups = new List<OpportunityGroup>();
+            var candidates = projects.SelectMany(project => project.Locations.Where(item => item.Category == category)
+                .Select(item => (Project: project, Item: item))).GroupBy(item => ToolName(item.Item), StringComparer.Ordinal);
+            foreach (var tool in candidates)
+            {
+                token.ThrowIfCancellationRequested();
+                string toolKey = key + "/" + tool.Key;
+                var children = tool.GroupBy(item => item.Project.Key, StringComparer.Ordinal).Select(group =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var project = group.First().Project;
+                    var findings = group.Select(item => item.Item).ToArray();
+                    return new OpportunityGroup(toolKey + "/" + project.Key, project.Name, project.Path, project.Kind,
+                        Array.AsReadOnly(findings), UnionBytes(findings));
+                }).OrderByDescending(group => group.ObservedBytes).ThenBy(group => group.Path, StringComparer.Ordinal).ToArray();
+                var locationsForTool = children.SelectMany(child => child.Locations).ToArray();
+                toolGroups.Add(new(toolKey, tool.Key, scan.RootPath, "Tool / project", Array.AsReadOnly(locationsForTool),
+                    UnionBytes(locationsForTool), "Detected tool folders, grouped by project or containing folder. Review exact paths and cautions.", Array.AsReadOnly(children)));
+            }
+            if (toolGroups.Count > 0) breakdowns.Add(key, toolGroups.OrderByDescending(group => group.ObservedBytes)
+                .ThenBy(group => group.Name, StringComparer.Ordinal).ToList().AsReadOnly());
+        }
         return new(projects, types, languages.OrderByDescending(group => group.ObservedBytes)
-            .ThenBy(group => group.Name, StringComparer.Ordinal).ToList().AsReadOnly());
+            .ThenBy(group => group.Name, StringComparer.Ordinal).ToList().AsReadOnly(),
+            new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<OpportunityGroup>>(breakdowns));
+
+        static string ToolName(Opportunity item) => item.Title switch
+        {
+            "Gradle project cache" => "Gradle",
+            "pytest cache" => "pytest", "mypy cache" => "mypy", "Ruff cache" => "Ruff",
+            "Turborepo cache" => "Turborepo", "Parcel cache" => "Parcel", "Angular workspace cache" => "Angular",
+            "Vite dependency cache" => "Vite", ".NET test results" => ".NET",
+            "Playwright test results" or "Playwright HTML report" => "Playwright",
+            _ => "Other tools"
+        };
 
         (string Key, string Name) BuildLanguage(Opportunity location)
         {
+            // Specific build evidence wins over incidental language markers in a mixed project.
+            switch (location.Title)
+            {
+                case "Cargo build output": return ("rust", "Rust / Cargo");
+                case "Maven build output": return ("maven", "Java / Maven");
+                case "Gradle build output": return ("gradle", "Java / Kotlin / Gradle");
+                case "CMake build output": return ("cmake", "C / C++ / CMake");
+                case "SvelteKit build output": case "Nuxt build output": return ("javascript", "JavaScript / TypeScript");
+            }
             int directory = location.DirectoryIndex, parent = Parent(directory);
             int link = scan.PrimaryLink(directory);
             ReadOnlySpan<char> name = directory == scan.RootIndex ? Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.RootPath))
@@ -150,6 +196,9 @@ public static class OpportunityGrouping
                 if (!isDirectory && (name.Equals("package.json", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase) || name.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("build.gradle", StringComparison.OrdinalIgnoreCase) || name.Equals("build.gradle.kts", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("settings.gradle", StringComparison.OrdinalIgnoreCase) || name.Equals("settings.gradle.kts", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("pom.xml", StringComparison.OrdinalIgnoreCase) || name.Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("pytest.ini", StringComparison.OrdinalIgnoreCase) || name.Equals("ruff.toml", StringComparison.OrdinalIgnoreCase)
                     || name.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)
                     || name.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
                     || name.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))) value |= 4;

@@ -62,7 +62,8 @@ public partial class MainWindow
         var matching = _worktreeAssessments.Values.Where(item => policy.Matches(item, DateTime.UtcNow))
             .Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
         _cleanupGroups = _snapshot is { } scan ? CleanupGrouping.Build(scan, _rows.Select(row => row.Item).ToArray(), matching, worktreePolicy: policy) : [];
-        _cleanupGroups = _cleanupGroups.Select(group => group.Key == "cleanup:build" ? group with { Children = _opportunityGroups.BuildLanguages } : group).ToArray();
+        _cleanupGroups = _cleanupGroups.Select(group => group with { Children = group.Key == "cleanup:build"
+            ? _opportunityGroups.BuildLanguages : _opportunityGroups.CleanupBreakdowns?.GetValueOrDefault(group.Key) }).ToArray();
         int total = _rows.Count(row => row.Category == "Git worktrees");
         WorktreeCleanupControls.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
         bool ageApplies = policy.Mode != WorktreeCleanupMode.Integrated;

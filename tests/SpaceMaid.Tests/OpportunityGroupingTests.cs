@@ -173,6 +173,81 @@ public sealed class OpportunityGroupingTests
         scan.PathForFile(folder)!, scan.DirectoryLogical[folder], scan.DirectoryAllocated[folder], "Fixture evidence", "Review contents first.", "Read-only review.", true);
 
     [Fact]
+    public void SpecificBuildSystemsWinOverIncidentalMarkers()
+    {
+        var builder = new ScanBuilder(); ulong next = 2;
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        var folders = new Dictionary<string, (int Folder, string Label)>();
+        foreach (var (title, label) in new[] {
+            ("Cargo build output", "Rust / Cargo"), ("Maven build output", "Java / Maven"),
+            ("Gradle build output", "Java / Kotlin / Gradle"), ("CMake build output", "C / C++ / CMake"),
+            ("SvelteKit build output", "JavaScript / TypeScript"), ("Nuxt build output", "JavaScript / TypeScript") })
+        {
+            ulong project = next++;
+            int index = builder.AddFile(new(new(project), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(index, new(1), title);
+            // An unrelated .NET marker must not relabel corroborated output from a different build system.
+            index = builder.AddFile(new(new(next++), FileAttributes.Normal, 0, 0, 0)); builder.AddLink(index, new(project), "incidental.csproj");
+            index = builder.AddFile(new(new(next++), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(index, new(project), "obj");
+            folders.Add(title, (index, label));
+        }
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, 0, default);
+        var findings = folders.Select(pair => Finding(scan, pair.Value.Folder, "Build output") with { Title = pair.Key }).ToArray();
+        var groups = OpportunityGrouping.Build(scan, findings);
+        Assert.Equal(5, groups.BuildLanguages!.Count);
+        foreach (var (title, item) in folders)
+            Assert.Contains(Assert.Single(groups.BuildLanguages, group => group.Name == item.Label).Locations, finding => finding.Title == title);
+        Assert.Equal(findings.Length, groups.BuildLanguages.Sum(group => group.Locations.Count));
+    }
+
+    [Fact]
+    public void NewCleanupCategoriesHaveExactToolAndProjectBreakdownsAndUnionTotals()
+    {
+        var builder = new ScanBuilder(); ulong next = 2;
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        var items = new List<(int Folder, string Title, string Category)>();
+        foreach (string name in new[] { "Project", "project" })
+        {
+            ulong repo = next++; Folder(repo, 1, name); Folder(next++, repo, ".git");
+            ulong cache = next++; int outer = Folder(cache, repo, ".ruff_cache"); Data(next++, cache, "data", 100);
+            ulong nestedId = next++; int nested = Folder(nestedId, cache, "nested"); Data(next++, nestedId, "data", 200);
+            items.Add((outer, "Ruff cache", "Tool caches")); items.Add((nested, "Ruff cache", "Tool caches"));
+            Add(repo, "test-results", "Playwright test results", "Test artifacts");
+            Add(repo, "playwright-report", "Playwright HTML report", "Test artifacts");
+            Add(repo, "TestResults", ".NET test results", "Test artifacts");
+            Add(repo, ".vs", "Visual Studio workspace data", "Editor workspace data");
+            Add(repo, "dists", "Gradle wrapper downloads", "Downloaded tooling");
+        }
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, 0, default);
+        var findings = items.Select(item => Finding(scan, item.Folder, item.Category) with { Title = item.Title }).ToArray();
+        var grouped = OpportunityGrouping.Build(scan, findings);
+        var checklist = CleanupGrouping.Build(scan, findings);
+        Assert.Equal(4, checklist.Count);
+        Assert.Equal(600, Assert.Single(checklist, group => group.Key == "cleanup:tools").ObservedBytes);
+        Assert.Contains(checklist, group => group.Name == "Editor workspace data" && group.Summary.Contains("breakpoints"));
+        Assert.Contains(checklist, group => group.Name == "Downloaded tooling" && group.Summary.Contains("offline"));
+        var tool = Assert.Single(grouped.CleanupBreakdowns!["cleanup:tools"]);
+        Assert.Equal("Ruff", tool.Name); Assert.Equal(600, tool.ObservedBytes);
+        Assert.Equal(2, tool.Children!.Count); Assert.Equal(2, tool.Children.Select(child => child.Key).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(tool.Children, child => { Assert.Equal(2, child.Locations.Count); Assert.Equal(300, child.ObservedBytes); });
+        Assert.Equal(new[] { @"G:\Project", @"G:\project" }, tool.Children.Select(child => child.Path));
+        var reports = grouped.CleanupBreakdowns["cleanup:tests"];
+        Assert.Equal(2, reports.Count);
+        var playwright = Assert.Single(reports, group => group.Name == "Playwright");
+        Assert.Equal(4, playwright.Locations.Count); Assert.Equal(2, playwright.Children!.Count);
+        Assert.All(playwright.Locations, finding => Assert.StartsWith("Playwright", finding.Title));
+        Assert.Single(reports, group => group.Name == ".NET");
+        Assert.Equal(findings.Length, checklist.Sum(group => group.Locations.Count));
+        Assert.All(tool.Locations, finding => Assert.Equal("Tool caches", finding.Category));
+
+        int Folder(ulong id, ulong parent, string name)
+        { int file = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(file, new(parent), name); return file; }
+        void Data(ulong id, ulong parent, string name, long bytes)
+        { int file = builder.AddFile(new(new(id), FileAttributes.Normal, bytes, bytes, 0)); builder.AddLink(file, new(parent), name); }
+        void Add(ulong parent, string name, string title, string category)
+        { ulong id = next++; int folder = Folder(id, parent, name); Data(next++, id, "data", 50); items.Add((folder, title, category)); }
+    }
+
+    [Fact]
     public void CleanupChecklistBoundsThousandsOfFindingsAndSeparatesCheckedWorktrees()
     {
         var builder = new ScanBuilder();
