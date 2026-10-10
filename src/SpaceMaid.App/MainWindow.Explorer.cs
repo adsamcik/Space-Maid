@@ -312,8 +312,10 @@ public partial class MainWindow
         text.Children.Add(new TextBlock { Text = contribution.Name + (isHeader ? " ›" : ""), FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes) + (isHeader ? $" · {share}" : ""), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = isHeader ? 11 : 12 });
         if (!isHeader) text.Children.Add(new TextBlock { Text = share, Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
-        var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" };
-        AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path}");
+        string type = contribution.Link >= 0 && !scan.Entry(contribution.Link).IsDirectory
+            ? FileTypeClassifier.Describe(contribution.Name) : "";
+        var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" + (type.Length > 0 ? $"\n{type}" : "") };
+        AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path} {type}");
         if (contribution.Link >= 0 && scan.Entry(contribution.Link).IsDirectory && scan.EntryPath(contribution.Link) is not null)
         {
             button.ContextMenu = new ContextMenu();

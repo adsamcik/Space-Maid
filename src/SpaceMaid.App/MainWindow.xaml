@@ -72,7 +72,7 @@
                           <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="5,0" /><Setter Property="AutomationProperties.Name" Value="{Binding Description}" /></Style></ListBox.ItemContainerStyle>
                           <ListBox.ItemTemplate>
                               <DataTemplate>
-                                  <Grid MinHeight="34" ToolTip="{Binding Path}">
+                                  <Grid MinHeight="34" ToolTip="{Binding EntryTooltip}">
                                       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
                                       <Grid Margin="{Binding Indent}">
                                           <Grid.ColumnDefinitions><ColumnDefinition Width="22" /><ColumnDefinition Width="21" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -107,6 +107,7 @@
                       <StackPanel Grid.Row="3" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
                           <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,7" />
                           <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
+                          <TextBlock x:Name="EntryTypeText" Text="{Binding TypeDescription}" TextWrapping="Wrap" Opacity="0.7" FontSize="12" Margin="0,4,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding TypeDescription}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
                           <WrapPanel Margin="0,4,0,0"><TextBlock Text="Allocated" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Logical" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
                           <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.65" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
                       </StackPanel>
@@ -133,7 +134,7 @@
                       <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="5,0" /><Setter Property="AutomationProperties.Name" Value="{Binding PathText}" /></Style></ListBox.ItemContainerStyle>
                       <ListBox.ItemTemplate>
                           <DataTemplate>
-                              <Grid MinHeight="54" Margin="6,0" ToolTip="{Binding PathText}">
+                              <Grid MinHeight="54" Margin="6,0" ToolTip="{Binding EntryTooltip}">
                                   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
                                   <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                                       <TextBlock Text="{Binding File.Name}" TextTrimming="CharacterEllipsis" />

@@ -156,11 +156,18 @@ public sealed class DesktopTests
                 Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 tree.ContextMenu.IsOpen = false;
                 var map = (TreemapPanel)window.FindName("SpaceMap");
+                Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("EntryTypeText")).Visibility);
                 var tile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
                 Assert.Equal(8192, Assert.IsType<SpaceContribution>(tile.DataContext).Bytes);
+                Assert.Contains("Inferred type: Binary / executable / library (.dll)", Assert.IsType<string>(tile.ToolTip));
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((StackPanel)window.FindName("EntryDetail")).DataContext is ExplorerRow { Entry.IsDirectory: false }, TimeSpan.FromSeconds(10));
                 Assert.Equal(Path.Join(bin, "sample.dll"), Assert.IsType<ExplorerRow>(((StackPanel)window.FindName("EntryDetail")).DataContext).Path);
+                var typeText = (TextBlock)window.FindName("EntryTypeText");
+                Assert.Equal("Inferred type: Binary / executable / library (.dll)", typeText.Text);
+                Assert.Equal(Visibility.Visible, typeText.Visibility);
+                var fileContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(tree.SelectedIndex));
+                Assert.Contains(Descendants(fileContainer).OfType<Grid>(), cell => cell.ToolTip is string tooltip && tooltip.Contains(typeText.Text));
 
                 stage = "constructing cleanup review";
                 var scan = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false).GetAwaiter().GetResult();
@@ -300,6 +307,7 @@ public sealed class DesktopTests
                 Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
                 Assert.Equal(Visibility.Visible, ((Button)window.FindName("CancelButton")).Visibility);
                 Assert.Equal("Path pending…", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).PathText);
+                Assert.Contains("Inferred type:", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).EntryTooltip);
                 Assert.Contains("PRELIMINARY", ((TextBlock)window.FindName("ScannedSizeLabel")).Text);
                 stage = "sorting preliminary rows and retaining the choice across progress updates";
                 foreach (string header in new[] { "PreliminaryNameHeader", "PreliminaryNameHeader", "PreliminaryLogicalHeader", "PreliminaryAllocationHeader" })

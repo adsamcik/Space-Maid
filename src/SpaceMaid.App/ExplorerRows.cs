@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Specialized;
 using System.Windows;
+using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
@@ -9,6 +10,8 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
 {
     public string Name => Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
+    public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
+    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{TypeDescription}" : Path;
     public Thickness Indent => new(Depth * 14, 0, 0, 0);
     public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName;
     public string Expander => CanExpand ? Expanded ? "⌄" : "›" : "";
@@ -26,7 +29,7 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
         }
     }
     public string Flags => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Entry.IsIncomplete ? "Partial" : null }.OfType<string>());
-    public string Description => $"{Path}, {Allocated} allocated, {Logical} logical. {Flags}";
+    public string Description => $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
     public string SizeNote => Entry.IsShared
         ? $"This object has multiple observed names. Its {SizeText.Format(Entry.AllocatedBytes)} allocation is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
         : Entry.IsIncomplete ? "This branch is incomplete. Sizes show only metadata that was read." : "";
