@@ -230,7 +230,7 @@
                     </StackPanel>
                     <StackPanel Grid.Row="3" Margin="12">
                         <DockPanel Margin="0,0,0,8"><Button x:Name="ClearOpportunitySelectionButton" Content="Clear selection" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Padding="6,3" MinHeight="26" FontSize="11" /><TextBlock x:Name="SelectionText" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12" Opacity="0.7" Margin="0,0,6,0" /></DockPanel>
-                        <DockPanel><Button x:Name="ReviewButton" Content="Review selection" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" /><Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" HorizontalAlignment="Left" ToolTip="Select all locations in the current group and filters for read-only review." /></DockPanel>
+                        <DockPanel><Button x:Name="ReviewButton" Content="Review selection" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" ToolTip="Recheck selected locations and open a read-only cleanup preview." /><Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" HorizontalAlignment="Left" ToolTip="Select all locations in the current group and filters for read-only review." /></DockPanel>
                     </StackPanel>
                 </Grid>
             </Border>

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Windows;
@@ -281,7 +282,7 @@ public sealed class DesktopTests
                 PumpUntil(() => otherRecheck.IsCompleted, TimeSpan.FromSeconds(10)); otherRecheck.GetAwaiter().GetResult();
                 Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
                 Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
-                Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
                 var recovery = window.RecheckFolderAsync(project);
                 PumpUntil(() => recovery.IsCompleted, TimeSpan.FromSeconds(10)); recovery.GetAwaiter().GetResult();
                 Assert.Contains("Rechecked", ((TextBlock)window.FindName("TreeNote")).Text);
@@ -633,6 +634,8 @@ public sealed class DesktopTests
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 stage = "browsing thousands of grouped opportunities and retaining hidden selections";
                 CheckOpportunityBrowser(window, app, artifactRoot);
+                stage = "validating stale selections before read-only review";
+                CheckOpportunityValidation(window, app, artifactRoot);
                 stage = "closing windows";
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
@@ -718,17 +721,11 @@ public sealed class DesktopTests
         PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3));
         Assert.Equal(Visibility.Visible, ((StackPanel)window.FindName("EmptyState")).Visibility);
         Assert.Contains("40 outside this view", selection.Text);
-        int reviewed = 0;
-        var closeReview = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
-        {
-            var review = app.Windows.OfType<ReviewWindow>().FirstOrDefault(dialog => dialog.IsVisible);
-            if (review is null) return;
-            reviewed = ((ListBox)review.FindName("LocationList")).Items.Count;
-            Assert.False(Descendants(review.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Clean up")).IsEnabled);
-            review.Close();
-        }, Dispatcher.CurrentDispatcher);
-        ((Button)window.FindName("ReviewButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        PumpUntil(() => reviewed > 0, TimeSpan.FromSeconds(5)); closeReview.Stop(); Assert.Equal(40, reviewed);
+        // This inventory is illustrative and must never be rechecked on disk.
+        var preview = new ReviewWindow(CleanupPlanner.Create(scan, locations.Where(location => selected.Contains(location.Path))));
+        Assert.Equal(40, ((ListBox)preview.FindName("LocationList")).Items.Count);
+        Assert.False(Descendants(preview.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Clean up")).IsEnabled);
+        preview.Close();
         search.Text = ""; filter.SelectedIndex = 0; grouping.SelectedIndex = 0;
         ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(4000, list.Items.Count);
@@ -751,14 +748,156 @@ public sealed class DesktopTests
         window.MarkScanStale("Illustrative out-of-date results; recheck or rescan.");
         Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
         Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
-        Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
-        Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+        Assert.True(((Button)window.FindName("SelectListedButton")).IsEnabled);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-stale-dark.png"), 1220, 910);
         ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.DoesNotContain("selected", selection.Text);
 
         (int Index, ulong Identity) Folder(ulong parent, string name)
         { ulong identity = id++; int index = builder.AddFile(new(new(identity), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(index, new(parent), name); return (index, identity); }
+    }
+
+    private static void CheckOpportunityValidation(MainWindow window, Application app, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        File.WriteAllText(Path.Join(fixture.Path, "sample.csproj"), "<Project />");
+        string bin = Directory.CreateDirectory(Path.Join(fixture.Path, "bin")).FullName;
+        string obj = Directory.CreateDirectory(Path.Join(fixture.Path, "obj")).FullName;
+        string other = Directory.CreateDirectory(Path.Join(fixture.Path, "other")).FullName;
+        string output = Path.Join(bin, "sample.dll"), removed = Path.Join(obj, "sample.o");
+        File.WriteAllBytes(output, new byte[4096]); File.WriteAllBytes(removed, new byte[8192]);
+        File.WriteAllBytes(Path.Join(other, "old.dat"), new byte[512]);
+        var scanTask = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
+        var scan = scanTask.GetAwaiter().GetResult();
+        Publish(scan);
+        var list = (ListBox)window.FindName("OpportunityGrid");
+        Assert.Equal(2, list.Items.Count);
+        foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
+        var search = (TextBox)window.FindName("OpportunitySearch");
+        search.Text = "bin";
+        PumpUntil(() => list.Items.Count == 1, TimeSpan.FromSeconds(3));
+        File.WriteAllBytes(output, new byte[16384]);
+        File.Delete(removed); Directory.Delete(obj);
+        File.WriteAllBytes(Path.Join(other, "old.dat"), new byte[20000]);
+        window.MarkScanStale("Unrelated fixture data is out of date.", [new(other)]);
+        Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+        Assert.True(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        ReviewAndAssert(16384, "1 location was excluded", "review-validated-stale.png", logical: false);
+        Assert.Equal("bin", search.Text);
+        Assert.Equal("1 location selected", ((TextBlock)window.FindName("SelectionText")).Text);
+        Assert.Equal("16 KiB", Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>())).Size);
+        var refreshed = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan;
+        Assert.Null(refreshed.FindEntry(obj));
+        Assert.Equal(512, refreshed.Entry(refreshed.FindEntry(other)!.Value).LogicalBytes);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
+        Assert.Contains("review-validation-complete", File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip)));
+
+        // Logical-only scans also get fresh review estimates, without replacing
+        // the global inventory with a sparse subset or claiming native identity.
+        var basicBuilder = new ScanBuilder { AllocationData = false };
+        foreach (var record in refreshed.Records) basicBuilder.AddFile(record with { AllocatedBytes = 0 });
+        basicBuilder.RootIndex = refreshed.RootIndex;
+        for (int i = 0; i < refreshed.Links.Length; i++)
+            basicBuilder.AddLink(refreshed.Links[i].FileIndex, refreshed.Links[i].ParentIdentity, refreshed.Name(i));
+        var basic = basicBuilder.Build(refreshed.RootPath, "Logical-only fixture", TimeSpan.Zero, 0, default);
+        Publish(basic);
+        Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>())).Selected = true;
+        File.WriteAllBytes(output, new byte[32768]);
+        window.MarkScanStale("Logical-only fixture data is out of date.");
+        ReviewAndAssert(32768, "Other folders retain", "review-validated-logical.png", logical: true);
+        Assert.Same(basic, Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
+        Assert.Equal(32768, new FileInfo(output).Length);
+        Assert.True(File.Exists(Path.Join(fixture.Path, "sample.csproj")));
+
+        Directory.CreateDirectory(obj); File.WriteAllBytes(removed, new byte[8192]);
+        var lateScanTask = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        PumpUntil(() => lateScanTask.IsCompleted, TimeSpan.FromSeconds(5));
+        var lateScan = lateScanTask.GetAwaiter().GetResult(); Publish(lateScan);
+        search.Text = ""; PumpUntil(() => list.Items.Count == 2, TimeSpan.FromSeconds(3));
+        foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
+        string retained = Path.Join(fixture.Path, "retained-bin"); Directory.Move(bin, retained);
+        Directory.CreateDirectory(bin); File.WriteAllBytes(output, new byte[16384]);
+        bool cancelledAtPublication = false, unexpectedPreview = false;
+        var itemsSource = DependencyPropertyDescriptor.FromProperty(ItemsControl.ItemsSourceProperty, typeof(ListBox))!;
+        EventHandler cancelAtPublication = (_, _) =>
+        {
+            var current = ((ListBox)window.FindName("SpaceTree")).ItemsSource as ExplorerRows;
+            if (cancelledAtPublication || current is null || ReferenceEquals(current.Scan, lateScan)) return;
+            cancelledAtPublication = true;
+            ((Button)window.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        };
+        var closeUnexpected = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+        {
+            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+            if (dialog is null) return;
+            unexpectedPreview = true; dialog.Close();
+        }, Dispatcher.CurrentDispatcher);
+        itemsSource.AddValueChanged(list, cancelAtPublication);
+        try
+        {
+            var cancelledReview = window.ReviewSelectionAsync();
+            PumpUntil(() => cancelledReview.IsCompleted, TimeSpan.FromSeconds(10)); cancelledReview.GetAwaiter().GetResult();
+            Assert.True(cancelledAtPublication); Assert.False(unexpectedPreview);
+            Assert.Contains("Review cancelled", ((TextBlock)window.FindName("StatusText")).Text);
+            Assert.False(list.Items.Cast<OpportunityRow>().Single(row => row.Path == bin).Selected);
+            Assert.True(list.Items.Cast<OpportunityRow>().Single(row => row.Path == obj).Selected);
+        }
+        finally { itemsSource.RemoveValueChanged(list, cancelAtPublication); closeUnexpected.Stop(); }
+        var lateUpdated = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan;
+        int retainedLink = lateUpdated.FindEntry(retained)!.Value;
+        var retainedRow = new ExplorerRow(lateUpdated, lateUpdated.Entry(retainedLink), 1, false);
+        Assert.Equal("Not checked", retainedRow.Allocated); Assert.Equal("Not checked", retainedRow.Logical);
+        Assert.False(retainedRow.CanExpand); Assert.True(retainedRow.Entry.IsIncomplete);
+        var showRetained = window.NavigateToEntryAsync(retainedLink);
+        PumpUntil(() => showRetained.IsCompleted, TimeSpan.FromSeconds(5)); showRetained.GetAwaiter().GetResult();
+        Assert.Equal("Size not checked", ((TextBlock)window.FindName("MapTotal")).Text);
+        Assert.Contains("Folder contents were not checked", ((TextBlock)window.FindName("MapHint")).Text);
+        Assert.Equal(32768, new FileInfo(Path.Join(retained, "sample.dll")).Length);
+
+        void Publish(ScanSnapshot snapshot)
+        {
+            var findings = OpportunityDetector.Find(snapshot);
+            var load = window.InitializeExplorerAsync(snapshot, findings, default);
+            PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+            typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, [snapshot, findings, OpportunityGrouping.Build(snapshot, findings), null, null, false]);
+            ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        }
+        void ReviewAndAssert(long expectedBytes, string note, string render, bool logical)
+        {
+            Exception? failure = null;
+            bool reviewed = false;
+            var closeReview = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+            {
+                var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+                if (dialog is null) return;
+                try
+                {
+                    reviewed = true;
+                    var location = Assert.IsType<Opportunity>(Assert.Single(((ListBox)dialog.FindName("LocationList")).Items.Cast<object>()));
+                    Assert.Equal(bin, location.Path); Assert.Equal(expectedBytes, location.LogicalBytes);
+                    Assert.Contains(note, ((TextBlock)dialog.FindName("ValidationText")).Text);
+                    Assert.Equal(logical, ((TextBlock)dialog.FindName("EstimateCaption")).Text.Contains("physical saving unknown", StringComparison.Ordinal));
+                    Assert.False(Descendants(dialog.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Clean up")).IsEnabled);
+                    Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", render), 860, 740);
+                }
+                catch (Exception ex) { failure = ex; }
+                finally { dialog.Close(); }
+            }, Dispatcher.CurrentDispatcher);
+            try
+            {
+                var review = window.ReviewSelectionAsync();
+                Assert.Equal(Visibility.Visible, ((Button)window.FindName("CancelButton")).Visibility);
+                PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10)); review.GetAwaiter().GetResult();
+                if (failure is not null) throw failure;
+                Assert.True(reviewed, ((TextBlock)window.FindName("StatusText")).Text);
+                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+            }
+            finally { closeReview.Stop(); }
+        }
     }
 
     private static void AssertMapFillsPane(MainWindow window, TreemapPanel map)

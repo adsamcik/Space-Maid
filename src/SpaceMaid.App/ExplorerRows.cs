@@ -11,26 +11,27 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     public string Name => Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
     public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
-    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{TypeDescription}" : Path;
+    private bool Unmeasured => Scan.IsUnmeasuredDirectory(Entry.FileIndex);
+    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{TypeDescription}" : Unmeasured ? $"{Path}\n{SizeNote}" : Path;
     public Thickness Indent => new(Depth * 14, 0, 0, 0);
-    public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName;
+    public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName && !Unmeasured;
     public string Expander => CanExpand ? Expanded ? "⌄" : "›" : "";
     public string Glyph => Entry.IsDirectory ? "\uE8B7" : "\uE8A5";
-    public string Allocated => Scan.HasAllocationData ? SizeText.Format(Entry.AttributedBytes(true)) : "—";
-    public string Logical => SizeText.Format(Entry.LogicalBytes);
+    public string Allocated => Unmeasured ? "Not checked" : Scan.HasAllocationData ? SizeText.Format(Entry.AttributedBytes(true)) : "—";
+    public string Logical => Unmeasured ? "Not checked" : SizeText.Format(Entry.LogicalBytes);
     public string Share
     {
         get
         {
-            if (Entry.ParentIndex < 0) return "—";
+            if (Entry.ParentIndex < 0 || Unmeasured) return "—";
             var parent = Scan.Entry(Scan.PrimaryLink(Entry.ParentIndex));
             long total = parent.AttributedBytes(Scan.HasAllocationData);
             return total == 0 ? "—" : $"{100d * Entry.AttributedBytes(Scan.HasAllocationData) / total:0.#}%";
         }
     }
-    public string Flags => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Entry.IsIncomplete ? "Partial" : null }.OfType<string>());
+    public string Flags => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Unmeasured ? "Not checked" : Entry.IsIncomplete ? "Partial" : null }.OfType<string>());
     public string Description => $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
-    public string SizeNote => Entry.IsShared
+    public string SizeNote => Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size." : Entry.IsShared
         ? $"This object has multiple observed names. Its {SizeText.Format(Entry.AllocatedBytes)} allocation is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
         : Entry.IsIncomplete ? "This branch is incomplete. Sizes show only metadata that was read." : "";
 }

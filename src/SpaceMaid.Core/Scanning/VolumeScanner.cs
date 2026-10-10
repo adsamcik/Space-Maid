@@ -15,13 +15,20 @@ public sealed class VolumeScanner
         Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic, layoutSource, fastUnavailableReason), cancellationToken);
 
     // Parent rechecks read immediate names only, including at a drive root.
-    internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token, bool allStreams = false) => Task.Run(() =>
+    internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token,
+        bool allStreams = false, bool allowBasic = false) => Task.Run(() =>
     {
         var timer = Stopwatch.StartNew();
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
         var builder = new ScanBuilder();
         var reporter = new ScanReporter(null, null, timer, allocatedBefore, path);
-        AcquireDirectories(path, builder, reporter, token, recursive, validateIdentity: true);
+        try { AcquireDirectories(path, builder, reporter, token, recursive, validateIdentity: true); }
+        catch (Win32Exception ex) when (allowBasic && !allStreams && ex.NativeErrorCode is 1 or 50 or 87)
+        {
+            builder = new ScanBuilder { AllocationData = false };
+            AcquireBasic(path, builder, reporter, token, recursive);
+            return builder.Build(path, "Targeted basic metadata", timer.Elapsed, allocatedBefore, token);
+        }
         var inventory = builder.Build(path, "Targeted Windows metadata", timer.Elapsed, allocatedBefore, token);
         if (allStreams)
         {
@@ -282,7 +289,7 @@ public sealed class VolumeScanner
 
     private readonly record struct BasicEntry(string Name, FileAttributes Attributes, long Size, long WriteTime);
 
-    private static void AcquireBasic(string target, ScanBuilder builder, ScanReporter reporter, CancellationToken token)
+    private static void AcquireBasic(string target, ScanBuilder builder, ScanReporter reporter, CancellationToken token, bool recursive = true)
     {
         ulong sequence = 1;
         var rootId = new FileIdentity(sequence++);
@@ -304,7 +311,7 @@ public sealed class VolumeScanner
                     var id = new FileIdentity(sequence++);
                     int index = builder.AddFile(new(id, entry.Attributes, entry.Size, 0, entry.WriteTime));
                     builder.AddLink(index, directory.Id, entry.Name);
-                    if ((entry.Attributes & FileAttributes.Directory) != 0)
+                    if (recursive && (entry.Attributes & FileAttributes.Directory) != 0)
                     {
                         if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
                             builder.Warn($"Reparse directory not followed: {Path.Join(directory.Path, entry.Name)}", id);

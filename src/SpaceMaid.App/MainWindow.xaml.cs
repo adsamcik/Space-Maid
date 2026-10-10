@@ -274,21 +274,67 @@ public partial class MainWindow : Window
         DetailHint.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private async void Review_Click(object sender, RoutedEventArgs e)
+    private async void Review_Click(object sender, RoutedEventArgs e) => await ReviewSelectionAsync();
+
+    internal async Task ReviewSelectionAsync()
     {
-        if (_snapshot is null || _work is not null || _scanStale) return;
-        var scan = _snapshot;
+        if (_snapshot is not { } scan || _work is not null) return;
         var selected = _rows.Where(r => r.Selected).Select(r => r.Item).ToArray();
+        if (selected.Length == 0) return;
         using var work = new CancellationTokenSource();
+        using var log = StartActionLog("validate-review", scan.RootPath);
         _work = work;
         SetBusy(true);
+        StatusText.Text = $"Checking {selected.Length:N0} selected locations…";
+        var timer = Stopwatch.StartNew();
         try
         {
-            var plan = await Task.Run(() => CleanupPlanner.Create(scan, selected, work.Token), work.Token);
-            if (!_closing) new ReviewWindow(plan) { Owner = this }.ShowDialog();
+            log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale });
+            var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record);
+            var plan = await Task.Run(() => CleanupPlanner.Create(validation.Snapshot, validation.ValidatedLocations, work.Token), work.Token);
+            work.Token.ThrowIfCancellationRequested();
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+            if (validation.CanMergeInventory)
+            {
+                _staleScopes.UnionWith(validation.UncheckedScopes);
+                await RefreshAffectedAsync(scan, validation.RecheckedScopes, "Selected locations checked.", work.Token, log,
+                    validation.Snapshot, validation.Findings);
+                if (_closing || !ReferenceEquals(_snapshot, validation.Snapshot)) return;
+            }
+            else
+                MarkScanStale("Selected locations checked for review. The full inventory retains earlier logical-size data.", [new(scan.RootPath)]);
+            // A replacement at the same path is a new target, never a retained
+            // checkbox selection. Missing/no-longer-matching rows are excluded too.
+            var excluded = validation.ExcludedPaths.ToHashSet(StringComparer.Ordinal);
+            _changingOpportunitySelection = true;
+            try { foreach (var row in _rows) if (excluded.Contains(row.Path)) row.Selected = false; }
+            finally { _changingOpportunitySelection = false; }
+            UpdateSelection();
+            string note = $"Selected locations checked at {DateTime.Now:HH:mm:ss}. "
+                + (excluded.Count == 1 ? "1 location was excluded because it is missing, changed or no longer matches. "
+                    : excluded.Count > 1 ? $"{excluded.Count:N0} locations were excluded because they are missing, changed or no longer match. " : "")
+                + "Other folders retain earlier scan data.";
+            StatusText.Text = plan.Locations.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
+            log.Record("review-validation-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds,
+                Validated = validation.ValidatedLocations.Count, validation.ExcludedPaths, validation.CanMergeInventory, plan.EstimatedBytes });
+            if (work.IsCancellationRequested)
+            {
+                StatusText.Text = "Review cancelled. No preview was opened.";
+                log.Record("review-cancelled", new { Phase = "before-preview", validation.CanMergeInventory });
+                return;
+            }
+            if (plan.Locations.Count > 0) new ReviewWindow(plan, note) { Owner = this }.ShowDialog();
         }
-        catch (OperationCanceledException) { }
-        finally { _work = null; if (!_closing) SetBusy(false); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or Win32Exception
+            or UnauthorizedAccessException or InvalidOperationException or ArgumentException or OperationCanceledException
+            or DllNotFoundException or EntryPointNotFoundException)
+        {
+            log.Record("review-validation-failed", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, Error = ex.ToString() });
+            if (!_closing) MarkScanStale(ex is OperationCanceledException
+                ? "Selection check cancelled. Review again to check the selected locations."
+                : $"Selected locations could not be checked: {ex.Message}", selected.Select(location => new ScanRecheckRequest(location.Path)));
+        }
+        finally { _work = null; if (!_closing) { ShowActionLogError(log); SetBusy(false); } }
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)

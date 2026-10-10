@@ -12,6 +12,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
     private int _omissions;
     private readonly List<string> _warnings = [];
     private readonly HashSet<FileIdentity> _incomplete = [];
+    private readonly HashSet<FileIdentity> _unmeasuredDirectories = [];
     // Only interactive scans need the first-name index and bounded largest-file heap.
     private readonly List<int>? _firstNames = trackPreliminary ? [] : null;
     private readonly PriorityQueue<int, (long Bytes, int Tie)> _largest = new();
@@ -50,6 +51,8 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
     }
 
     internal void ReplaceMetadata(FileRecord file) => _files[_ids[file.Identity]] = file;
+    internal void MarkUnmeasuredDirectory(FileIdentity identity) => _unmeasuredDirectories.Add(identity);
+    internal void ClearUnmeasuredDirectory(FileIdentity identity) => _unmeasuredDirectories.Remove(identity);
 
     public void AddLink(int file, FileIdentity parent, ReadOnlySpan<char> name)
     {
@@ -114,7 +117,10 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         _omissions = scan.WarningCount;
         _warnings.AddRange(scan.Warnings.Take(8));
         for (int i = 0; i < scan.Records.Length; i++)
+        {
             if ((scan.EntryFlags[i] & 2) != 0) _incomplete.Add(scan.Records[i].Identity);
+            if ((scan.EntryFlags[i] & 8) != 0) _unmeasuredDirectories.Add(scan.Records[i].Identity);
+        }
     }
 
     public ScanSnapshot Build(string rootPath, string backend, TimeSpan acquisition,
@@ -127,9 +133,11 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         int[] first = Enumerable.Repeat(-1, files.Length).ToArray();
         int[] heads = Enumerable.Repeat(-1, files.Length).ToArray();
         int[] next = Enumerable.Repeat(-1, links.Length).ToArray();
-        byte[] flags = new byte[files.Length]; // shared-name and incomplete-branch bits
+        byte[] flags = new byte[files.Length]; // 1 shared, 2 omission, 4 unmeasured branch, 8 direct unmeasured directory
         foreach (var id in _incomplete)
             if (_ids.TryGetValue(id, out int index)) flags[index] |= 2;
+        foreach (var id in _unmeasuredDirectories)
+            if (_ids.TryGetValue(id, out int index) && files[index].IsDirectory) flags[index] |= 12;
         int directoryCount = 0;
         for (int i = 0; i < links.Length; i++)
         {
@@ -181,7 +189,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
             int parent = links[first[directory]].ParentIndex;
             logical[parent] = checked(logical[parent] + logical[directory]);
             allocated[parent] = checked(allocated[parent] + allocated[directory]);
-            flags[parent] |= (byte)(flags[directory] & 2);
+            flags[parent] |= (byte)(flags[directory] & 6);
             if (--pending[parent] == 0) ready.Enqueue(parent);
         }
         if (pending.Any(p => p > 0))

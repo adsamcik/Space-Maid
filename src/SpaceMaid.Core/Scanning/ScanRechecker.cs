@@ -47,7 +47,8 @@ public static class ScanRechecker
         return merged;
     }
 
-    internal static ScanSnapshot Merge(ScanSnapshot scan, IReadOnlyList<Replacement> replacements, CancellationToken token)
+    internal static ScanSnapshot Merge(ScanSnapshot scan, IReadOnlyList<Replacement> replacements, CancellationToken token,
+        IReadOnlyCollection<FileIdentity>? unmeasuredDirectoryIds = null)
     {
         var removed = new bool[scan.Links.Length];
         var traversed = new bool[scan.Links.Length];
@@ -55,12 +56,15 @@ public static class ScanRechecker
         var parentIds = new Dictionary<string, FileIdentity>(StringComparer.Ordinal);
         var newDirectoryIds = new HashSet<FileIdentity>();
         var directoryNames = new Dictionary<FileIdentity, (FileIdentity Parent, string Name)>();
+        var freshRoots = new Dictionary<string, (FileIdentity Identity, ScanSnapshot Snapshot)>(StringComparer.Ordinal);
         bool retainedNtfsMetadata = scan.RetainsEarlierNtfsMetadata;
         foreach (var replacement in replacements)
         {
+            token.ThrowIfCancellationRequested();
             var fresh = replacement.Fresh;
             if (!fresh.HasAllocationData || fresh.WarningCount > 0 || fresh.IncludesAllDataStreams != scan.IncludesAllDataStreams)
                 throw new IOException("The recheck cannot preserve file accounting.");
+            freshRoots[replacement.Path] = (fresh.Records[fresh.RootIndex].Identity, fresh);
             int? oldLink = scan.FindEntry(replacement.Path);
             if (oldLink is { } link)
             {
@@ -88,11 +92,13 @@ public static class ScanRechecker
             }
             foreach (var record in fresh.Records)
             {
+                token.ThrowIfCancellationRequested();
                 updates[record.Identity] = record;
                 if (record.IsDirectory) newDirectoryIds.Add(record.Identity);
             }
             for (int i = 0; i < fresh.Links.Length; i++)
             {
+                token.ThrowIfCancellationRequested();
                 var name = fresh.Links[i]; var file = fresh.Records[name.FileIndex];
                 if (!file.IsDirectory) continue;
                 var observed = (name.ParentIdentity, new string(fresh.Name(i)));
@@ -101,7 +107,7 @@ public static class ScanRechecker
                 directoryNames[file.Identity] = observed;
             }
             string? parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(replacement.Path));
-            if (parent is not null && scan.FindEntry(parent) is { } value)
+            if (parent is not null && !parentIds.ContainsKey(parent) && scan.FindEntry(parent) is { } value)
                 parentIds[parent] = scan.Records[scan.Entry(value).FileIndex].Identity;
         }
         // Windows directories have a single location; remove cached old names
@@ -117,6 +123,19 @@ public static class ScanRechecker
         for (int i = 0; i < scan.Links.Length; i++) if (!removed[i]) alive[scan.Links[i].FileIndex] = true;
         var builder = new ScanBuilder { AllStreams = scan.IncludesAllDataStreams, CompleteVolumeLinks = false, FallbackReason = scan.FallbackReason };
         builder.CarryCoverage(scan);
+        foreach (var replacement in replacements)
+        {
+            token.ThrowIfCancellationRequested();
+            builder.ClearUnmeasuredDirectory(replacement.Fresh.Records[replacement.Fresh.RootIndex].Identity);
+            if (replacement.Recursive)
+                foreach (var record in replacement.Fresh.Records)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (record.IsDirectory) builder.ClearUnmeasuredDirectory(record.Identity);
+                }
+        }
+        if (unmeasuredDirectoryIds is not null)
+            foreach (var identity in unmeasuredDirectoryIds) { token.ThrowIfCancellationRequested(); builder.MarkUnmeasuredDirectory(identity); }
         for (int i = 0; i < scan.Records.Length; i++)
         {
             if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
@@ -137,15 +156,20 @@ public static class ScanRechecker
         var names = new HashSet<(FileIdentity Parent, string Name)>();
         foreach (var replacement in replacements)
         {
+            token.ThrowIfCancellationRequested();
             var fresh = replacement.Fresh;
-            foreach (var record in fresh.Records) builder.AddFile(record);
+            foreach (var record in fresh.Records) { token.ThrowIfCancellationRequested(); builder.AddFile(record); }
             if (!replacement.Path.Equals(Path.TrimEndingDirectorySeparator(scan.RootPath), StringComparison.OrdinalIgnoreCase))
             {
                 string parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(replacement.Path))!;
-                FileIdentity? observedParent = null;
-                foreach (var candidate in replacements)
-                    if (candidate.Fresh.FindEntry(parent) is { } parentLink)
-                        observedParent = candidate.Fresh.Records[candidate.Fresh.Entry(parentLink).FileIndex].Identity;
+                FileIdentity? observedParent = freshRoots.TryGetValue(parent, out var freshRoot) ? freshRoot.Identity : null;
+                if (observedParent is null)
+                    for (string? ancestor = Path.GetDirectoryName(parent); ancestor is not null; ancestor = Path.GetDirectoryName(ancestor))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (freshRoots.TryGetValue(ancestor, out var candidate) && candidate.Snapshot.FindEntry(parent) is { } parentLink)
+                        { observedParent = candidate.Snapshot.Records[candidate.Snapshot.Entry(parentLink).FileIndex].Identity; break; }
+                    }
                 FileIdentity id = observedParent ?? (parentIds.TryGetValue(parent, out var parentId) ? parentId
                     : throw new IOException("The refreshed folder's parent is unresolved."));
                 AddName(fresh.Records[fresh.RootIndex], id, Path.GetFileName(Path.TrimEndingDirectorySeparator(replacement.Path)));
@@ -186,7 +210,7 @@ public static class ScanRechecker
         }
     }
 
-    private static void ValidateAncestors(string path)
+    internal static void ValidateAncestors(string path)
     {
         for (string? current = path; current is not null; current = Path.GetDirectoryName(current))
             if (CloudFiles.HasUnsupportedLink(current)) throw new IOException("A linked recheck path cannot be followed.");

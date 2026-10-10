@@ -49,7 +49,8 @@ public partial class MainWindow
     }
 
     private async Task RefreshAffectedAsync(ScanSnapshot scan, IReadOnlyList<ScanRecheckRequest> requests,
-        string note, CancellationToken token, ScanLog log)
+        string note, CancellationToken token, ScanLog log, ScanSnapshot? prechecked = null,
+        IReadOnlyList<Opportunity>? findings = null)
     {
         string[] expanded = _explorer?.ExpandedPaths() ?? [];
         string selected = scan.EntryPath(_selectedLink) ?? scan.RootPath;
@@ -57,14 +58,14 @@ public partial class MainWindow
         var column = _treeSortColumn; bool descending = _treeDescending;
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
         string? detailPath = (OpportunityGrid.SelectedItem as OpportunityRow)?.Path;
-        StatusText.Text = "Rechecking affected metadata…";
+        StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();
         var timer = Stopwatch.StartNew();
-        var updated = await ScanRechecker.RefreshAsync(scan, requests, token, log.Record);
+        var updated = prechecked ?? await ScanRechecker.RefreshAsync(scan, requests, token, log.Record);
         var analysis = await Task.Run(() =>
         {
-            var opportunities = OpportunityDetector.Find(updated, token);
+            var opportunities = findings ?? OpportunityDetector.Find(updated, token);
             return (Opportunities: opportunities, Total: CleanupPlanner.Create(updated, opportunities, token), Groups: OpportunityGrouping.Build(updated, opportunities, token));
         }, token);
         token.ThrowIfCancellationRequested();

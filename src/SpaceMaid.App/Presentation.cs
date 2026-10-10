@@ -15,7 +15,7 @@ internal static class SizeText
     }
 }
 
-internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation, OpportunityGroup? group = null) : INotifyPropertyChanged
+internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation, OpportunityGroup? group = null, bool unmeasured = false) : INotifyPropertyChanged
 {
     private bool _selected;
     private string? _scope;
@@ -23,7 +23,7 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
     public string Title => Item.Title;
     public string Category => Item.Category;
     public string Path => Item.Path;
-    public string Size => SizeText.Format(Item.DisplayBytes(hasAllocation));
+    public string Size => unmeasured ? "Not checked" : SizeText.Format(Item.DisplayBytes(hasAllocation));
     public long Bytes => Item.DisplayBytes(hasAllocation);
     public string GroupName => group?.Name ?? "";
     public string GroupKey => group?.Key ?? "";

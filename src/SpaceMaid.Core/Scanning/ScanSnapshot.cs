@@ -107,7 +107,7 @@ public sealed class ScanSnapshot
         return new(linkIndex, file, linkIndex == -1 ? -1 : Links[linkIndex].ParentIndex,
             linkIndex == -1 ? RootPath : new string(Name(linkIndex)), Records[file].IsDirectory,
             linkIndex == -1 || FirstLinks[file] == linkIndex, (_entryFlags[file] & 1) != 0,
-            (_entryFlags[file] & 2) != 0, DirectoryLogical[file], DirectoryAllocated[file]);
+            (_entryFlags[file] & 6) != 0, DirectoryLogical[file], DirectoryAllocated[file]);
     }
 
     public string? EntryPath(int linkIndex) => linkIndex == -1 ? RootPath : PathForLink(linkIndex);
@@ -136,11 +136,16 @@ public sealed class ScanSnapshot
         return result;
     }
     public int PrimaryLink(int fileIndex) => fileIndex == RootIndex ? -1 : FirstLinks[fileIndex];
+    public bool IsUnmeasuredDirectory(int fileIndex)
+    {
+        if ((uint)fileIndex >= (uint)Records.Length) throw new ArgumentOutOfRangeException(nameof(fileIndex));
+        return Records[fileIndex].IsDirectory && (_entryFlags[fileIndex] & 8) != 0;
+    }
 
     public ScanEntryMetadata GetMetadata(int linkIndex)
     {
         var file = Records[Entry(linkIndex).FileIndex];
-        bool nativeIdentity = Backend != "Basic folder scan";
+        bool nativeIdentity = HasAllocationData;
         return new((uint)file.Attributes, file.LastWriteFileTime,
             nativeIdentity ? file.Identity.Low : null, nativeIdentity ? file.Identity.High : null);
     }

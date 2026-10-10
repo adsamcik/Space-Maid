@@ -43,7 +43,7 @@ public partial class MainWindow
             .DistinctBy(item => item.DirectoryIndex).ToDictionary(item => item.DirectoryIndex, item => item.Group);
         foreach (var location in locations)
         {
-            var row = new OpportunityRow(location, scan.HasAllocationData, owners.GetValueOrDefault(location.DirectoryIndex))
+            var row = new OpportunityRow(location, scan.HasAllocationData, owners.GetValueOrDefault(location.DirectoryIndex), scan.IsUnmeasuredDirectory(location.DirectoryIndex))
                 { Selected = selectedPaths?.Contains(location.Path) == true };
             row.PropertyChanged += Row_Changed; _rows.Add(row);
         }
@@ -101,7 +101,7 @@ public partial class MainWindow
         }
         finally { _syncOpportunityBrowser = false; }
         GroupNavigationSummary.Text = $"{_opportunityGroupRows.Count:N0} of {definitions.Count:N0} groups";
-        GroupSizeNote.Text = "Full group totals. " + (byType ? "Sizes may overlap across types. " : "Overlapping folders counted once per group. ")
+        GroupSizeNote.Text = "Observed group totals. " + (byType ? "Sizes may overlap across types. " : "Overlapping folders counted once per group. ")
             + (_snapshot?.HasAllocationData == false ? "Logical size; physical savings unknown." : "Observed allocation; savings need review.");
         AllOpportunitiesButton.Content = $"All locations · {_matchingOpportunityRows.Count:N0}";
         DisplayOpportunityRows(detailPath);
@@ -160,14 +160,14 @@ public partial class MainWindow
         int hidden = selected - _visibleOpportunityRows.Count(row => row.Selected);
         SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected"
             + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "Select locations for read-only review";
-        ReviewButton.IsEnabled = selected > 0 && _work is null && !_scanStale;
-        SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null && !_scanStale;
+        ReviewButton.IsEnabled = selected > 0 && _work is null;
+        SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && _work is null;
         bool byType = OpportunityGroupingPicker.SelectedIndex == 1;
         var counts = _rows.Where(row => row.Selected).GroupBy(row => byType ? "type:" + row.Category : row.GroupKey)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
         foreach (var group in _opportunityGroupRows) group.SetSelectedCount(counts.GetValueOrDefault(group.Group.Key));
         OpportunityFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
-        OpportunityFreshnessText.Text = "Out of date · Recheck affected folders or rescan before review.";
+        OpportunityFreshnessText.Text = "Some results are out of date. Review rechecks the selected locations.";
     }
 }

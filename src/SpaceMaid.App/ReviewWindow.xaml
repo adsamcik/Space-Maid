@@ -9,6 +9,7 @@
         <StackPanel Margin="0,0,0,18">
             <TextBlock Text="Review cleanup" FontSize="27" FontWeight="SemiBold" />
             <TextBlock Text="Review the exact locations and their cautions. Nothing will be changed." TextWrapping="Wrap" Opacity="0.7" Margin="0,6,0,0" />
+            <TextBlock x:Name="ValidationText" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
         <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,18">
             <StackPanel>

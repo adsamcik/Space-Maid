@@ -276,7 +276,8 @@ public partial class MainWindow
             Breadcrumbs.Children.Add(button);
         }
         Breadcrumbs.ToolTip = $"{children.Length:N0} immediate entries";
-        MapTotal.Text = SizeText.Format(folder.AttributedBytes(scan.HasAllocationData)) + (scan.HasAllocationData ? " allocated" : " logical");
+        bool unmeasured = scan.IsUnmeasuredDirectory(folder.FileIndex);
+        MapTotal.Text = unmeasured ? "Size not checked" : SizeText.Format(folder.AttributedBytes(scan.HasAllocationData)) + (scan.HasAllocationData ? " allocated" : " logical");
         ClearMap();
         SpaceMap.Weights = contributions.Select(item => item.Bytes).ToArray();
         foreach (var contribution in contributions)
@@ -304,7 +305,8 @@ public partial class MainWindow
             SpaceMap.Children.Add(region);
         }
         SpaceMap.InvalidateMeasure();
-        MapHint.Text = scan.HasAllocationData ? "No observed allocation in this folder." : "No observed logical bytes in this folder.";
+        MapHint.Text = unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure them."
+            : scan.HasAllocationData ? "No observed allocation in this folder." : "No observed logical bytes in this folder.";
         MapHint.Visibility = contributions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateMapColors();
     }
