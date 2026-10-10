@@ -4,6 +4,8 @@ A .NET 10 Windows desktop app for finding development clutter and reviewing pote
 
 **Bulk cleanup is preview only.** Select findings and choose **Review selection** to see exact paths, estimated candidate space, and cautions. **Clean up** is disabled and the core rejects execution of those plans. Manual folder recycling in Explore is available with a separate confirmation.
 
+The [extensions and Photos architecture proposal](docs/extensions-and-photos-design.md) describes a possible next step. It is awaiting approval; extension loading and photo analysis are not implemented.
+
 ## Run
 
 Install the .NET 10 SDK, then run from this directory:
