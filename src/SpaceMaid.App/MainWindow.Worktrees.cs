@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Diagnostics;
+using System.Collections.ObjectModel;
+using System.Windows.Controls;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 
@@ -8,7 +10,75 @@ namespace SpaceMaid.App;
 public partial class MainWindow
 {
     private Task? _worktreeCheckTask;
-    private readonly HashSet<string> _worktreesRequiringCheck = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, WorktreeCleanupPolicy> _worktreesRequiringCheck = new(StringComparer.Ordinal);
+    private WorktreeCleanupPolicy CurrentWorktreePolicy => new((WorktreeCleanupMode)WorktreeRulePicker.SelectedIndex,
+        (int)Math.Round(WorktreeAgeSlider.Value));
+
+    private static string DescribeWorktreePolicy(WorktreeCleanupPolicy policy) => policy.Mode switch
+    {
+        WorktreeCleanupMode.Old => $"clean with no observed activity for at least {policy.InactiveDays} days (unmerged branches kept)",
+        WorktreeCleanupMode.Integrated => "clean and already in cached upstream, any age",
+        _ => $"clean, already in cached upstream and no observed activity for at least {policy.InactiveDays} days"
+    };
+
+    private void WorktreeRule_Changed(object sender, SelectionChangedEventArgs e) => WorktreeOptionsChanged();
+    private void WorktreeAge_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) => WorktreeOptionsChanged();
+
+    private void SelectWorktreeMatches_Click(object sender, RoutedEventArgs e)
+    {
+        if (_work is not null) return;
+        var paths = _cleanupGroups.FirstOrDefault(group => group.Key == "cleanup:old-worktrees")?.Locations
+            .Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
+        if (paths is null) return;
+        _changingOpportunitySelection = true;
+        try { foreach (var row in _rows) if (paths.Contains(row.Path)) row.Selected = true; }
+        finally { _changingOpportunitySelection = false; }
+        UpdateSelection();
+    }
+
+    private void WorktreeOptionsChanged()
+    {
+        if (!_opportunityBrowserReady || _syncOpportunityBrowser || _work is not null) return;
+        var policy = CurrentWorktreePolicy;
+        // Changing filters never adds a target. Checked worktrees outside the
+        // new rule are unchecked; retained targets adopt the displayed rule.
+        _changingOpportunitySelection = true;
+        try
+        {
+            foreach (var row in _rows.Where(row => row.Selected && row.Category == "Git worktrees"))
+            {
+                if (!_worktreeAssessments.TryGetValue(row.Path, out var assessment) || !policy.Matches(assessment, DateTime.UtcNow))
+                    row.Selected = false;
+            }
+            foreach (string path in _worktreesRequiringCheck.Keys.ToArray()) _worktreesRequiringCheck[path] = policy;
+        }
+        finally { _changingOpportunitySelection = false; }
+        RebuildWorktreeGroups(); ApplyOpportunityFilters();
+    }
+
+    private void RebuildWorktreeGroups()
+    {
+        var policy = CurrentWorktreePolicy;
+        var matching = _worktreeAssessments.Values.Where(item => policy.Matches(item, DateTime.UtcNow))
+            .Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
+        _cleanupGroups = _snapshot is { } scan ? CleanupGrouping.Build(scan, _rows.Select(row => row.Item).ToArray(), matching, worktreePolicy: policy) : [];
+        int total = _rows.Count(row => row.Category == "Git worktrees");
+        WorktreeCleanupControls.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
+        bool ageApplies = policy.Mode != WorktreeCleanupMode.Integrated;
+        WorktreeAgeSlider.IsEnabled = WorktreeAgeLabel.IsEnabled = ageApplies;
+        WorktreeAgeText.Text = ageApplies ? $"{policy.InactiveDays} {(policy.InactiveDays == 1 ? "day" : "days")}" : "Any age";
+        WorktreeRuleHint.Text = policy.Mode switch
+        {
+            WorktreeCleanupMode.Old => "Age uses file changes and Git activity, not access. Unmerged commits stay in their branches. Local changes are protected.",
+            WorktreeCleanupMode.Integrated => "Age is ignored. Uses locally cached upstream/default refs; no fetch. Local changes are protected; branches are kept.",
+            _ => "Age uses file changes and Git activity, not access. Uses cached upstream refs. Local changes are protected; branches are kept."
+        };
+        var group = _cleanupGroups.FirstOrDefault(item => item.Key == "cleanup:old-worktrees");
+        SelectWorktreeMatchesButton.IsEnabled = group is { Locations.Count: > 0 };
+        WorktreeCheckSummary.Text = _worktreeAssessments.Count == 0
+            ? $"{total:N0} worktrees found · Check worktrees to see which match."
+            : $"{matching.Count:N0} {(matching.Count == 1 ? "worktree matches" : "worktrees match")} · {SizeText.Format(group?.ObservedBytes ?? 0)} observed · {_worktreeAssessments.Count:N0} of {total:N0} checked";
+    }
 
     private async void CheckWorktrees_Click(object sender, RoutedEventArgs e)
     {
@@ -41,7 +111,7 @@ public partial class MainWindow
                 if (_closing || !ReferenceEquals(_snapshot, scan)) return;
                 _worktreeAssessments[result.Path] = result;
             }
-            StatusText.Text = $"Worktree check complete · {_worktreeAssessments.Values.Count(item => item.Recommended):N0} old, clean, integrated checkouts found.";
+            StatusText.Text = $"Worktree check complete · {_worktreeAssessments.Values.Count(item => CurrentWorktreePolicy.Matches(item, DateTime.UtcNow)):N0} worktrees match the cleanup rule.";
         }
         catch (OperationCanceledException)
         {
@@ -51,25 +121,24 @@ public partial class MainWindow
         }
         finally
         {
-            log.Record("worktree-check-complete", new { Checked = _worktreeAssessments.Count, Recommended = _worktreeAssessments.Values.Count(item => item.Recommended),
+            log.Record("worktree-check-complete", new { Checked = _worktreeAssessments.Count, Matching = _worktreeAssessments.Values.Count(item => CurrentWorktreePolicy.Matches(item, DateTime.UtcNow)), Policy = CurrentWorktreePolicy,
                 ElapsedMs = timer.Elapsed.TotalMilliseconds, Cancelled = work.IsCancellationRequested, LimitReached = budget.IsCancellationRequested && !work.IsCancellationRequested });
             _work = null;
             if (!_closing && ReferenceEquals(_snapshot, scan))
             {
-                _cleanupGroups = CleanupGrouping.Build(scan, _rows.Select(row => row.Item).ToArray(),
-                    _worktreeAssessments.Values.Where(item => item.Recommended).Select(item => item.Path).ToHashSet(StringComparer.Ordinal));
-                WorktreeCheckSummary.Visibility = Visibility.Visible;
-                WorktreeCheckSummary.Text = $"{_worktreeAssessments.Count:N0} of {locations.Length:N0} checked · {_worktreeAssessments.Values.Count(item => item.Recommended):N0} old, clean and integrated. "
-                    + "30-day activity threshold · Cached remote refs; no fetch · Rechecked before cleanup. Recycling keeps branches and Git registration.";
+                RebuildWorktreeGroups();
                 ApplyOpportunityFilters(); ShowActionLogError(log); SetBusy(false);
             }
         }
     }
 
-    private string[] SelectedCheckedWorktrees(IReadOnlyList<Opportunity> selected)
+    private IReadOnlyDictionary<string, WorktreeCleanupPolicy> SelectedCheckedWorktrees(IReadOnlyList<Opportunity> selected)
     {
-        _worktreesRequiringCheck.UnionWith(_worktreeAssessments.Values.Where(item => item.Recommended
-            && selected.Any(location => GitWorktreeGuard.Covers(location.Path, item.Path))).Select(item => item.Path));
-        return _worktreesRequiringCheck.Where(path => selected.Any(location => GitWorktreeGuard.Covers(location.Path, path))).ToArray();
+        foreach (var row in _rows.Where(row => row.Category == "Git worktrees"))
+            if (selected.Any(location => GitWorktreeGuard.Covers(location.Path, row.Path)))
+                _worktreesRequiringCheck.TryAdd(row.Path, CurrentWorktreePolicy);
+        var captured = _worktreesRequiringCheck.Where(item => selected.Any(location => GitWorktreeGuard.Covers(location.Path, item.Key)))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        return new ReadOnlyDictionary<string, WorktreeCleanupPolicy>(captured);
     }
 }

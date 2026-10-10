@@ -181,7 +181,21 @@
                     <StackPanel Margin="0,0,0,12">
                         <TextBlock Text="Choose what to clean up" FontSize="20" FontWeight="SemiBold" />
                         <TextBlock Text="Select a group, then review cleanup. Nothing moves until you confirm." FontSize="12" Opacity="0.7" Margin="0,5,0,0" />
-                        <TextBlock x:Name="WorktreeCheckSummary" TextWrapping="Wrap" FontSize="12" Opacity="0.7" Margin="0,7,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                        <Border x:Name="WorktreeCleanupControls" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,12,0,0" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="250" /><ColumnDefinition Width="14" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="80" /></Grid.ColumnDefinitions>
+                                <ComboBox x:Name="WorktreeRulePicker" SelectedIndex="0" SelectionChanged="WorktreeRule_Changed" AutomationProperties.Name="Worktree cleanup rule">
+                                    <ComboBoxItem Content="Old and already in upstream" /><ComboBoxItem Content="Old worktrees" /><ComboBoxItem Content="Already in upstream · any age" />
+                                </ComboBox>
+                                <Label x:Name="WorktreeAgeLabel" Grid.Column="2" Content="_Inactive for at least" Target="{Binding ElementName=WorktreeAgeSlider}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <Slider x:Name="WorktreeAgeSlider" Grid.Column="3" Minimum="1" Maximum="365" Value="30" TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="7" ValueChanged="WorktreeAge_Changed" VerticalAlignment="Center" AutomationProperties.Name="Worktree inactivity threshold in days" ToolTip="Latest observed file change or Git reflog activity; actual file access is not tracked." />
+                                <TextBlock x:Name="WorktreeAgeText" Grid.Column="4" Text="30 days" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                <TextBlock x:Name="WorktreeRuleHint" Grid.Row="1" Grid.ColumnSpan="5" Text="Age uses file changes and Git activity, not access. Local changes are protected; branches are kept." FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,7,0,0" />
+                                <TextBlock x:Name="WorktreeCheckSummary" Grid.Row="2" Grid.ColumnSpan="3" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,7,12,0" AutomationProperties.LiveSetting="Polite" />
+                                <Button x:Name="SelectWorktreeMatchesButton" Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Content="Select matching worktrees" Click="SelectWorktreeMatches_Click" IsEnabled="False" HorizontalAlignment="Right" Margin="0,7,0,0" Padding="9,5" />
+                            </Grid>
+                        </Border>
                     </StackPanel>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ItemsControl x:Name="CleanupGroupCards" AutomationProperties.Name="Cleanup checklist">

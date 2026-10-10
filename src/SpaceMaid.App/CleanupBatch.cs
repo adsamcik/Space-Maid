@@ -26,7 +26,7 @@ internal static class CleanupBatch
 {
     internal static async Task<CleanupBatchResult> ExecuteAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
-        IReadOnlyList<string>? checkedWorktrees = null)
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null)
     {
         var results = plan.BlockedLocations.Select(item => new CleanupLocationResult(item.Opportunity,
             CleanupOutcome.Skipped, item.Reason)).ToList();
@@ -62,9 +62,10 @@ internal static class CleanupBatch
                     // Retain the pre-confirmation native identity even for a
                     // logical-only scan; never capture a replacement's identity.
                     await Task.Run(target.ValidateCurrent, token);
-                    if (checkedWorktrees?.Any(path => GitWorktreeGuard.Covers(target.Path, path)) == true)
+                    if (checkedWorktrees?.Keys.Any(path => GitWorktreeGuard.Covers(target.Path, path)) == true)
                         progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking worktree Git state again…"));
-                    var gitBlocks = await GitWorktreeGuard.CheckAsync(validation.Snapshot, [location], checkedWorktrees ?? [], token, diagnostic);
+                    var gitBlocks = await GitWorktreeGuard.CheckAsync(validation.Snapshot, [location],
+                        checkedWorktrees ?? new Dictionary<string, WorktreeCleanupPolicy>(), token, diagnostic);
                     if (gitBlocks.TryGetValue(location.Path, out string? reason)) throw new InvalidOperationException(reason);
                     token.ThrowIfCancellationRequested();
                     progress.Report(new(completed, plan.Targets.Count, target.Path, "Moving to Recycle Bin…"));

@@ -98,8 +98,13 @@ public sealed class OpportunityGroupingTests
         var groups = CleanupGrouping.Build(scan, findings, checkedPaths);
         Assert.Equal(7, groups.Count); Assert.Equal(1200, groups.Sum(group => group.Locations.Count));
         Assert.Equal(50, Assert.Single(groups, group => group.Name == "Old integrated worktrees").Locations.Count);
-        Assert.Equal(150, Assert.Single(groups, group => group.Name == "Worktrees to review").Locations.Count);
+        Assert.Equal(150, Assert.Single(groups, group => group.Name == "Other worktrees").Locations.Count);
         Assert.Equal(scan.AllocatedBytes, groups.Sum(group => group.ObservedBytes));
+        var ageGroup = Assert.Single(CleanupGrouping.Build(scan, findings, checkedPaths, worktreePolicy: new(WorktreeCleanupMode.Old, 60)), group => group.Name == "Old clean worktrees");
+        Assert.Contains("60 days", ageGroup.Summary); Assert.Contains("Unmerged commits", ageGroup.Summary);
+        Assert.Equal(50, ageGroup.Locations.Count);
+        var integratedGroup = Assert.Single(CleanupGrouping.Build(scan, findings, checkedPaths, worktreePolicy: new(WorktreeCleanupMode.Integrated)), group => group.Name == "Worktrees already in upstream");
+        Assert.Equal("Checked locally · Any age", integratedGroup.Kind); Assert.Contains("cached", integratedGroup.Summary);
         Assert.Throws<OperationCanceledException>(() => CleanupGrouping.Build(scan, findings, token: new(true)));
     }
 

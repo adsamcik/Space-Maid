@@ -33,11 +33,11 @@ public partial class MainWindow
             _opportunityGroups = new([], []); _activeOpportunityGroup = null;
             _cleanupGroups = []; _worktreeAssessments.Clear(); _cleanupDrillDown = false;
             _worktreesRequiringCheck.Clear();
-            WorktreeCheckSummary.Visibility = Visibility.Collapsed;
             OpportunitySearch.Text = "";
             OpportunityTypeFilter.ItemsSource = new[] { "All types" }; OpportunityTypeFilter.SelectedIndex = 0;
         }
         finally { _syncOpportunityBrowser = false; }
+        RebuildWorktreeGroups();
         ApplyOpportunityFilters();
     }
     private void PublishOpportunities(ScanSnapshot scan, IReadOnlyList<Opportunity> locations, OpportunityGroupSet groups,
@@ -46,9 +46,9 @@ public partial class MainWindow
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
         _rows.Clear(); _opportunityGroups = groups;
         if (!preserveScope) _worktreesRequiringCheck.Clear();
-        else _worktreesRequiringCheck.RemoveWhere(path => selectedPaths is null || !selectedPaths.Any(selected => GitWorktreeGuard.Covers(selected, path)));
-        _worktreeAssessments.Clear(); WorktreeCheckSummary.Visibility = Visibility.Collapsed;
-        _cleanupGroups = CleanupGrouping.Build(scan, locations);
+        else foreach (string path in _worktreesRequiringCheck.Keys.Where(path => selectedPaths is null || !selectedPaths.Any(selected => GitWorktreeGuard.Covers(selected, path))).ToArray())
+            _worktreesRequiringCheck.Remove(path);
+        _worktreeAssessments.Clear();
         var owners = groups.Projects.SelectMany(group => group.Locations.Select(item => (item.DirectoryIndex, Group: group)))
             .DistinctBy(item => item.DirectoryIndex).ToDictionary(item => item.DirectoryIndex, item => item.Group);
         foreach (var location in locations)
@@ -57,6 +57,7 @@ public partial class MainWindow
                 { Selected = selectedPaths?.Contains(location.Path) == true };
             row.PropertyChanged += Row_Changed; _rows.Add(row);
         }
+        RebuildWorktreeGroups();
         string? previousType = OpportunityTypeFilter.SelectedItem as string;
         _syncOpportunityBrowser = true;
         try
@@ -217,7 +218,8 @@ public partial class MainWindow
     {
         var choices = _rows.Where(row => row.Selected).Select(row => row.Item).ToArray();
         _ = SelectedCheckedWorktrees(choices);
-        _worktreesRequiringCheck.RemoveWhere(path => !choices.Any(choice => GitWorktreeGuard.Covers(choice.Path, path)));
+        foreach (string path in _worktreesRequiringCheck.Keys.Where(path => !choices.Any(choice => GitWorktreeGuard.Covers(choice.Path, path))).ToArray())
+            _worktreesRequiringCheck.Remove(path);
         int selected = _rows.Count(row => row.Selected);
         int hidden = selected - _visibleOpportunityRows.Count(row => row.Selected);
         bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown;

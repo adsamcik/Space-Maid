@@ -235,6 +235,7 @@ public partial class MainWindow : Window
         OpportunityFilters.IsEnabled = !busy;
         OpportunityToolbar.IsEnabled = !busy;
         CleanupGroupCards.IsEnabled = !busy;
+        WorktreeCleanupControls.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         if (!busy) DrainExplorerRecheck();
@@ -278,7 +279,10 @@ public partial class MainWindow : Window
         WorktreeDetailText.Visibility = assessment is null ? Visibility.Collapsed : Visibility.Visible;
         WorktreeDetailText.Text = assessment is null ? "" : assessment.Status + ": " + assessment.Reason
             + (assessment.Branch is null ? "" : "\nBranch: " + assessment.Branch)
-            + (assessment.IntegrationTarget is null ? "" : "\nIntegrated into cached ref: " + assessment.IntegrationTarget);
+            + (assessment.IntegrationTarget is null ? "" : "\nCompared with cached ref: " + assessment.IntegrationTarget)
+            + (assessment.LastActivityUtc is { } activity ? "\nLast observed activity: " + activity.ToLocalTime().ToString("g") : "\nLast observed activity: unavailable")
+            + (assessment.VerifiedClean ? "\nLocal tracked/untracked changes: none" : "")
+            + (assessment.Integrated ? "\nCommits already in upstream: yes" : "");
     }
 
     private async void Review_Click(object sender, RoutedEventArgs e) => await ReviewSelectionAsync();
@@ -297,10 +301,10 @@ public partial class MainWindow : Window
         var timer = Stopwatch.StartNew();
         try
         {
-            log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale });
+            log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale, WorktreePolicies = checkedWorktrees });
             var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record);
             var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
-                new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking old worktree… " + path; }));
+                new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking worktree… " + path; }));
             _worktreeCheckTask = gitCheck;
             IReadOnlyDictionary<string, string> gitBlocks;
             try { gitBlocks = await gitCheck; }
@@ -328,7 +332,9 @@ public partial class MainWindow : Window
                 + (excluded.Count == 1 ? "1 location was excluded because it is missing, changed or no longer matches. "
                     : excluded.Count > 1 ? $"{excluded.Count:N0} locations were excluded because they are missing, changed or no longer match. " : "")
                 + "Other folders retain earlier scan data.";
-            if (checkedWorktrees.Length > 0) note += " Old worktrees were checked again against local Git status and cached refs. Ignored contents are included; recycling preserves branches and leaves Git registration in place.";
+            if (checkedWorktrees.Count > 0) note += " Worktree rules checked: "
+                + string.Join("; ", checkedWorktrees.Values.Distinct().Select(DescribeWorktreePolicy))
+                + ". Ignored contents are included; recycling preserves branches and leaves Git registration in place.";
             StatusText.Text = plan.Preview.Locations.Count + plan.BlockedLocations.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
             log.Record("review-validation-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds,
                 Validated = validation.ValidatedLocations.Count, validation.ExcludedPaths, validation.CanMergeInventory, plan.Preview.EstimatedBytes, Blocked = plan.BlockedLocations.Count });

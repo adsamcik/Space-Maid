@@ -716,7 +716,7 @@ public sealed class DesktopTests
         Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
         var cards = (ItemsControl)window.FindName("CleanupGroupCards");
         Assert.Equal(4, cards.Items.Count); Assert.Empty(list.Items);
-        Assert.False(cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Worktrees to review").CanSelectGroup);
+        Assert.False(cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Other worktrees").CanSelectGroup);
         Assert.Equal(1000, cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Build files").Matches.Count);
         window.UpdateLayout();
         var firstCard = cards.ItemContainerGenerator.ContainerFromIndex(0);
@@ -749,6 +749,7 @@ public sealed class DesktopTests
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-groups-compact-{theme}.png"), 1020, 790);
         }
 #pragma warning restore WPF0001
+        CheckWorktreeFilters();
         grouping.SelectedIndex = 1;
         navigation.SelectedIndex = 0;
         Assert.Equal(200, navigation.Items.Count); Assert.Equal(20, list.Items.Count);
@@ -804,6 +805,91 @@ public sealed class DesktopTests
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-stale-dark.png"), 1220, 910);
         ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.DoesNotContain("selected", selection.Text);
+
+        void CheckWorktreeFilters()
+        {
+            // Cached facts exercise rule changes without running Git against this illustrative inventory.
+            var facts = (Dictionary<string, GitWorktreeAssessment>)typeof(MainWindow)
+                .GetField("_worktreeAssessments", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            var worktrees = locations.Where(item => item.Category == "Git worktrees").Take(4).ToArray();
+            var now = DateTime.UtcNow;
+            AddFact(0, 75, integrated: true); AddFact(1, 45, integrated: false);
+            AddFact(2, 10, integrated: true); AddFact(3, 100, integrated: true, clean: false);
+            var rebuild = typeof(MainWindow).GetMethod("RebuildWorktreeGroups", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            rebuild.Invoke(window, null);
+            typeof(MainWindow).GetMethod("ApplyOpportunityFilters", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [null]);
+            var rule = (ComboBox)window.FindName("WorktreeRulePicker");
+            var slider = (Slider)window.FindName("WorktreeAgeSlider");
+            var threshold = (TextBlock)window.FindName("WorktreeAgeText");
+            var summary = (TextBlock)window.FindName("WorktreeCheckSummary");
+            var selectMatches = (Button)window.FindName("SelectWorktreeMatchesButton");
+            Assert.Contains("1 worktree matches", summary.Text);
+            Assert.Single(MatchingGroup().Matches);
+            Assert.True(selectMatches.IsEnabled);
+            selectMatches.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var capture = typeof(MainWindow).GetMethod("SelectedCheckedWorktrees", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var firstCapture = Capture([worktrees[0]]);
+            Assert.Equal(WorktreeCleanupMode.OldAndIntegrated, firstCapture[worktrees[0].Path].Mode);
+
+            rule.SelectedIndex = 1; slider.Value = 35;
+            Assert.Equal("35 days", threshold.Text); Assert.True(slider.IsEnabled);
+            Assert.Equal(2, MatchingGroup().Matches.Count);
+            Assert.Single(MatchingGroup().Matches, row => row.Selected); // Never select new matches automatically.
+            Assert.Equal(WorktreeCleanupMode.Old, Capture([worktrees[0]])[worktrees[0].Path].Mode);
+            Assert.Equal(WorktreeCleanupMode.OldAndIntegrated, firstCapture[worktrees[0].Path].Mode); // Immutable review capture.
+            slider.Value = 90;
+            Assert.DoesNotContain(cards.Items.Cast<OpportunityGroupRow>(), row => row.Group.Key == "cleanup:old-worktrees");
+            Assert.False(selectMatches.IsEnabled);
+            Assert.DoesNotContain("selected", selection.Text);
+            rule.SelectedIndex = 2;
+            Assert.False(slider.IsEnabled); Assert.Equal("Any age", threshold.Text);
+            Assert.Equal(2, MatchingGroup().Matches.Count);
+            Assert.All(MatchingGroup().Matches, row => Assert.False(row.Selected));
+            Assert.Contains("2 worktrees match", summary.Text);
+            Assert.DoesNotContain(MatchingGroup().Matches, row => row.Path == worktrees[3].Path); // Local changes block every rule.
+            selectMatches.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.All(MatchingGroup().Matches, row => Assert.True(row.Selected));
+            var retained = Capture([worktrees[0], worktrees[2]]);
+            var selectedWorktrees = retained.Keys.ToHashSet(StringComparer.Ordinal);
+            publish.Invoke(window, [scan, locations, groups, selectedWorktrees, worktrees[0].Path, true]);
+            Assert.Empty(facts); // Refresh invalidates displayed checks, while selected paths retain their guard policy.
+            Assert.Equal(2, Capture([worktrees[0], worktrees[2]]).Count);
+            Assert.All(Capture([worktrees[0], worktrees[2]]).Values, policy => Assert.Equal(WorktreeCleanupMode.Integrated, policy.Mode));
+            Assert.All(retained.Values, policy => Assert.Equal(WorktreeCleanupMode.Integrated, policy.Mode));
+
+            foreach (var index in new[] { 0, 1, 2, 3 })
+                AddFact(index, index switch { 0 => 75, 1 => 45, 2 => 10, _ => 100 }, index != 1, index != 3);
+            rule.SelectedIndex = 1; slider.Value = 35;
+            Assert.DoesNotContain(MatchingGroup().Matches, row => row.Selected);
+            selectMatches.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("1 group selected · 2 folders", selection.Text);
+            Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+            ((TextBlock)window.FindName("StatusText")).Text = "Illustrative worktree checks · No Git commands or cleanup run";
+#pragma warning disable WPF0001
+            foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+            {
+                app.ThemeMode = mode;
+                string theme = mode == ThemeMode.Light ? "light" : "dark";
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"worktree-cleanup-{theme}.png"), 1220, 910);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"worktree-cleanup-compact-{theme}.png"), 1020, 790);
+            }
+#pragma warning restore WPF0001
+            ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            rule.SelectedIndex = 0; slider.Value = 30;
+            publish.Invoke(window, [scan, locations, groups, null, null, false]);
+            Assert.Equal(4, cards.Items.Count);
+
+            OpportunityGroupRow MatchingGroup() => cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Group.Key == "cleanup:old-worktrees");
+            IReadOnlyDictionary<string, WorktreeCleanupPolicy> Capture(Opportunity[] chosen) =>
+                (IReadOnlyDictionary<string, WorktreeCleanupPolicy>)capture.Invoke(window, [chosen])!;
+            void AddFact(int index, int days, bool integrated, bool clean = true)
+            {
+                var activity = now.AddDays(-days);
+                facts[worktrees[index].Path] = new(worktrees[index].Path, clean && integrated && days >= 30, "Fixture", "Illustrative facts",
+                    LastObservedModificationUtc: activity, LastReflogActivityUtc: activity,
+                    VerifiedClean: clean, Integrated: integrated, HasActivityEvidence: true);
+            }
+        }
 
         (int Index, ulong Identity) Folder(ulong parent, string name)
         { ulong identity = id++; int index = builder.AddFile(new(new(identity), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(index, new(parent), name); return (index, identity); }

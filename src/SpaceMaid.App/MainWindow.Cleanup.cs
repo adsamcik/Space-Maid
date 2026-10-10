@@ -11,7 +11,7 @@ public partial class MainWindow
 
     private async Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, ScanSnapshot displayed,
         IProgress<CleanupProgress> progress, CancellationToken token, CancellationTokenSource reviewWork, ScanLog log,
-        IReadOnlyList<string>? checkedWorktrees = null)
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null)
     {
         using var work = CancellationTokenSource.CreateLinkedTokenSource(token, reviewWork.Token);
         _work = work;

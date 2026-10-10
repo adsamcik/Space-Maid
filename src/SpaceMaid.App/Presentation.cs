@@ -57,7 +57,7 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public string Kind => Group.Kind;
     public bool CanSelectGroup => Group.Key != "cleanup:worktrees";
     public string SelectionHint => CanSelectGroup ? "Select this group for fresh validation and cleanup review."
-        : "Use Check worktrees to find old, clean, integrated checkouts, or View folders to review other checkouts individually.";
+        : "Use Check worktrees and adjust the worktree cleanup rule to find matching clean checkouts. View folders to inspect the other checkouts.";
     public bool? Checked => _selected == 0 ? false : _selected == Matches.Count ? true : null;
     public string Count => (Matches.Count == Group.Locations.Count ? $"{Matches.Count:N0} locations" : $"{Matches.Count:N0} of {Group.Locations.Count:N0} locations")
         + (_selected > 0 ? $" · {_selected:N0} selected" : "");

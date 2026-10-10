@@ -21,6 +21,8 @@ public sealed class GitWorktreeAnalyzerTests
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var result = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
         Assert.True(result.Recommended, result.Status + ": " + result.Reason);
+        Assert.True(result.VerifiedClean); Assert.True(result.Integrated); Assert.True(result.HasActivityEvidence);
+        Assert.True(WorktreeCleanupPolicy.Default.Matches(result, DateTime.UtcNow));
         Assert.Equal("Stale worktree", result.Status); Assert.Equal("old", result.Branch);
         Assert.Equal("refs/remotes/origin/main", result.IntegrationTarget);
         Assert.True(result.LastObservedModificationUtc <= repo.Old.AddSeconds(2));
@@ -47,6 +49,9 @@ public sealed class GitWorktreeAnalyzerTests
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var result = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
         Assert.False(result.Recommended); Assert.Equal("Local changes", result.Status);
+        Assert.False(result.VerifiedClean);
+        foreach (var mode in Enum.GetValues<WorktreeCleanupMode>())
+            Assert.False(new WorktreeCleanupPolicy(mode, 1).Matches(result, DateTime.UtcNow));
         Assert.Equal("local work that must be preserved", File.ReadAllText(changed));
     }
 
@@ -58,9 +63,13 @@ public sealed class GitWorktreeAnalyzerTests
         await GitFixture.Run(repo.Checkout, repo.Old, "add", "--", "source.txt");
         await GitFixture.Run(repo.Checkout, repo.Old, "commit", "-m", "owned unique commit");
         GitFixture.Age(repo.Checkout, repo.Old);
+        await GitFixture.AgeReflogs(repo.Checkout, repo.Main, "old", repo.Old);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var unmatched = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
         Assert.False(unmatched.Recommended); Assert.Equal("Unmerged commits", unmatched.Status);
+        Assert.True(unmatched.VerifiedClean); Assert.False(unmatched.Integrated); Assert.True(unmatched.HasActivityEvidence);
+        Assert.True(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old).Matches(unmatched, DateTime.UtcNow));
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Integrated).Matches(unmatched, DateTime.UtcNow));
         await GitFixture.Run(repo.Main, repo.Old, "worktree", "lock", repo.Checkout);
         var locked = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
         Assert.False(locked.Recommended); Assert.Contains("locked", locked.Reason, StringComparison.Ordinal);
@@ -92,10 +101,25 @@ public sealed class GitWorktreeAnalyzerTests
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var recent = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
         Assert.False(recent.Recommended); Assert.Equal("Recent activity", recent.Status);
+        Assert.True(recent.VerifiedClean); Assert.True(recent.Integrated); Assert.True(recent.HasActivityEvidence);
+        Assert.True(new WorktreeCleanupPolicy(WorktreeCleanupMode.Integrated).Matches(recent, DateTime.UtcNow));
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old, 1).Matches(recent, DateTime.UtcNow));
+        var location = Finding(scan, repo.Checkout);
+        var integratedPolicy = new Dictionary<string, WorktreeCleanupPolicy>(StringComparer.Ordinal)
+            { [repo.Checkout] = new(WorktreeCleanupMode.Integrated) };
+        Assert.Empty(await GitWorktreeGuard.CheckAsync(scan, [location], integratedPolicy));
+        var agePolicy = new Dictionary<string, WorktreeCleanupPolicy>(StringComparer.Ordinal)
+            { [repo.Checkout] = new(WorktreeCleanupMode.Old, 1) };
+        var failedAge = await GitWorktreeGuard.CheckAsync(scan, [location], agePolicy);
+        Assert.Contains("captured cleanup condition", failedAge[repo.Checkout], StringComparison.Ordinal);
         string gitDir = (await GitFixture.Run(repo.Checkout, repo.Old, "rev-parse", "--absolute-git-dir")).Trim();
         File.Delete(Path.Join(gitDir, "logs", "HEAD"));
         var unavailable = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
         Assert.False(unavailable.Recommended); Assert.Contains("reflog activity evidence is unavailable", unavailable.Reason, StringComparison.Ordinal);
+        Assert.True(unavailable.VerifiedClean); Assert.True(unavailable.Integrated); Assert.False(unavailable.HasActivityEvidence);
+        Assert.Null(unavailable.LastActivityUtc);
+        Assert.True(new WorktreeCleanupPolicy(WorktreeCleanupMode.Integrated).Matches(unavailable, DateTime.UtcNow));
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old).Matches(unavailable, DateTime.UtcNow));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), new(true)));
     }
 
@@ -115,7 +139,7 @@ public sealed class GitWorktreeAnalyzerTests
         Assert.Equal("preserve fresh work", File.ReadAllText(local));
         // A stale cached scan is also refused using current source metadata.
         var stale = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
-        Assert.False(stale.Recommended); Assert.Equal("Recent activity", stale.Status);
+        Assert.False(stale.Recommended); Assert.Equal("Local changes", stale.Status); Assert.False(stale.VerifiedClean);
     }
 
     [Fact]
@@ -166,6 +190,43 @@ public sealed class GitWorktreeAnalyzerTests
         Assert.Equal("owned tracked source", File.ReadAllText(repo.Source));
     }
 
+    [Fact]
+    public async Task OldCleanCheckoutWithoutAnIntegrationReferenceStillHasVerifiedAgeFacts()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        await GitFixture.Run(repo.Main, repo.Old, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var location = Finding(scan, repo.Checkout);
+        var result = await GitWorktreeAnalyzer.AssessAsync(scan, location);
+        Assert.True(result.VerifiedClean, result.Reason); Assert.False(result.Integrated); Assert.True(result.HasActivityEvidence);
+        Assert.Equal("No integration evidence", result.Status); Assert.Null(result.IntegrationTarget);
+        Assert.True(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old, 40).Matches(result, DateTime.UtcNow));
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old, 60).Matches(result, DateTime.UtcNow));
+        var policies = new Dictionary<string, WorktreeCleanupPolicy>(StringComparer.Ordinal) { [repo.Checkout] = new(WorktreeCleanupMode.Old, 40) };
+        Assert.Empty(await GitWorktreeGuard.CheckAsync(scan, [location], policies));
+        policies[repo.Checkout] = new(WorktreeCleanupMode.Old, 60);
+        Assert.Contains(repo.Checkout, (await GitWorktreeGuard.CheckAsync(scan, [location], policies)).Keys);
+        Assert.Equal("owned tracked source", File.ReadAllText(repo.Source));
+        Assert.True(File.Exists(Path.Join(repo.Main, ".git", "refs", "heads", "old")));
+    }
+
+    [Fact]
+    public void CachedPolicyUsesLatestObservedActivityAndAnInclusiveValidatedCutoff()
+    {
+        var now = new DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc);
+        var result = new GitWorktreeAssessment("owned fixture", false, "Clean", "fixture",
+            LastObservedModificationUtc: now.AddDays(-60), LastReflogActivityUtc: now.AddDays(-45),
+            VerifiedClean: true, Integrated: true, HasActivityEvidence: true);
+        Assert.Equal(now.AddDays(-45), result.LastActivityUtc);
+        Assert.True(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old, 45).Matches(result, now));
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.OldAndIntegrated, 46).Matches(result, now));
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old, 45).Matches(result with { LastReflogActivityUtc = now.AddDays(-45).AddTicks(1) }, now));
+        Assert.True(new WorktreeCleanupPolicy(WorktreeCleanupMode.Integrated, 365).Matches(result, now));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new WorktreeCleanupPolicy(InactiveDays: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new WorktreeCleanupPolicy(InactiveDays: 366));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new WorktreeCleanupPolicy((WorktreeCleanupMode)99));
+    }
+
     private static Opportunity Finding(ScanSnapshot scan, string path) => Assert.Single(OpportunityDetector.Find(scan), finding => finding.Path == path);
 
     private sealed record GitFixture(string Main, string Parent, string Checkout, string Source, DateTime Old) : IDisposable
@@ -205,6 +266,12 @@ public sealed class GitWorktreeAnalyzerTests
             foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)) File.SetLastWriteTimeUtc(file, old);
             foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)) Directory.SetLastWriteTimeUtc(directory, old);
             Directory.SetLastWriteTimeUtc(root, old);
+        }
+        public static async Task AgeReflogs(string checkout, string main, string branch, DateTime old)
+        {
+            string gitDir = (await Run(checkout, old, "rev-parse", "--absolute-git-dir")).Trim();
+            File.SetLastWriteTimeUtc(Path.Join(gitDir, "logs", "HEAD"), old);
+            File.SetLastWriteTimeUtc(Path.Join(main, ".git", "logs", "refs", "heads", branch), old);
         }
         public static async Task<string> Run(string root, DateTime date, params string[] arguments)
         {
