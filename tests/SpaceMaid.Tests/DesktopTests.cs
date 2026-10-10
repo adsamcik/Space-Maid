@@ -38,6 +38,7 @@ public sealed class DesktopTests
                 app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/SpaceMaid.App;component/Styles.xaml", UriKind.Relative) });
                 stage = "constructing main window";
                 var window = new MainWindow();
+                window.LogDirectory = Path.Join(fixture.Path, "diagnostics");
                 // Exercise real native layout offscreen. Detached content can be
                 // remeasured with an unbounded viewport by ScrollIntoView.
                 window.ShowActivated = false;
@@ -56,7 +57,13 @@ public sealed class DesktopTests
                 var scanButton = (Button)window.FindName("ScanButton");
                 stage = "scanning fixture through the UI";
                 scanButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(Visibility.Visible, ((Button)window.FindName("OpenLogButton")).Visibility);
                 PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(15));
+                string logFile = Assert.Single(Directory.GetFiles(window.LogDirectory, "*.jsonl"));
+                string events = File.ReadAllText(logFile);
+                Assert.Contains("backend-selected", events);
+                Assert.Contains("app-scan-complete", events);
+                Assert.Contains("Standard Windows scan", ((TextBlock)window.FindName("BackendStatusText")).Text);
                 var grid = (ListBox)window.FindName("OpportunityGrid");
                 var row = Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>()));
                 Assert.Equal(bin, row.Path);
@@ -146,6 +153,10 @@ public sealed class DesktopTests
                 PumpUntil(() => tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1) is not null, TimeSpan.FromSeconds(10));
                 Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100, "Scrolling realized the whole wide folder.");
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
+                picker.ItemsSource = new[] { new DriveChoice(Path.GetPathRoot(fixture.Path)!, "Another target", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };
+                picker.SelectedIndex = 0;
+                Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
+                Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BackendStatusText")).Visibility);
                 stage = "closing windows";
                 startup.Close(); review.Close(); details.Close(); window.Close();
             }

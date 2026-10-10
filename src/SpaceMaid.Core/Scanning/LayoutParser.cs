@@ -48,9 +48,14 @@ internal static class LayoutParser
                     if ((byteLength & 1) != 0) throw Bad();
                     Require(record[..streamEnd], stream + 48, checked((int)byteLength));
                     var identifier = MemoryMarshal.Cast<byte, char>(record.Slice(stream + 48, (int)byteLength));
-                    // Version 1 reserves AttributeTypeCode; its identifier still names the type.
-                    bool isData = version == 2 ? U32(record, stream + 36) == 0x80
-                        : identifier.EndsWith(":$DATA", StringComparison.OrdinalIgnoreCase);
+                    // Current NTFS returns typed version-1 entries too. Unnamed
+                    // DATA streams have an empty identifier, so use the type code.
+                    uint type = U32(record, stream + 36);
+                    bool isData = type == 0x80 || (version == 1 && type == 0
+                        && identifier.EndsWith(":$DATA", StringComparison.OrdinalIgnoreCase));
+                    if (version == 1 && type == 0 && identifier.IsEmpty
+                        && (I64(record, stream + 24) != 0 || I64(record, stream + 16) != 0))
+                        throw new InvalidDataException("NTFS returned an ambiguous stream type; allocation cannot be identified reliably.");
                     if (isData)
                     {
                         long size = I64(record, stream + 24), allocation = I64(record, stream + 16);

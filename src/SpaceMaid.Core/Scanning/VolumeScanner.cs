@@ -10,11 +10,11 @@ namespace SpaceMaid.Core.Scanning;
 public sealed class VolumeScanner
 {
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
-        CancellationToken cancellationToken = default, bool preferFast = true) =>
-        Task.Run(() => Scan(path, progress, cancellationToken, preferFast), cancellationToken);
+        CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null) =>
+        Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic), cancellationToken);
 
     private static ScanSnapshot Scan(string path, IProgress<ScanProgress>? progress,
-        CancellationToken token, bool preferFast)
+        CancellationToken token, bool preferFast, Action<ScanDiagnostic>? diagnostic)
     {
         string target = Path.GetFullPath(path);
         if (!Directory.Exists(target)) throw new DirectoryNotFoundException("The selected drive or folder is unavailable.");
@@ -22,39 +22,55 @@ public sealed class VolumeScanner
         string root = Path.GetPathRoot(target)!;
         var timer = Stopwatch.StartNew();
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
-        var reporter = new ScanReporter(progress, timer);
+        var reporter = new ScanReporter(progress, diagnostic, timer, allocatedBefore);
+        reporter.Event("scan-start", $"Target: {target}; preferFast: {preferFast}");
         string? fallbackReason = null;
         if (preferFast && string.Equals(target, root, StringComparison.OrdinalIgnoreCase)
             && root.Length == 3 && new DriveInfo(root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
         {
             var fast = new ScanBuilder { AllStreams = true, CompleteVolumeLinks = true };
+            fast.WarningReported = message => reporter.Event("coverage-warning", message, fast);
+            reporter.UseBackend("Fast NTFS scan", "Attempting FSCTL_QUERY_FILE_LAYOUT (0x00090277).");
             try
             {
                 AcquireLayout(root, fast, reporter, token);
-                reporter.Report("Calculating totals", fast.Count, force: true);
-                return fast.Build(target, "Fast NTFS scan", timer.Elapsed, allocatedBefore, token);
+                return Finish(fast, "Fast NTFS scan");
             }
             catch (Exception ex) when (ex is Win32Exception or InvalidDataException)
             {
                 fallbackReason = ex is Win32Exception { NativeErrorCode: 5 }
                     ? "Fast NTFS access was unavailable. Standard scanning was used; administrator access can enable the fast scan."
                     : $"Fast NTFS scanning was unavailable ({ex.Message}). Standard scanning was used.";
+                reporter.Fallback(fallbackReason, fast, (ex as Win32Exception)?.NativeErrorCode);
             }
         }
         token.ThrowIfCancellationRequested();
         var standard = new ScanBuilder { FallbackReason = fallbackReason };
+        standard.WarningReported = message => reporter.Event("coverage-warning", message, standard);
         string backend = "Standard Windows scan";
+        reporter.UseBackend(backend, fallbackReason ?? "Using directory metadata enumeration; fast mode was not requested or the target is not a whole local NTFS volume.");
         try { AcquireDirectories(target, standard, reporter, token); }
         catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87)
         {
             standard = new ScanBuilder { AllocationData = false, FallbackReason =
                 (fallbackReason is null ? "" : fallbackReason + " ") +
                 "This filesystem does not provide usable file identities/allocation. Basic logical-size scanning was used." };
+            standard.WarningReported = message => reporter.Event("coverage-warning", message, standard);
+            reporter.Fallback(standard.FallbackReason, standard, ex.NativeErrorCode);
+            reporter.UseBackend("Basic folder scan", "Using logical-size-only enumeration.");
             AcquireBasic(target, standard, reporter, token);
             backend = "Basic folder scan";
         }
-        reporter.Report("Calculating totals", standard.Count, force: true);
-        return standard.Build(target, backend, timer.Elapsed, allocatedBefore, token);
+        return Finish(standard, backend);
+
+        ScanSnapshot Finish(ScanBuilder builder, string actualBackend)
+        {
+            reporter.Report("Calculating totals", builder, force: true);
+            reporter.Event("aggregation-start", "Resolving parents and calculating folder totals.", builder);
+            var snapshot = builder.Build(target, actualBackend, timer.Elapsed, allocatedBefore, token);
+            reporter.Event("scanner-complete", $"Acquisition: {snapshot.Metrics.Acquisition.TotalMilliseconds:0.###} ms; aggregation: {snapshot.Metrics.Aggregation.TotalMilliseconds:0.###} ms; allocation data: {snapshot.HasAllocationData}; all streams: {snapshot.IncludesAllDataStreams}; complete links: {snapshot.HasCompleteVolumeLinks}.", builder);
+            return snapshot;
+        }
     }
 
     private static unsafe void AcquireLayout(string root, ScanBuilder builder, ScanReporter reporter, CancellationToken token)
@@ -72,11 +88,13 @@ public sealed class VolumeScanner
                 token.ThrowIfCancellationRequested();
                 bool success;
                 int bytes;
+                long queryStarted = Stopwatch.GetTimestamp();
                 fixed (byte* inputPointer = input)
                 fixed (byte* outputPointer = output)
                     success = NativeMethods.DeviceIoControl(volume, NativeMethods.QueryFileLayout,
                         inputPointer, input.Length, outputPointer, size, out bytes, 0);
                 int error = success ? 0 : Marshal.GetLastPInvokeError();
+                reporter.QueryCompleted(queryStarted, success ? bytes : 0);
                 if (!success)
                 {
                     if (error == NativeMethods.HandleEof) break;
@@ -85,16 +103,19 @@ public sealed class VolumeScanner
                         ArrayPool<byte>.Shared.Return(output);
                         size *= 2;
                         output = ArrayPool<byte>.Shared.Rent(size);
+                        reporter.Event("buffer-growth", $"NTFS output buffer increased to {size:N0} bytes.", builder, error);
                         continue;
                     }
                     throw new Win32Exception(error);
                 }
                 if (bytes < 16 || bytes > size) throw new InvalidDataException("The NTFS metadata response has an invalid length.");
                 int before = builder.Count;
+                long parseStarted = Stopwatch.GetTimestamp();
                 LayoutParser.Parse(output.AsSpan(0, bytes), builder);
+                reporter.ParseCompleted(parseStarted);
                 if (builder.Count == before) throw new InvalidDataException("The NTFS enumeration made no forward progress.");
                 BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x36);
-                reporter.Report("Reading NTFS metadata", builder.Count);
+                reporter.Report("Reading NTFS metadata", builder);
             }
         }
         finally { ArrayPool<byte>.Shared.Return(output); }
@@ -123,24 +144,29 @@ public sealed class VolumeScanner
                 using var handle = OpenDirectory(directory.Path);
                 if (handle.IsInvalid)
                 {
-                    builder.Warn($"Could not read {directory.Path}: {new Win32Exception(Marshal.GetLastPInvokeError()).Message}", directory.Id);
+                    int error = Marshal.GetLastPInvokeError();
+                    builder.Warn($"Could not read {directory.Path}: Win32 {error}: {new Win32Exception(error).Message}", directory.Id);
                     continue;
                 }
                 while (true)
                 {
                     token.ThrowIfCancellationRequested();
                     bool success;
+                    long queryStarted = Stopwatch.GetTimestamp();
                     fixed (byte* pointer = buffer)
                         success = NativeMethods.GetFileInformationByHandleEx(handle, 19, pointer, (uint)buffer.Length);
+                    int queryError = success ? 0 : Marshal.GetLastPInvokeError();
+                    reporter.QueryCompleted(queryStarted, 0); // This API does not return a byte count.
                     if (!success)
                     {
-                        int error = Marshal.GetLastPInvokeError();
+                        int error = queryError;
                         if (error == NativeMethods.NoMoreFiles) break;
                         if (directory.Id == rootId && error is 1 or 50 or 87) throw new Win32Exception(error);
-                        builder.Warn($"Could not finish reading {directory.Path}: {new Win32Exception(error).Message}", directory.Id);
+                        builder.Warn($"Could not finish reading {directory.Path}: Win32 {error}: {new Win32Exception(error).Message}", directory.Id);
                         break;
                     }
                     int offset = 0;
+                    long parseStarted = Stopwatch.GetTimestamp();
                     while (true)
                     {
                         LayoutParser.Require(buffer, offset, 88);
@@ -175,7 +201,8 @@ public sealed class VolumeScanner
                         if (next == 0) break;
                         offset = end;
                     }
-                    reporter.Report("Reading folders", builder.Count);
+                    reporter.ParseCompleted(parseStarted);
+                    reporter.Report("Reading folders", builder);
                 }
             }
         }
@@ -216,7 +243,7 @@ public sealed class VolumeScanner
                             builder.Warn($"Reparse directory not followed: {Path.Join(directory.Path, entry.Name)}", id);
                         else pending.Enqueue((Path.Join(directory.Path, entry.Name), id));
                     }
-                    reporter.Report("Reading folders", builder.Count);
+                    reporter.Report("Reading folders", builder);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -224,14 +251,42 @@ public sealed class VolumeScanner
         }
     }
 
-    private sealed class ScanReporter(IProgress<ScanProgress>? progress, Stopwatch timer)
+    private sealed class ScanReporter(IProgress<ScanProgress>? progress, Action<ScanDiagnostic>? diagnostic, Stopwatch timer, long allocatedBefore)
     {
         private long _lastUpdate = -250;
-        public void Report(string phase, int files, bool force = false)
+        private long _lastDiagnostic = -1000, _queries, _batches, _returnedBytes;
+        private double _queryMs, _parseMs;
+        private string _backend = "Selecting backend";
+        private string? _fallback;
+        public void QueryCompleted(long started, int bytes) { _queries++; _returnedBytes += bytes; _queryMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
+        public void ParseCompleted(long started) { _batches++; _parseMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
+        public void UseBackend(string backend, string message)
+        {
+            _backend = backend;
+            Event("backend-selected", message);
+            progress?.Report(new("Starting metadata acquisition", 0, timer.Elapsed, _backend, _fallback));
+        }
+        public void Fallback(string reason, ScanBuilder builder, int? error)
+        {
+            _fallback = reason;
+            Event("backend-fallback", reason, builder, error);
+            progress?.Report(new("Switching scanner", builder.Count, timer.Elapsed, _backend, _fallback));
+        }
+        public void Event(string eventName, string message, ScanBuilder? builder = null, int? error = null)
+        {
+            if (diagnostic is null) return;
+            using var process = Process.GetCurrentProcess();
+            diagnostic(new(eventName, _backend, message, timer.ElapsedMilliseconds, builder?.Count ?? 0,
+                builder?.NameCount ?? 0, builder?.WarningCount ?? 0, _queries, _batches, _returnedBytes, _queryMs, _parseMs,
+                process.WorkingSet64, GC.GetTotalMemory(false), GC.GetTotalAllocatedBytes(false) - allocatedBefore, error));
+        }
+        public void Report(string phase, ScanBuilder builder, bool force = false)
         {
             if (!force && timer.ElapsedMilliseconds - _lastUpdate < 250) return;
             _lastUpdate = timer.ElapsedMilliseconds;
-            progress?.Report(new(phase, files, timer.Elapsed));
+            progress?.Report(new(phase, builder.Count, timer.Elapsed, _backend, _fallback));
+            if (force || timer.ElapsedMilliseconds - _lastDiagnostic >= 1000)
+            { _lastDiagnostic = timer.ElapsedMilliseconds; Event("progress", phase, builder); }
         }
     }
 }

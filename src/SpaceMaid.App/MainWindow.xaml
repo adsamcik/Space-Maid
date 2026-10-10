@@ -185,8 +185,10 @@
             <ProgressBar x:Name="ScanProgressBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,10" />
             <DockPanel>
                 <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" />
+                <Button x:Name="OpenLogButton" Content="Open log" Click="OpenLog_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" Margin="0,0,10,0" />
                 <TextBlock x:Name="StatusText" Text="Ready · Your files stay untouched" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" Opacity="0.7" AutomationProperties.LiveSetting="Polite" />
             </DockPanel>
+            <TextBlock x:Name="BackendStatusText" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
     </Grid>
 </Window>

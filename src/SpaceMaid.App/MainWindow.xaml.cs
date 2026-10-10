@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using SpaceMaid.Core.Analysis;
@@ -16,6 +17,8 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _work;
     private bool _closing;
     private bool _startupOffered;
+    private string? _scanLogPath;
+    internal string LogDirectory { get; set; } = ScanLog.DefaultDirectory;
 
     public MainWindow()
     {
@@ -57,6 +60,8 @@ public partial class MainWindow : Window
         }
         // Results always belong to the selected target, never the previous drive.
         ClearResults();
+        _scanLogPath = null;
+        OpenLogButton.Visibility = BackendStatusText.Visibility = Visibility.Collapsed;
     }
 
     private void ClearResults()
@@ -84,16 +89,33 @@ public partial class MainWindow : Window
         ClearResults();
         using var work = new CancellationTokenSource();
         _work = work;
+        using var log = new ScanLog(LogDirectory);
+        _scanLogPath = log.FilePath;
+        OpenLogButton.Visibility = _scanLogPath is null ? Visibility.Collapsed : Visibility.Visible;
+        OpenLogButton.ToolTip = _scanLogPath;
+        BackendStatusText.Visibility = Visibility.Visible;
+        BackendStatusText.Text = "Selecting scanner…";
+        log.Record("app-scan-start", new { Target = drive.Path, Administrator = Elevation.IsAdministrator,
+            Executable = Environment.ProcessPath, Version = typeof(App).Assembly.GetName().Version?.ToString(),
+            Build = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+            Runtime = Environment.Version.ToString(), OperatingSystem = Environment.OSVersion.ToString(), ProcessId = Environment.ProcessId });
         SetBusy(true);
         EmptyCaption.Text = "Reading file metadata. You can cancel at any time.";
         try
         {
             var progress = new Progress<ScanProgress>(p =>
             {
-                if (!_closing) StatusText.Text = $"{p.Phase} · {p.Files:N0} files · {p.Elapsed.TotalSeconds:0.0}s";
+                if (!_closing && ReferenceEquals(_work, work))
+                {
+                    StatusText.Text = $"{p.Phase} · {p.Files:N0} file objects · {p.Elapsed.TotalSeconds:0.0}s";
+                    BackendStatusText.Text = p.Backend + (p.FallbackReason is null ? "" : $" · {p.FallbackReason}")
+                        + (log.Error is null ? "" : $" · Logging unavailable: {log.Error}");
+                }
             });
-            var scan = await new VolumeScanner().ScanAsync(drive.Path, progress, work.Token);
+            var scan = await new VolumeScanner().ScanAsync(drive.Path, progress, work.Token, diagnostic: d => log.Record(d.Event, d));
+            BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : $" · {scan.FallbackReason}");
             StatusText.Text = "Finding development clutter…";
+            log.Record("detection-start", new { scan.FileCount, scan.DirectoryCount });
             var result = await Task.Run(() =>
             {
                 var timer = Stopwatch.StartNew();
@@ -105,7 +127,9 @@ public partial class MainWindow : Window
             work.Token.ThrowIfCancellationRequested();
             _snapshot = scan;
             _detectionElapsed = result.Elapsed;
+            log.Record("detection-complete", new { ElapsedMs = result.Elapsed.TotalMilliseconds, Opportunities = result.Opportunities.Count, result.Total.EstimatedBytes });
             var presentation = Stopwatch.StartNew();
+            log.Record("explorer-start", new { Root = scan.RootPath });
             foreach (var opportunity in result.Opportunities)
             {
                 var row = new OpportunityRow(opportunity, scan.HasAllocationData);
@@ -123,6 +147,11 @@ public partial class MainWindow : Window
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
             _presentationElapsed = presentation.Elapsed;
+            using var diagnosticProcess = Process.GetCurrentProcess();
+            log.Record("app-scan-complete", new { scan.Backend, scan.FallbackReason, scan.FileCount, scan.NameCount,
+                scan.WarningCount, scan.Warnings, scan.LogicalBytes, scan.AllocatedBytes, scan.Metrics,
+                DetectionMs = _detectionElapsed.TotalMilliseconds, ExplorerMs = _presentationElapsed.TotalMilliseconds,
+                ProcessPeakBytes = diagnosticProcess.PeakWorkingSet64 });
             _scanStatus = $"{scan.Backend} · {scan.RegularFileCount:N0} files · {scan.DirectoryCount:N0} folders · {(scan.Metrics.Acquisition + scan.Metrics.Aggregation + _detectionElapsed + _presentationElapsed).TotalSeconds:0.00}s"
                 + (scan.WarningCount > 0 ? $" · {scan.WarningCount:N0} coverage warnings" : "");
             StatusText.Text = _scanStatus;
@@ -136,14 +165,17 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            log.Record("scan-cancelled", new { Target = drive.Path });
             if (!_closing) { ClearResults(); StatusText.Text = "Scan cancelled."; EmptyCaption.Text = "Start another scan when you're ready."; TreeHint.Text = "Scan cancelled. Start another scan when you're ready."; }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
+            log.Record("scan-failed", new { Target = drive.Path, Error = ex.ToString(), Win32Error = (ex as Win32Exception)?.NativeErrorCode });
             if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; EmptyCaption.Text = "Check that the drive is connected and accessible, then try again."; }
         }
         finally
         {
+            if (!_closing && log.Error is not null) BackendStatusText.Text += $" · Logging unavailable: {log.Error}";
             _work = null;
             if (!_closing) SetBusy(false);
         }
@@ -162,6 +194,17 @@ public partial class MainWindow : Window
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
+    private void OpenLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (_scanLogPath is null) return;
+        try
+        {
+            var start = new ProcessStartInfo("notepad.exe") { UseShellExecute = true };
+            start.ArgumentList.Add(_scanLogPath);
+            using var process = Process.Start(start);
+        }
+        catch (Win32Exception ex) { StatusText.Text = $"Could not open the log: {ex.Message}"; }
+    }
     private void Row_Changed(object? sender, PropertyChangedEventArgs e) => UpdateSelection();
     private void UpdateSelection()
     {

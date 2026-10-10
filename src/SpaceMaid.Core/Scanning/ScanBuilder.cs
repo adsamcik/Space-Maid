@@ -14,6 +14,9 @@ internal sealed class ScanBuilder
     private readonly HashSet<FileIdentity> _incomplete = [];
 
     public int Count => _files.Count;
+    public int NameCount => _links.Count;
+    public int WarningCount => _omissions;
+    public Action<string>? WarningReported { get; set; }
     public int RootIndex { get; set; } = -1;
     public bool AllStreams { get; set; }
     public bool AllocationData { get; set; } = true;
@@ -48,6 +51,7 @@ internal sealed class ScanBuilder
         CompleteVolumeLinks = false;
         if (_warnings.Count < 8) _warnings.Add(message);
         if (directory is { } id) _incomplete.Add(id);
+        WarningReported?.Invoke(message);
     }
 
     public ScanSnapshot Build(string rootPath, string backend, TimeSpan acquisition,

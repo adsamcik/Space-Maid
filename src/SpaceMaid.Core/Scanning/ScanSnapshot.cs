@@ -13,7 +13,7 @@ internal readonly record struct NameLink(
     int FileIndex, FileIdentity ParentIdentity, int NameOffset, int NameLength,
     int ParentIndex = -1);
 
-public sealed record ScanProgress(string Phase, int Files, TimeSpan Elapsed);
+public sealed record ScanProgress(string Phase, int Files, TimeSpan Elapsed, string Backend = "", string? FallbackReason = null);
 public sealed record ScanMetrics(TimeSpan Acquisition, TimeSpan Aggregation, long ManagedAllocatedBytes,
     long PeakProcessWorkingSetBytes = 0);
 

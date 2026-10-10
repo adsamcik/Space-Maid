@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Security.Principal;
 using SpaceMaid.Core.Scanning;
 using Xunit;
 
@@ -9,6 +10,81 @@ namespace SpaceMaid.Tests;
 
 public sealed class ScannerTests
 {
+    [ElevatedNtfsFact]
+    public void NativeLayoutBatchPreservesTheMftDataStreamSizes()
+    {
+        string root = Path.GetPathRoot(Environment.CurrentDirectory)!;
+        Assert.Equal("NTFS", new DriveInfo(root).DriveFormat);
+        using var volume = NativeMethods.CreateFile(@"\\.\" + root[..2], 0x80000000, 7, 0, 3, 0, 0);
+        Assert.False(volume.IsInvalid, $"Volume access error: {Marshal.GetLastWin32Error()}");
+        byte[] input = new byte[32];
+        LayoutFixture.Put32(input, 4, 0x37); // Same whole-volume request as production, limited to one batch.
+        nint request = Marshal.AllocHGlobal(input.Length), response = Marshal.AllocHGlobal(1024 * 1024);
+        try
+        {
+            Marshal.Copy(input, 0, request, input.Length);
+            Assert.True(SetSparse(volume, NativeMethods.QueryFileLayout, request, input.Length, response, 1024 * 1024, out int bytes, 0), $"Layout query error: {Marshal.GetLastWin32Error()}");
+            byte[] batch = new byte[bytes]; Marshal.Copy(response, batch, 0, bytes);
+            int firstFile = (int)LayoutParser.U32(batch, 4);
+            ulong id = LayoutParser.U64(batch, firstFile + 16);
+            Assert.Equal(0UL, id & 0x0000FFFFFFFFFFFF); // The MFT itself.
+            int stream = firstFile + (int)LayoutParser.U32(batch, firstFile + 28);
+            while (LayoutParser.U32(batch, stream + 36) != 0x80)
+            {
+                uint next = LayoutParser.U32(batch, stream + 4);
+                Assert.NotEqual(0U, next); // Standard-information/name attributes can precede DATA.
+                stream += (int)next;
+            }
+            Assert.Equal(0x80U, LayoutParser.U32(batch, stream + 36));
+            long logical = LayoutParser.I64(batch, stream + 24), allocated = LayoutParser.I64(batch, stream + 16);
+            Assert.True(logical > 0 && allocated > 0);
+            var builder = new ScanBuilder { AllStreams = true };
+            LayoutParser.Parse(batch, builder);
+            var scan = builder.Build(root, "Native first-batch fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+            var mft = Assert.Single(scan.Records, file => file.Identity.Low == id);
+            Assert.True(mft.LogicalBytes >= logical);
+            Assert.True(mft.AllocatedBytes >= allocated);
+        }
+        finally { Marshal.FreeHGlobal(request); Marshal.FreeHGlobal(response); }
+    }
+
+    [Fact]
+    public void VersionOneTypedUnnamedDataIsIncludedAndOtherAttributesAreExcluded()
+    {
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(5), FileAttributes.Directory, 0, 0, 0));
+        byte[] batch = LayoutFixture.File(42, 5, "file", 1, 8192, 8192);
+        int stream = 16 + (int)LayoutParser.U32(batch, 44);
+        LayoutFixture.Put32(batch, stream, 1);
+        LayoutFixture.Put32(batch, stream + 48, 1); // A typed non-data entry with no identifier too.
+        LayoutFixture.Put32(batch, stream + 48 + 36, 0x10); // Observed STANDARD_INFORMATION type.
+        LayoutParser.Parse(batch, builder);
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+        Assert.Equal(8192, scan.LogicalBytes);
+        Assert.Equal(8192, scan.AllocatedBytes);
+    }
+
+    [Fact]
+    public void LegacyVersionOneNamedDataIsIncludedButUnknownUnnamedTypesAreRejected()
+    {
+        byte[] batch = LayoutFixture.File(42, 5, "file", 1, 1234, 4096);
+        int stream = batch.Length - 48; // Use the final record so a name can extend it.
+        Array.Resize(ref batch, batch.Length + 32);
+        LayoutFixture.Put32(batch, stream, 1);
+        LayoutFixture.Put32(batch, stream + 36, 0); // Legacy reserved field.
+        LayoutFixture.Put64(batch, stream + 16, 4096); LayoutFixture.Put64(batch, stream + 24, 12);
+        byte[] name = Encoding.Unicode.GetBytes(":extra:$DATA");
+        LayoutFixture.Put32(batch, stream + 44, (uint)name.Length); name.CopyTo(batch, stream + 48);
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(5), FileAttributes.Directory, 0, 0, 0));
+        LayoutParser.Parse(batch, builder);
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+        Assert.Equal(1246, scan.LogicalBytes);
+        Assert.Equal(8192, scan.AllocatedBytes);
+        LayoutFixture.Put32(batch, stream + 44, 0);
+        Assert.Throws<InvalidDataException>(() => LayoutParser.Parse(batch, new()));
+    }
+
     [Fact]
     public void LayoutPreservesCombinedDosNamesAndAddsOnlyDataStreams()
     {
@@ -73,12 +149,18 @@ public sealed class ScannerTests
         byte[] content = Enumerable.Range(0, 8192).Select(i => (byte)i).ToArray();
         await File.WriteAllBytesAsync(original, content);
         Assert.True(CreateHardLink(Path.Join(folder, "alias.bin"), original, 0), $"Hard link error: {Marshal.GetLastWin32Error()}");
-        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var diagnostics = new List<ScanDiagnostic>();
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false, diagnostic: diagnostics.Add);
         Assert.Equal(8192, scan.LogicalBytes);
         Assert.Equal(8192, scan.AllocatedBytes);
         Assert.Equal(4, scan.FileCount); // root, project, bin, one file object
         Assert.Equal(4, scan.NameCount); // two directories, two file names
         Assert.Empty(scan.Warnings);
+        Assert.Contains(diagnostics, d => d.Event == "backend-selected" && d.Backend == "Standard Windows scan");
+        var complete = Assert.Single(diagnostics, d => d.Event == "scanner-complete");
+        Assert.Equal(scan.FileCount, complete.FileObjects);
+        Assert.True(complete.QueryCount > 0);
+        Assert.Equal(scan.NameCount, complete.Names);
         Assert.Equal(content, await File.ReadAllBytesAsync(original));
     }
 
@@ -134,6 +216,17 @@ public sealed class ScannerTests
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLink(string name, string existing, nint security);
+
+}
+
+internal sealed class ElevatedNtfsFactAttribute : FactAttribute
+{
+    public ElevatedNtfsFactAttribute()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+            Skip = "Requires administrator access for the real NTFS layout query.";
+    }
 }
 
 internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
