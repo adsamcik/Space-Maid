@@ -28,7 +28,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         Activated += Window_Activated;
         UpdateTreeSortHeaders();
-        OpportunityGrid.ItemsSource = _rows;
+        InitializeOpportunityBrowser();
         var drives = new List<DriveChoice>();
         foreach (var drive in DriveInfo.GetDrives())
         {
@@ -84,6 +84,7 @@ public partial class MainWindow : Window
         _explorerReturnPending = false;
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
         _rows.Clear();
+        ResetOpportunityBrowser();
         DetailPanel.Visibility = Visibility.Collapsed;
         DetailHint.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Visible;
@@ -158,7 +159,7 @@ public partial class MainWindow : Window
                 var timer = Stopwatch.StartNew();
                 var opportunities = OpportunityDetector.Find(scan, work.Token);
                 var total = CleanupPlanner.Create(scan, opportunities, work.Token);
-                return (Opportunities: opportunities, Total: total, Elapsed: timer.Elapsed);
+                return (Opportunities: opportunities, Total: total, Groups: OpportunityGrouping.Build(scan, opportunities, work.Token), Elapsed: timer.Elapsed);
             }, work.Token);
             if (_closing) return;
             work.Token.ThrowIfCancellationRequested();
@@ -167,20 +168,11 @@ public partial class MainWindow : Window
             log.Record("detection-complete", new { ElapsedMs = result.Elapsed.TotalMilliseconds, Opportunities = result.Opportunities.Count, result.Total.EstimatedBytes });
             var presentation = Stopwatch.StartNew();
             log.Record("explorer-start", new { Root = scan.RootPath });
-            foreach (var opportunity in result.Opportunities)
-            {
-                var row = new OpportunityRow(opportunity, scan.HasAllocationData);
-                row.PropertyChanged += Row_Changed;
-                _rows.Add(row);
-            }
-            OpportunityHeading.Text = $"Opportunities  ·  {_rows.Count:N0}";
+            PublishOpportunities(scan, result.Opportunities, result.Groups);
             ScannedSizeLabel.Text = "Scanned";
             ScannedSizeText.Text = SizeText.Format(scan.HasAllocationData ? scan.AllocatedBytes : scan.LogicalBytes);
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
             CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "location" : "locations")} · overlapping paths counted once";
-            EmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            EmptyCaption.Text = "No matching development clutter was found in the accessible files.";
-            if (_rows.Count > 0) OpportunityGrid.SelectedIndex = 0;
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
             ScannedSizeCaption.Text = scan.HasAllocationData ? "Allocated · Shared files counted once"
@@ -239,6 +231,8 @@ public partial class MainWindow : Window
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         OpportunityGrid.IsEnabled = !busy;
+        GroupBrowserControls.IsEnabled = !busy;
+        OpportunityFilters.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         if (!busy) DrainExplorerRecheck();
@@ -265,12 +259,11 @@ public partial class MainWindow : Window
         }
         catch (Win32Exception ex) { StatusText.Text = $"Could not open the log: {ex.Message}"; }
     }
-    private void Row_Changed(object? sender, PropertyChangedEventArgs e) => UpdateSelection();
+    private void Row_Changed(object? sender, PropertyChangedEventArgs e)
+    { if (e.PropertyName == nameof(OpportunityRow.Selected) && !_changingOpportunitySelection) UpdateSelection(); }
     private void UpdateSelection()
     {
-        int selected = _rows.Count(row => row.Selected);
-        SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected" : "Select locations to preview cleanup";
-        ReviewButton.IsEnabled = selected > 0 && _work is null && !_scanStale;
+        UpdateOpportunitySelection();
     }
 
     private void Opportunity_Changed(object sender, SelectionChangedEventArgs e)
@@ -344,7 +337,7 @@ public partial class MainWindow : Window
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (_closing) { e.Cancel = _extensions is not null && !_extensionsClosed; return; }
-        _closing = true; _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        _closing = true; _opportunitySearchTimer.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         if (_extensions is null) return;
         e.Cancel = true;
         try { await _extensions.DisposeAsync(); }

@@ -631,6 +631,8 @@ public sealed class DesktopTests
                 Assert.True(Assert.IsType<ExplorerRow>(tree.SelectedItem).Expanded);
                 Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
+                stage = "browsing thousands of grouped opportunities and retaining hidden selections";
+                CheckOpportunityBrowser(window, app, artifactRoot);
                 stage = "closing windows";
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
@@ -657,6 +659,107 @@ public sealed class DesktopTests
     }
 
     private static long GiB(double value) => (long)(value * 1024 * 1024 * 1024);
+
+    private static void CheckOpportunityBrowser(MainWindow window, Application app, string artifactRoot)
+    {
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        ulong id = 2;
+        var folders = new List<(int Index, string Title, string Type)>();
+        for (int project = 0; project < 200; project++)
+        {
+            var repo = Folder(1, project == 0 ? "Chatty-NPC" : project == 1 ? "good-shit" : $"Project-{project:D3}");
+            Folder(repo.Identity, ".git");
+            for (int item = 0; item < 20; item++)
+            {
+                var module = Folder(repo.Identity, $"module-{item:D2}");
+                string name = (item % 4) switch { 0 => "obj", 1 => "node_modules", 2 => ".venv", _ => "checkout" };
+                var folder = Folder(module.Identity, name);
+                int file = builder.AddFile(new(new(id++), FileAttributes.Normal, (200 - project) * 256L * 1024, (200 - project) * 256L * 1024, 0));
+                builder.AddLink(file, new(folder.Identity), "data.bin");
+                if (item % 4 == 3)
+                { int marker = builder.AddFile(new(new(id++), FileAttributes.Normal, 0, 0, 0)); builder.AddLink(marker, new(folder.Identity), ".git"); }
+                folders.Add((folder.Index, (item % 4) switch { 0 => ".NET build output", 1 => "Node dependencies", 2 => "Python virtual environment", _ => "Linked Git checkout" },
+                    (item % 4) switch { 0 => "Build output", 1 => "Dependencies", 2 => "Python environments", _ => "Git worktrees" }));
+            }
+        }
+        var scan = builder.Build(@"G:\Github", "Illustrative inventory", TimeSpan.Zero, 0, default);
+        var locations = folders.Select(folder => OpportunityGroupingTests.Finding(scan, folder.Index, folder.Type) with { Title = folder.Title }).ToArray();
+        var groups = OpportunityGrouping.Build(scan, locations);
+        var load = window.InitializeExplorerAsync(scan, locations, default);
+        PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(10)); load.GetAwaiter().GetResult();
+        var publish = typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        publish.Invoke(window, [scan, locations, groups, null, null, false]);
+        ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        var list = (ListBox)window.FindName("OpportunityGrid");
+        var navigation = (ListBox)window.FindName("OpportunityGroupList");
+        var search = (TextBox)window.FindName("OpportunitySearch");
+        var grouping = (ComboBox)window.FindName("OpportunityGroupingPicker");
+        var filter = (ComboBox)window.FindName("OpportunityTypeFilter");
+        var selection = (TextBlock)window.FindName("SelectionText");
+        Assert.Equal(200, navigation.Items.Count); Assert.Equal(20, list.Items.Count);
+        Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+        Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.DoesNotContain(@"G:\", row.DisplayPath));
+        ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("20 locations selected", selection.Text);
+        search.Text = "good-shit";
+        PumpUntil(() => list.Items.Count == 20 && ((OpportunityRow)list.Items[0]).GroupName == "good-shit", TimeSpan.FromSeconds(3));
+        Assert.Single(navigation.Items.Cast<object>()); Assert.Contains("20 outside this view", selection.Text);
+        navigation.SelectedIndex = 0;
+        ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        grouping.SelectedIndex = 1; filter.SelectedItem = "Build output"; navigation.SelectedIndex = 0;
+        Assert.Equal(5, list.Items.Count); Assert.Contains("35 outside this view", selection.Text);
+        var selected = locations.Where(location => location.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || location.Path.Contains("good-shit", StringComparison.Ordinal)).Select(location => location.Path).ToHashSet(StringComparer.Ordinal);
+        publish.Invoke(window, [scan, locations, groups, selected, ((OpportunityRow)list.SelectedItem).Path, true]);
+        Assert.Equal("Build output", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+        Assert.Equal("good-shit", search.Text); Assert.Equal("Build output", filter.SelectedItem);
+        Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
+        search.Text = "no-such-location";
+        PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3));
+        Assert.Equal(Visibility.Visible, ((StackPanel)window.FindName("EmptyState")).Visibility);
+        Assert.Contains("40 outside this view", selection.Text);
+        int reviewed = 0;
+        var closeReview = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+        {
+            var review = app.Windows.OfType<ReviewWindow>().FirstOrDefault(dialog => dialog.IsVisible);
+            if (review is null) return;
+            reviewed = ((ListBox)review.FindName("LocationList")).Items.Count;
+            Assert.False(Descendants(review.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Clean up")).IsEnabled);
+            review.Close();
+        }, Dispatcher.CurrentDispatcher);
+        ((Button)window.FindName("ReviewButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => reviewed > 0, TimeSpan.FromSeconds(5)); closeReview.Stop(); Assert.Equal(40, reviewed);
+        search.Text = ""; filter.SelectedIndex = 0; grouping.SelectedIndex = 0;
+        ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(4000, list.Items.Count);
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-all.png"), 1220, 910);
+        Assert.InRange(Descendants(list).OfType<ListBoxItem>().Count(), 1, 80);
+        Assert.InRange(Descendants(navigation).OfType<ListBoxItem>().Count(), 1, 40);
+        navigation.SelectedItem = navigation.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Chatty-NPC");
+        ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
+        ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(scan.AllocatedBytes);
+        ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · 200 projects, 4,000 locations · Read-only review";
+#pragma warning disable WPF0001
+        foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+        {
+            app.ThemeMode = mode;
+            string theme = mode == ThemeMode.Light ? "light" : "dark";
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"opportunity-groups-{theme}.png"), 1220, 910);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"opportunity-groups-compact-{theme}.png"), 1020, 790);
+        }
+#pragma warning restore WPF0001
+        window.MarkScanStale("Illustrative out-of-date results; recheck or rescan.");
+        Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
+        Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+        Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-stale-dark.png"), 1220, 910);
+        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.DoesNotContain("selected", selection.Text);
+
+        (int Index, ulong Identity) Folder(ulong parent, string name)
+        { ulong identity = id++; int index = builder.AddFile(new(new(identity), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(index, new(parent), name); return (index, identity); }
+    }
 
     private static void AssertMapFillsPane(MainWindow window, TreemapPanel map)
     {

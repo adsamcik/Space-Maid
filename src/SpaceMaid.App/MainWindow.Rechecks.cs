@@ -65,7 +65,7 @@ public partial class MainWindow
         var analysis = await Task.Run(() =>
         {
             var opportunities = OpportunityDetector.Find(updated, token);
-            return (Opportunities: opportunities, Total: CleanupPlanner.Create(updated, opportunities, token));
+            return (Opportunities: opportunities, Total: CleanupPlanner.Create(updated, opportunities, token), Groups: OpportunityGrouping.Build(updated, opportunities, token));
         }, token);
         token.ThrowIfCancellationRequested();
         if (_closing || !ReferenceEquals(_snapshot, scan)) return;
@@ -85,16 +85,8 @@ public partial class MainWindow
         await DisplayEntryAsync(selection, CancellationToken.None);
         _selectionIsGroup = grouped;
         UpdateTreeSortHeaders();
-        foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
-        _rows.Clear();
-        foreach (var opportunity in analysis.Opportunities)
-        {
-            var row = new OpportunityRow(opportunity, updated.HasAllocationData) { Selected = selectedOpportunities.Contains(opportunity.Path) };
-            row.PropertyChanged += Row_Changed; _rows.Add(row);
-        }
-        OpportunityGrid.SelectedItem = _rows.FirstOrDefault(row => row.Path.Equals(detailPath, StringComparison.Ordinal)) ?? _rows.FirstOrDefault();
-        OpportunityHeading.Text = $"Opportunities · {_rows.Count:N0}"; OpportunitiesTab.Content = OpportunityHeading.Text;
-        EmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
+        OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
         CandidateCaption.Text = $"Estimate · {_rows.Count:N0} locations · overlapping paths counted once";
         ScannedSizeLabel.Text = "Scanned";

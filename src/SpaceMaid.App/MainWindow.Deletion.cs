@@ -119,7 +119,6 @@ public partial class MainWindow
         ScannedSizeCaption.Text = "Out of date · Recheck or rescan to refresh";
         CandidateCaption.Text = "Out of date · Recheck or rescan to recalculate";
         CandidateText.Text = "—";
-        OpportunityHeading.Text = "Opportunities · Previous scan";
         OpportunitiesTab.Content = "Opportunities · Out of date";
         UpdateSelection();
     }
