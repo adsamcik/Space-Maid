@@ -3,7 +3,7 @@ using SpaceMaid.Core.Scanning;
 namespace SpaceMaid.Core.Analysis;
 
 public sealed record OpportunityGroup(string Key, string Name, string Path, string Kind,
-    IReadOnlyList<Opportunity> Locations, long ObservedBytes);
+    IReadOnlyList<Opportunity> Locations, long ObservedBytes, string Summary = "");
 public sealed record OpportunityGroupSet(IReadOnlyList<OpportunityGroup> Projects, IReadOnlyList<OpportunityGroup> Types);
 
 // Uses the existing inventory only. Git markers establish folder context,

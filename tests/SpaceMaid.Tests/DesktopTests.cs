@@ -71,6 +71,13 @@ public sealed class DesktopTests
                 Assert.Contains("app-scan-complete", events);
                 Assert.Contains("Standard Windows scan", ((TextBlock)window.FindName("BackendStatusText")).Text);
                 var grid = (ListBox)window.FindName("OpportunityGrid");
+                Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
+                Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
+                var initialCards = (ItemsControl)window.FindName("CleanupGroupCards");
+                Assert.Equal("Build files", Assert.IsType<OpportunityGroupRow>(Assert.Single(initialCards.Items.Cast<object>())).Name);
+                ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+                window.UpdateLayout();
+                Descendants(initialCards).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 var row = Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>()));
                 Assert.Equal(bin, row.Path);
                 Assert.Equal("8 KiB", row.Size);
@@ -78,6 +85,7 @@ public sealed class DesktopTests
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
                 Assert.Equal("1 location selected", ((TextBlock)window.FindName("SelectionText")).Text);
                 Assert.Equal(row.Item, ((StackPanel)window.FindName("DetailPanel")).DataContext);
+                ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
                 stage = "navigating the real folder tree and treemap";
                 var tree = (ListBox)window.FindName("SpaceTree");
@@ -704,6 +712,45 @@ public sealed class DesktopTests
         var grouping = (ComboBox)window.FindName("OpportunityGroupingPicker");
         var filter = (ComboBox)window.FindName("OpportunityTypeFilter");
         var selection = (TextBlock)window.FindName("SelectionText");
+        grouping.SelectedIndex = 0;
+        Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
+        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
+        Assert.Equal(4, cards.Items.Count); Assert.Empty(list.Items);
+        Assert.False(cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Worktrees to review").CanSelectGroup);
+        Assert.Equal(1000, cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Build files").Matches.Count);
+        window.UpdateLayout();
+        var firstCard = cards.ItemContainerGenerator.ContainerFromIndex(0);
+        var groupCheck = Descendants(firstCard).OfType<CheckBox>().Single();
+        groupCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("1 group selected · 1,000 folders", selection.Text);
+        Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+        Descendants(firstCard).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(1000, list.Items.Count); Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
+        Assert.IsType<OpportunityRow>(list.Items[0]).Selected = false;
+        Assert.Equal(Visibility.Visible, ((Button)window.FindName("BackToCleanupButton")).Visibility);
+        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Empty(list.Items); Assert.Equal("1 group selected · 999 folders", selection.Text);
+        Assert.Null(cards.Items.Cast<OpportunityGroupRow>().First().Checked);
+        window.UpdateLayout();
+        Descendants(cards.ItemContainerGenerator.ContainerFromIndex(0)).OfType<CheckBox>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("1 group selected · 1,000 folders", selection.Text);
+        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
+        ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "Illustrative inventory · Shared files counted once";
+        ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(CleanupPlanner.Create(scan, locations).EstimatedBytes);
+        ((TextBlock)window.FindName("CandidateCaption")).Text = "4 cleanup groups · Illustrative inventory";
+        ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · 200 projects, 4,000 locations";
+#pragma warning disable WPF0001
+        foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+        {
+            app.ThemeMode = mode;
+            string theme = mode == ThemeMode.Light ? "light" : "dark";
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-groups-{theme}.png"), 1220, 910);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-groups-compact-{theme}.png"), 1020, 790);
+        }
+#pragma warning restore WPF0001
+        grouping.SelectedIndex = 1;
+        navigation.SelectedIndex = 0;
         Assert.Equal(200, navigation.Items.Count); Assert.Equal(20, list.Items.Count);
         Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
         Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.DoesNotContain(@"G:\", row.DisplayPath));
@@ -714,7 +761,7 @@ public sealed class DesktopTests
         Assert.Single(navigation.Items.Cast<object>()); Assert.Contains("20 outside this view", selection.Text);
         navigation.SelectedIndex = 0;
         ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        grouping.SelectedIndex = 1; filter.SelectedItem = "Build output"; navigation.SelectedIndex = 0;
+        grouping.SelectedIndex = 2; filter.SelectedItem = "Build output"; navigation.SelectedIndex = 0;
         Assert.Equal(5, list.Items.Count); Assert.Contains("35 outside this view", selection.Text);
         var selected = locations.Where(location => location.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || location.Path.Contains("good-shit", StringComparison.Ordinal)).Select(location => location.Path).ToHashSet(StringComparer.Ordinal);
         publish.Invoke(window, [scan, locations, groups, selected, ((OpportunityRow)list.SelectedItem).Path, true]);
@@ -730,7 +777,7 @@ public sealed class DesktopTests
         Assert.Equal(40, ((ListBox)preview.FindName("LocationList")).Items.Count);
         Assert.False(Descendants(preview.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Move to Recycle Bin")).IsEnabled);
         preview.Close();
-        search.Text = ""; filter.SelectedIndex = 0; grouping.SelectedIndex = 0;
+        search.Text = ""; filter.SelectedIndex = 0; grouping.SelectedIndex = 1;
         ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(4000, list.Items.Count);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-all.png"), 1220, 910);

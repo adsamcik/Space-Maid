@@ -23,7 +23,8 @@ public sealed record CleanupPreview
 
 public static class CleanupPlanner
 {
-    public static CleanupPlan Prepare(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default)
+    public static CleanupPlan Prepare(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default,
+        IReadOnlyDictionary<string, string>? blockedPaths = null)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
         token.ThrowIfCancellationRequested();
@@ -38,6 +39,8 @@ public static class CleanupPlanner
         foreach (var choice in selected)
         {
             token.ThrowIfCancellationRequested();
+            if (blockedPaths?.TryGetValue(choice.Path, out string? reason) == true)
+            { blocked.Add(new(choice, reason)); continue; }
             if (actual.TryGetValue((choice.DirectoryIndex, choice.Title, choice.Category, choice.Path), out var finding))
             { valid.Add(finding); originals.TryAdd(choice.DirectoryIndex, choice); }
             else blocked.Add(new(choice, "This location does not match an opportunity detected in the current inventory. Recheck it before cleanup."));

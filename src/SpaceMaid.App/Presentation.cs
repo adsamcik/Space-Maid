@@ -24,6 +24,7 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
     public string Category => Item.Category;
     public string Path => Item.Path;
     public string Size => unmeasured ? "Not checked" : SizeText.Format(Item.DisplayBytes(hasAllocation));
+    public bool IsUnmeasured => unmeasured;
     public long Bytes => Item.DisplayBytes(hasAllocation);
     public string GroupName => group?.Name ?? "";
     public string GroupKey => group?.Key ?? "";
@@ -49,12 +50,20 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public IReadOnlyList<OpportunityRow> Matches { get; } = matches;
     public string Name => Group.Name;
     public string Path => Group.Path;
-    public string Size => SizeText.Format(Group.ObservedBytes);
+    public string Size => Matches.Any(row => row.IsUnmeasured)
+        ? Group.ObservedBytes == 0 ? "Not checked" : SizeText.Format(Group.ObservedBytes) + " +"
+        : SizeText.Format(Group.ObservedBytes);
+    public string Summary => Group.Summary;
+    public string Kind => Group.Kind;
+    public bool CanSelectGroup => Group.Key != "cleanup:worktrees";
+    public string SelectionHint => CanSelectGroup ? "Select this group for fresh validation and cleanup review."
+        : "Use Check worktrees to find old, clean, integrated checkouts, or View folders to review other checkouts individually.";
+    public bool? Checked => _selected == 0 ? false : _selected == Matches.Count ? true : null;
     public string Count => (Matches.Count == Group.Locations.Count ? $"{Matches.Count:N0} locations" : $"{Matches.Count:N0} of {Group.Locations.Count:N0} locations")
         + (_selected > 0 ? $" · {_selected:N0} selected" : "");
     public string Description => $"{Name}, {Path}, {Size} observed candidate size. {Count}. {Group.Kind}.";
     public void SetSelectedCount(int count)
-    { if (_selected == count) return; _selected = count; PropertyChanged?.Invoke(this, new(nameof(Count))); PropertyChanged?.Invoke(this, new(nameof(Description))); }
+    { if (_selected == count) return; _selected = count; PropertyChanged?.Invoke(this, new(nameof(Count))); PropertyChanged?.Invoke(this, new(nameof(Description))); PropertyChanged?.Invoke(this, new(nameof(Checked))); }
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 

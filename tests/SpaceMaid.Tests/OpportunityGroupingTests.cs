@@ -76,4 +76,44 @@ public sealed class OpportunityGroupingTests
 
     internal static Opportunity Finding(ScanSnapshot scan, int folder, string category) => new(folder, category, category,
         scan.PathForFile(folder)!, scan.DirectoryLogical[folder], scan.DirectoryAllocated[folder], "Fixture evidence", "Review contents first.", "Read-only review.", true);
+
+    [Fact]
+    public void CleanupChecklistBoundsThousandsOfFindingsAndSeparatesCheckedWorktrees()
+    {
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        var folders = new List<(int Index, string Category)>();
+        string[] categories = ["Build output", "Package caches", "Dependencies", "Python environments", "Agent files", "Git worktrees"];
+        for (int i = 0; i < 1200; i++)
+        {
+            ulong id = (ulong)i * 2 + 2;
+            int folder = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(folder, new(1), "folder-" + i);
+            int file = builder.AddFile(new(new(id + 1), FileAttributes.Normal, 4096, 4096, 0)); builder.AddLink(file, new(id), "data");
+            folders.Add((folder, categories[i % categories.Length]));
+        }
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, 0, default);
+        var findings = folders.Select(item => Finding(scan, item.Index, item.Category)).ToArray();
+        Assert.Equal(6, CleanupGrouping.Build(scan, findings).Count);
+        var checkedPaths = findings.Where(item => item.Category == "Git worktrees").Take(50).Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
+        var groups = CleanupGrouping.Build(scan, findings, checkedPaths);
+        Assert.Equal(7, groups.Count); Assert.Equal(1200, groups.Sum(group => group.Locations.Count));
+        Assert.Equal(50, Assert.Single(groups, group => group.Name == "Old integrated worktrees").Locations.Count);
+        Assert.Equal(150, Assert.Single(groups, group => group.Name == "Worktrees to review").Locations.Count);
+        Assert.Equal(scan.AllocatedBytes, groups.Sum(group => group.ObservedBytes));
+        Assert.Throws<OperationCanceledException>(() => CleanupGrouping.Build(scan, findings, token: new(true)));
+    }
+
+    [Fact]
+    public void CleanupChecklistCountsNestedFindingsOnceWithinAGroup()
+    {
+        var builder = new ScanBuilder { AllocationData = false };
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        int outer = builder.AddFile(new(new(2), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(outer, new(1), "build");
+        int inner = builder.AddFile(new(new(3), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(inner, new(2), "nested");
+        int file = builder.AddFile(new(new(4), FileAttributes.Normal, 4096, 0, 0)); builder.AddLink(file, new(3), "data");
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, 0, default);
+        var group = Assert.Single(CleanupGrouping.Build(scan, [Finding(scan, outer, "Build output"), Finding(scan, inner, "Build output")]));
+        Assert.Equal(4096, group.ObservedBytes); Assert.Equal(2, group.Locations.Count);
+        Assert.Contains("Stop builds", group.Summary);
+    }
 }

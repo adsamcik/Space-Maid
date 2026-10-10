@@ -233,6 +233,8 @@ public partial class MainWindow : Window
         OpportunityGrid.IsEnabled = !busy;
         GroupBrowserControls.IsEnabled = !busy;
         OpportunityFilters.IsEnabled = !busy;
+        OpportunityToolbar.IsEnabled = !busy;
+        CleanupGroupCards.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         if (!busy) DrainExplorerRecheck();
@@ -272,6 +274,11 @@ public partial class MainWindow : Window
         DetailPanel.DataContext = (OpportunityGrid.SelectedItem as OpportunityRow)?.Item;
         DetailPanel.Visibility = hasSelection ? Visibility.Visible : Visibility.Collapsed;
         DetailHint.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
+        var assessment = OpportunityGrid.SelectedItem is OpportunityRow row ? _worktreeAssessments.GetValueOrDefault(row.Path) : null;
+        WorktreeDetailText.Visibility = assessment is null ? Visibility.Collapsed : Visibility.Visible;
+        WorktreeDetailText.Text = assessment is null ? "" : assessment.Status + ": " + assessment.Reason
+            + (assessment.Branch is null ? "" : "\nBranch: " + assessment.Branch)
+            + (assessment.IntegrationTarget is null ? "" : "\nIntegrated into cached ref: " + assessment.IntegrationTarget);
     }
 
     private async void Review_Click(object sender, RoutedEventArgs e) => await ReviewSelectionAsync();
@@ -280,6 +287,7 @@ public partial class MainWindow : Window
     {
         if (_snapshot is not { } scan || _work is not null) return;
         var selected = _rows.Where(r => r.Selected).Select(r => r.Item).ToArray();
+        var checkedWorktrees = SelectedCheckedWorktrees(selected);
         if (selected.Length == 0) return;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("validate-review", scan.RootPath);
@@ -291,7 +299,13 @@ public partial class MainWindow : Window
         {
             log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale });
             var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record);
-            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token), work.Token);
+            var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
+                new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking old worktree… " + path; }));
+            _worktreeCheckTask = gitCheck;
+            IReadOnlyDictionary<string, string> gitBlocks;
+            try { gitBlocks = await gitCheck; }
+            finally { if (ReferenceEquals(_worktreeCheckTask, gitCheck)) _worktreeCheckTask = null; }
+            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks), work.Token);
             work.Token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             if (validation.CanMergeInventory)
@@ -314,6 +328,7 @@ public partial class MainWindow : Window
                 + (excluded.Count == 1 ? "1 location was excluded because it is missing, changed or no longer matches. "
                     : excluded.Count > 1 ? $"{excluded.Count:N0} locations were excluded because they are missing, changed or no longer match. " : "")
                 + "Other folders retain earlier scan data.";
+            if (checkedWorktrees.Length > 0) note += " Old worktrees were checked again against local Git status and cached refs. Ignored contents are included; recycling preserves branches and leaves Git registration in place.";
             StatusText.Text = plan.Preview.Locations.Count + plan.BlockedLocations.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
             log.Record("review-validation-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds,
                 Validated = validation.ValidatedLocations.Count, validation.ExcludedPaths, validation.CanMergeInventory, plan.Preview.EstimatedBytes, Blocked = plan.BlockedLocations.Count });
@@ -328,7 +343,7 @@ public partial class MainWindow : Window
                 var displayed = _snapshot!;
                 new ReviewWindow(plan, note, (progress, token) =>
                 {
-                    var cleanup = ExecuteCleanupAsync(plan, displayed, progress, token, work, log);
+                    var cleanup = ExecuteCleanupAsync(plan, displayed, progress, token, work, log, checkedWorktrees);
                     _cleanupTask = cleanup; return cleanup;
                 }) { Owner = this }.ShowDialog();
             }
@@ -399,6 +414,9 @@ public partial class MainWindow : Window
             if (_cleanupTask is not null)
                 try { await _cleanupTask; }
                 catch (Exception error) { Debug.WriteLine($"Cleanup shutdown: {error}"); }
+            if (_worktreeCheckTask is not null)
+                try { await _worktreeCheckTask; }
+                catch (Exception error) { Debug.WriteLine($"Worktree check shutdown: {error}"); }
             if (_extensions is not null) await _extensions.DisposeAsync();
         }
         catch (Exception error) { Debug.WriteLine($"Extension shutdown: {error}"); }

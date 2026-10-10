@@ -159,18 +159,56 @@
               </Grid>
           </Border>
           <Grid x:Name="OpportunitiesPanel" Grid.Row="1" Visibility="Collapsed">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="270" /></Grid.ColumnDefinitions>
-            <Border Style="{StaticResource Card}" Padding="0">
+            <DockPanel Grid.ColumnSpan="5" Margin="0,0,0,10" x:Name="OpportunityToolbar">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="BackToCleanupButton" Content="← Cleanup groups" Click="BackToCleanup_Click" Margin="0,0,8,0" Visibility="Collapsed" />
+                    <Button x:Name="CheckWorktreesButton" Content="Check worktrees" Click="CheckWorktrees_Click" ToolTip="Check local Git status, integration and observed activity. May read local files; does not fetch remote data." IsEnabled="False" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox x:Name="OpportunityGroupingPicker" Width="185" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Opportunity view">
+                        <ComboBoxItem Content="Cleanup groups" /><ComboBoxItem Content="Project / folder" /><ComboBoxItem Content="Clutter type" />
+                    </ComboBox>
+                    <ComboBox x:Name="OpportunitySortPicker" Width="150" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" Margin="8,0,0,0" AutomationProperties.Name="Sort opportunity groups and locations">
+                        <ComboBoxItem Content="Largest first" /><ComboBoxItem Content="Name A–Z" /><ComboBoxItem Content="Most locations" />
+                    </ComboBox>
+                </StackPanel>
+            </DockPanel>
+            <Border x:Name="CleanupOverview" Grid.Row="1" Grid.ColumnSpan="5" Style="{StaticResource Card}" Padding="18,14">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel Margin="0,0,0,12">
+                        <TextBlock Text="Choose what to clean up" FontSize="20" FontWeight="SemiBold" />
+                        <TextBlock Text="Select a group, then review cleanup. Nothing moves until you confirm." FontSize="12" Opacity="0.7" Margin="0,5,0,0" />
+                        <TextBlock x:Name="WorktreeCheckSummary" TextWrapping="Wrap" FontSize="12" Opacity="0.7" Margin="0,7,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl x:Name="CleanupGroupCards" AutomationProperties.Name="Cleanup checklist">
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,12" ToolTip="{Binding Description}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="120" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                                        <CheckBox IsThreeState="True" IsChecked="{Binding Checked, Mode=OneWay}" IsEnabled="{Binding CanSelectGroup}" ToolTip="{Binding SelectionHint}" ToolTipService.ShowOnDisabled="True" Click="CleanupGroupSelection_Click" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name, StringFormat=Select {0} for cleanup}" />
+                                        <StackPanel Grid.Column="1" Margin="4,0,14,0">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" />
+                                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,4,0,0" />
+                                            <TextBlock FontSize="11" Opacity="0.65" Margin="0,5,0,0"><Run Text="{Binding Kind, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Count, Mode=OneWay}" /></TextBlock>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding Size}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                                        <Button Grid.Column="3" Content="View folders" Click="ViewCleanupGroup_Click" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="{Binding Name, StringFormat=View folders in {0}}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock x:Name="CleanupOverviewNote" Grid.Row="2" FontSize="11" Opacity="0.65" Margin="0,12,0,0" TextWrapping="Wrap" Text="Scan a drive to find cleanup groups." />
+                </Grid>
+            </Border>
+            <Border x:Name="OpportunityNavigation" Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
                 <Grid x:Name="GroupBrowserControls">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel Margin="12">
-                        <TextBlock Text="Group by" FontSize="12" Opacity="0.7" Margin="0,0,0,5" />
-                        <ComboBox x:Name="OpportunityGroupingPicker" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Group opportunities by">
-                            <ComboBoxItem Content="Project / folder" /><ComboBoxItem Content="Clutter type" />
-                        </ComboBox>
-                        <ComboBox x:Name="OpportunitySortPicker" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" Margin="0,8,0,0" AutomationProperties.Name="Sort opportunity groups and locations">
-                            <ComboBoxItem Content="Largest first" /><ComboBoxItem Content="Name A–Z" /><ComboBoxItem Content="Most locations" />
-                        </ComboBox>
                         <Button x:Name="AllOpportunitiesButton" Content="All locations" Click="AllOpportunities_Click" HorizontalContentAlignment="Left" Margin="0,10,0,0" />
                         <TextBlock x:Name="GroupNavigationSummary" FontSize="11" Opacity="0.65" Margin="0,8,0,0" />
                     </StackPanel>
@@ -189,7 +227,7 @@
                     <TextBlock x:Name="GroupSizeNote" Grid.Row="2" Margin="12" FontSize="11" Opacity="0.65" TextWrapping="Wrap" />
                 </Grid>
             </Border>
-            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0">
+            <Border x:Name="OpportunityLocations" Grid.Row="1" Grid.Column="2" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
                 <Grid>
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel Margin="14,12">
@@ -228,13 +266,9 @@
                         <TextBlock x:Name="EmptyTitle" Text="Find room for your next project." FontSize="18" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                         <TextBlock x:Name="EmptyCaption" Text="Scan a drive to review build output, caches,&#10;environments, and files left by coding agents." Margin="0,12,0,0" TextAlignment="Center" TextWrapping="Wrap" Opacity="0.65" />
                     </StackPanel>
-                    <StackPanel Grid.Row="3" Margin="12">
-                        <DockPanel Margin="0,0,0,8"><Button x:Name="ClearOpportunitySelectionButton" Content="Clear selection" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Padding="6,3" MinHeight="26" FontSize="11" /><TextBlock x:Name="SelectionText" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12" Opacity="0.7" Margin="0,0,6,0" /></DockPanel>
-                        <DockPanel><Button x:Name="ReviewButton" Content="Review selection" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" ToolTip="Recheck selected locations, then confirm moving eligible folders to the Recycle Bin." /><Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" HorizontalAlignment="Left" ToolTip="Select all locations in the current group and filters to review cleanup." /></DockPanel>
-                    </StackPanel>
                 </Grid>
             </Border>
-            <Border Grid.Column="4" Style="{StaticResource Card}" Padding="14">
+            <Border x:Name="OpportunityDetails" Grid.Row="1" Grid.Column="4" Style="{StaticResource Card}" Padding="14" Visibility="Collapsed">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         <TextBlock Text="A closer look" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,20" />
@@ -249,12 +283,22 @@
                             <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" />
                             <TextBlock Text="NEXT STEP" Style="{StaticResource SectionLabel}" Margin="0,22,0,8" />
                             <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="WorktreeDetailText" TextWrapping="Wrap" FontSize="12" Margin="0,14,0,0" Visibility="Collapsed" />
                             <Button Content="Open folder" Click="OpenFolder_Click" HorizontalAlignment="Left" Margin="0,22,0,0" />
                             <Button Content="Show in tree" Click="ShowInTree_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </Border>
+            <StackPanel Grid.Row="2" Grid.ColumnSpan="5" Margin="0,10,0,0">
+                <TextBlock x:Name="CleanupFreshnessText" FontSize="12" TextWrapping="Wrap" Opacity="0.75" Margin="0,0,0,8" Visibility="Collapsed" />
+                <DockPanel>
+                    <Button x:Name="ReviewButton" Content="Review cleanup" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" Style="{DynamicResource AccentButtonStyle}" ToolTip="Recheck selected locations, then confirm moving eligible folders to the Recycle Bin." />
+                    <Button x:Name="ClearOpportunitySelectionButton" Content="Clear selection" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Margin="0,0,8,0" />
+                    <Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" DockPanel.Dock="Left" Margin="0,0,12,0" Visibility="Collapsed" ToolTip="Select all locations in the current group and filters to review cleanup." />
+                    <TextBlock x:Name="SelectionText" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                </DockPanel>
+            </StackPanel>
           </Grid>
         </Grid>
         <StackPanel Grid.Row="2" Margin="0,12,0,0">
