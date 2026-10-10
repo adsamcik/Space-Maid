@@ -9,21 +9,9 @@
     <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="*" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <DockPanel Margin="0,0,0,26">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="ElevateButton" Content="Enable fast scanning" Click="Elevate_Click" Margin="0,0,12,0" />
-                <Border CornerRadius="15" Background="{DynamicResource ControlFillColorDefaultBrush}" Padding="13,7">
-                    <TextBlock Text="CLEANUP PREVIEW" FontSize="11" FontWeight="Bold" AutomationProperties.Name="Bulk cleanup is preview only. In Explore, Delete recycles the selected folder after confirmation." />
-                </Border>
-            </StackPanel>
-            <StackPanel>
-                <TextBlock Text="Space Maid" FontSize="30" FontWeight="SemiBold" />
-                <TextBlock Text="Development clutter, explained." Opacity="0.65" Margin="0,4,0,0" />
-            </StackPanel>
-        </DockPanel>
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,18" Padding="18">
+        <Border Style="{StaticResource Card}" Margin="0,0,0,18" Padding="18">
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -31,12 +19,13 @@
                     <ComboBox x:Name="DrivePicker" MinWidth="330" SelectionChanged="Drive_Changed" AutomationProperties.Name="Drive to scan" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="ElevateButton" Content="Enable fast scanning" Click="Elevate_Click" Margin="0,0,12,0" />
                     <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="0,0,10,0" Visibility="Collapsed" />
                     <Button x:Name="ScanButton" Content="Scan drive" Click="Scan_Click" Style="{DynamicResource AccentButtonStyle}" Padding="24,10" />
                 </StackPanel>
             </Grid>
         </Border>
-        <UniformGrid Grid.Row="2" Columns="3" Margin="0,0,0,22">
+        <UniformGrid Grid.Row="1" Columns="3" Margin="0,0,0,22">
             <Border Style="{StaticResource Card}" Margin="0,0,12,0">
                 <StackPanel><TextBlock Text="FREE ON DRIVE" Style="{StaticResource SectionLabel}" />
                     <TextBlock x:Name="FreeSpaceText" Text="—" FontSize="27" FontWeight="SemiBold" />
@@ -53,7 +42,7 @@
                     <TextBlock x:Name="CandidateCaption" Text="An estimate, subject to review" Opacity="0.65" FontSize="12" Margin="0,5,0,0" /></StackPanel>
             </Border>
         </UniformGrid>
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="2">
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
           <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
               <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource ViewTab}" GroupName="View" IsChecked="True" Checked="View_Changed" Margin="0,0,22,0" />
@@ -217,7 +206,7 @@
             </Border>
           </Grid>
         </Grid>
-        <StackPanel Grid.Row="4" Margin="0,18,0,0">
+        <StackPanel Grid.Row="3" Margin="0,18,0,0">
             <ProgressBar x:Name="ScanProgressBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,10" />
             <DockPanel>
                 <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" />
