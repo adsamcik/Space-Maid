@@ -63,14 +63,13 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="0.92*" /></Grid.ColumnDefinitions>
               <Border Style="{StaticResource Card}" Padding="0">
                   <Grid>
-                      <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <DockPanel Margin="16,14"><TextBlock Text="Largest first" DockPanel.Dock="Right" Opacity="0.65" FontSize="12" /><TextBlock Text="Folder &amp; file tree" FontSize="18" FontWeight="SemiBold" /></DockPanel>
-                      <Grid Grid.Row="1" Margin="18,0,20,8" Opacity="0.65">
+                      <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                      <Grid Margin="18,16,20,8" Opacity="0.65">
                           <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
                           <TextBlock Text="Name" FontSize="12" /><TextBlock x:Name="AllocationHeader" Text="Allocated ↓" Grid.Column="1" HorizontalAlignment="Right" FontSize="12" />
                           <TextBlock x:Name="LogicalHeader" Text="Logical" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" /><TextBlock Text="% parent" Grid.Column="3" HorizontalAlignment="Right" FontSize="12" />
                       </Grid>
-                      <ListBox x:Name="SpaceTree" Grid.Row="2" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
+                      <ListBox x:Name="SpaceTree" Grid.Row="1" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
                                ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation. Right-click a folder for its operations.">
@@ -94,8 +93,8 @@
                               </DataTemplate>
                           </ListBox.ItemTemplate>
                       </ListBox>
-                      <TextBlock x:Name="TreeHint" Text="Scan a drive to explore its files." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="2" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
-                      <TextBlock x:Name="TreeNote" Text="Observed totals · Shared file allocation counted once" Grid.Row="3" Margin="16,12" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
+                      <TextBlock x:Name="TreeHint" Text="Scan a drive to explore its files." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
+                      <TextBlock x:Name="TreeNote" Text="Observed totals · Shared file allocation counted once" Grid.Row="2" Margin="16,12" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
                   </Grid>
               </Border>
               <Border Grid.Column="2" Style="{StaticResource Card}" Padding="16">
