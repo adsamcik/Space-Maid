@@ -3,8 +3,9 @@ using SpaceMaid.Core.Scanning;
 namespace SpaceMaid.Core.Analysis;
 
 public sealed record OpportunityGroup(string Key, string Name, string Path, string Kind,
-    IReadOnlyList<Opportunity> Locations, long ObservedBytes, string Summary = "");
-public sealed record OpportunityGroupSet(IReadOnlyList<OpportunityGroup> Projects, IReadOnlyList<OpportunityGroup> Types);
+    IReadOnlyList<Opportunity> Locations, long ObservedBytes, string Summary = "", IReadOnlyList<OpportunityGroup>? Children = null);
+public sealed record OpportunityGroupSet(IReadOnlyList<OpportunityGroup> Projects, IReadOnlyList<OpportunityGroup> Types,
+    IReadOnlyList<OpportunityGroup>? BuildLanguages = null);
 
 // Uses the existing inventory only. Git markers establish folder context,
 // not repository identity, clean status, branch integration or abandonment.
@@ -44,7 +45,67 @@ public static class OpportunityGrouping
         var types = typeBuckets.Select(pair => new OpportunityGroup("type:" + pair.Key, pair.Key, scan.RootPath,
             "Clutter type", pair.Value.ToArray(), UnionBytes(pair.Value))).OrderByDescending(group => group.ObservedBytes)
             .ThenBy(group => group.Name, StringComparer.Ordinal).ToArray();
-        return new(projects, types);
+        var languageBuckets = new Dictionary<string, (string Name, Dictionary<string, List<Opportunity>> Projects)>(StringComparer.Ordinal);
+        foreach (var project in projects)
+        {
+            foreach (var location in project.Locations)
+            {
+                token.ThrowIfCancellationRequested();
+                if (location.Category != "Build output") continue;
+                var language = BuildLanguage(location);
+                if (!languageBuckets.TryGetValue(language.Key, out var bucket))
+                    languageBuckets.Add(language.Key, bucket = (language.Name, new(StringComparer.Ordinal)));
+                if (!bucket.Projects.TryGetValue(project.Key, out var items)) bucket.Projects.Add(project.Key, items = []);
+                items.Add(location);
+            }
+        }
+        var projectByKey = projects.ToDictionary(project => project.Key, StringComparer.Ordinal);
+        var languages = new List<OpportunityGroup>();
+        foreach (var (key, bucket) in languageBuckets)
+        {
+            token.ThrowIfCancellationRequested();
+            string languageKey = "build-language:" + key;
+            var children = bucket.Projects.Select(pair =>
+            {
+                token.ThrowIfCancellationRequested();
+                var project = projectByKey[pair.Key];
+                return new OpportunityGroup(languageKey + "/" + project.Key, project.Name, project.Path, project.Kind,
+                    pair.Value.AsReadOnly(), UnionBytes(pair.Value));
+            }).OrderByDescending(group => group.ObservedBytes).ThenBy(group => group.Path, StringComparer.Ordinal).ToArray();
+            var findings = children.SelectMany(child => child.Locations).ToArray();
+            languages.Add(new(languageKey, bucket.Name, scan.RootPath, "Build language / system", Array.AsReadOnly(findings),
+                UnionBytes(findings), "Classified from detected build folders and project-marker filenames. This does not classify the whole project.",
+                Array.AsReadOnly(children)));
+        }
+        return new(projects, types, languages.OrderByDescending(group => group.ObservedBytes)
+            .ThenBy(group => group.Name, StringComparer.Ordinal).ToList().AsReadOnly());
+
+        (string Key, string Name) BuildLanguage(Opportunity location)
+        {
+            int directory = location.DirectoryIndex, parent = Parent(directory);
+            int link = scan.PrimaryLink(directory);
+            ReadOnlySpan<char> name = directory == scan.RootIndex ? Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.RootPath))
+                : link >= 0 ? scan.Name(link) : [];
+            int marker = parent >= 0 ? Marker(parent) : 0;
+            if (name.Equals("bin", StringComparison.OrdinalIgnoreCase) || name.Equals("obj", StringComparison.OrdinalIgnoreCase))
+            {
+                int languages = marker & (8 | 16 | 32);
+                return languages switch
+                {
+                    8 => ("csharp", "C# / .NET"),
+                    16 => ("fsharp", "F# / .NET"),
+                    32 => ("visual-basic", "Visual Basic / .NET"),
+                    > 0 => ("dotnet-mixed", ".NET (mixed languages)"),
+                    _ => location.Title == ".NET build output" ? ("dotnet", ".NET") : ("other", "Other build files")
+                };
+            }
+            if ((marker & 64) != 0 && (name.Equals("build", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("dist", StringComparison.OrdinalIgnoreCase) || name.Equals(".next", StringComparison.OrdinalIgnoreCase)))
+                return ("javascript", "JavaScript / TypeScript");
+            if (name.Equals("__pycache__", StringComparison.OrdinalIgnoreCase) && (Marker(directory) & 128) != 0)
+                return ("python", "Python");
+            return ("other", "Other build files");
+        }
 
         (int Directory, string Kind) FindOwner(int directory)
         {
@@ -78,6 +139,14 @@ public static class OpportunityGrouping
                 var name = scan.Name(link);
                 bool isDirectory = scan.Records[scan.Links[link].FileIndex].IsDirectory;
                 if (name.Equals(".git", StringComparison.OrdinalIgnoreCase)) value |= isDirectory ? 1 : 2;
+                if (!isDirectory)
+                {
+                    if (name.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) value |= 8;
+                    if (name.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)) value |= 16;
+                    if (name.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase)) value |= 32;
+                    if (name.Equals("package.json", StringComparison.OrdinalIgnoreCase)) value |= 64;
+                    if (name.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase)) value |= 128;
+                }
                 if (!isDirectory && (name.Equals("package.json", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase) || name.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("build.gradle", StringComparison.OrdinalIgnoreCase) || name.Equals("build.gradle.kts", StringComparison.OrdinalIgnoreCase)

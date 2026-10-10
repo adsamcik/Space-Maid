@@ -74,6 +74,101 @@ public sealed class OpportunityGroupingTests
         Assert.Throws<OperationCanceledException>(() => OpportunityGrouping.Build(scan, locations, new CancellationToken(true)));
     }
 
+    [Fact]
+    public void BuildLanguagesUseProjectMarkersAndRetainHonestMixedAndUnknownGroups()
+    {
+        var builder = new ScanBuilder(); ulong next = 1;
+        builder.RootIndex = builder.AddFile(new(new(next++), FileAttributes.Directory, 0, 0, 0));
+        var expected = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["C# / .NET"] = Output("csharp", ["app.CSPROJ"], "bin"),
+            ["F# / .NET"] = Output("fsharp", ["app.fsproj"], "obj"),
+            ["Visual Basic / .NET"] = Output("vb", ["app.vbproj"], "bin"),
+            [".NET (mixed languages)"] = Output("mixed", ["app.csproj", "library.fsproj"], "obj"),
+            ["JavaScript / TypeScript"] = Output("web", ["package.json"], ".next"),
+            ["Python"] = Output("python", ["pyproject.toml"], "__pycache__"),
+            [".NET"] = Output("unknown-dotnet", ["incidental.cs"], "bin"),
+            ["Other build files"] = Output("unsupported", ["Cargo.toml", "build.gradle"], "target")
+        };
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, 0, default);
+        var detected = OpportunityDetector.Find(scan);
+        var genericDotnet = Finding(scan, expected[".NET"], "Build output") with { Title = ".NET build output" };
+        var unsupported = Finding(scan, expected["Other build files"], "Build output");
+        var findings = detected.Concat([genericDotnet, unsupported]).ToArray();
+        var groups = OpportunityGrouping.Build(scan, findings);
+        Assert.NotNull(groups.BuildLanguages); Assert.Equal(8, groups.BuildLanguages.Count);
+        foreach (var (name, folder) in expected)
+        {
+            var language = Assert.Single(groups.BuildLanguages, item => item.Name == name);
+            Assert.Equal(folder, Assert.Single(language.Locations).DirectoryIndex);
+            Assert.Equal(4096, language.ObservedBytes);
+            var child = Assert.Single(language.Children!);
+            var owner = Assert.Single(groups.Projects, item => item.Locations.Any(location => location.DirectoryIndex == folder));
+            Assert.Equal(owner.Name, child.Name); Assert.Equal(owner.Path, child.Path); Assert.Equal(owner.Kind, child.Kind);
+        }
+        Assert.All(groups.BuildLanguages.SelectMany(group => group.Locations), location => Assert.Equal("Build output", location.Category));
+        Assert.Contains(findings, location => location.Category == "Dependencies");
+        Assert.Equal(findings.Count(location => location.Category == "Build output"), groups.BuildLanguages.Sum(group => group.Locations.Count));
+        // Classification never creates a cleanup finding for unsupported output.
+        Assert.DoesNotContain(detected, location => location.DirectoryIndex == unsupported.DirectoryIndex);
+
+        int Output(string projectName, string[] markers, string outputName)
+        {
+            ulong projectId = next++; int project = builder.AddFile(new(new(projectId), FileAttributes.Directory, 0, 0, 0));
+            builder.AddLink(project, new(1), projectName);
+            foreach (string name in markers)
+            { int file = builder.AddFile(new(new(next++), FileAttributes.Normal, 0, 0, 0)); builder.AddLink(file, new(projectId), name); }
+            ulong outputId = next++; int output = builder.AddFile(new(new(outputId), FileAttributes.Directory, 0, 0, 0));
+            builder.AddLink(output, new(projectId), outputName);
+            int data = builder.AddFile(new(new(next++), FileAttributes.Normal, 256, 4096, 0));
+            builder.AddLink(data, new(outputId), outputName == "__pycache__" ? "module.pyc" : "artifact.bin");
+            if (projectName == "web")
+            {
+                int dependencies = builder.AddFile(new(new(next++), FileAttributes.Directory, 0, 0, 0));
+                builder.AddLink(dependencies, new(projectId), "node_modules");
+            }
+            return output;
+        }
+    }
+
+    [Fact]
+    public void BuildLanguageProjectsKeepMonorepoMembershipCaseAndNestedUnionSizes()
+    {
+        var builder = new ScanBuilder { AllocationData = false };
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        Folder(2, 1, "Project"); Folder(3, 2, ".git");
+        Folder(4, 2, "backend"); File(5, 4, "app.csproj", 0);
+        int outer = Folder(6, 4, "bin"); File(7, 6, "output.dll", 100); File(9, 6, "nested.csproj", 0);
+        int inner = Folder(8, 6, "obj"); File(10, 8, "output.dll", 200);
+        Folder(11, 2, "frontend"); File(12, 11, "package.json", 0);
+        int web = Folder(13, 11, "dist"); File(14, 13, "web.js", 600);
+        Folder(20, 1, "project"); Folder(21, 20, ".git"); File(22, 20, "app.csproj", 0);
+        int lower = Folder(23, 20, "obj"); File(24, 23, "output.dll", 400);
+        var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, 0, default);
+        var findings = OpportunityDetector.Find(scan);
+        var groups = OpportunityGrouping.Build(scan, findings);
+        var csharp = Assert.Single(groups.BuildLanguages!, group => group.Name == "C# / .NET");
+        var javascript = Assert.Single(groups.BuildLanguages!, group => group.Name == "JavaScript / TypeScript");
+        Assert.Equal(700, csharp.ObservedBytes); Assert.Equal(600, javascript.ObservedBytes);
+        Assert.Equal(new[] { outer, inner, lower }.Order(), csharp.Locations.Select(location => location.DirectoryIndex).Order());
+        Assert.Equal(web, Assert.Single(javascript.Locations).DirectoryIndex);
+        Assert.Equal(2, csharp.Children!.Count);
+        Assert.Equal(2, csharp.Children.Select(child => child.Key).Distinct(StringComparer.Ordinal).Count());
+        var upper = Assert.Single(csharp.Children, child => child.Path == @"G:\Project");
+        var lowerCase = Assert.Single(csharp.Children, child => child.Path == @"G:\project");
+        Assert.Equal(300, upper.ObservedBytes); Assert.Equal(400, lowerCase.ObservedBytes);
+        Assert.Equal("Git project folder", upper.Kind);
+        Assert.Equal(upper.Path, Assert.Single(javascript.Children!).Path);
+        Assert.DoesNotContain(upper.Locations, location => location.DirectoryIndex == web);
+        Assert.Equal(900, Assert.Single(groups.Projects, group => group.Path == upper.Path).ObservedBytes);
+        Assert.Equal(1300, Assert.Single(groups.Types).ObservedBytes);
+
+        int Folder(ulong id, ulong parent, string name)
+        { int file = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(file, new(parent), name); return file; }
+        void File(ulong id, ulong parent, string name, long bytes)
+        { int file = builder.AddFile(new(new(id), FileAttributes.Normal, bytes, 0, 0)); builder.AddLink(file, new(parent), name); }
+    }
+
     internal static Opportunity Finding(ScanSnapshot scan, int folder, string category) => new(folder, category, category,
         scan.PathForFile(folder)!, scan.DirectoryLogical[folder], scan.DirectoryAllocated[folder], "Fixture evidence", "Review contents first.", "Read-only review.", true);
 

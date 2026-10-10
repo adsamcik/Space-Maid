@@ -74,10 +74,11 @@ public sealed class DesktopTests
                 Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
                 Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
                 var initialCards = (ItemsControl)window.FindName("CleanupGroupCards");
-                Assert.Equal("Build files", Assert.IsType<OpportunityGroupRow>(Assert.Single(initialCards.Items.Cast<object>())).Name);
+                var initialGroup = Assert.IsType<OpportunityGroupRow>(Assert.Single(initialCards.Items.Cast<object>()));
+                Assert.Equal("Build files", initialGroup.Name);
                 ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
                 window.UpdateLayout();
-                Descendants(initialCards).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Descendants(initialCards).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, initialGroup)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 var row = Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>()));
                 Assert.Equal(bin, row.Path);
                 Assert.Equal("8 KiB", row.Size);
@@ -688,13 +689,18 @@ public sealed class DesktopTests
             for (int item = 0; item < 20; item++)
             {
                 var module = Folder(repo.Identity, $"module-{item:D2}");
-                string name = (item % 4) switch { 0 => "obj", 1 => "node_modules", 2 => ".venv", _ => "checkout" };
+                string name = item == 8 ? "dist" : item == 12 ? "__pycache__" : (item % 4) switch { 0 => "obj", 1 => "node_modules", 2 => ".venv", _ => "checkout" };
+                if (item % 4 == 0 && item != 12)
+                {
+                    int manifest = builder.AddFile(new(new(id++), FileAttributes.Normal, 0, 0, 0));
+                    builder.AddLink(manifest, new(module.Identity), item == 8 ? "package.json" : item == 16 ? "app.fsproj" : "app.csproj");
+                }
                 var folder = Folder(module.Identity, name);
                 int file = builder.AddFile(new(new(id++), FileAttributes.Normal, (200 - project) * 256L * 1024, (200 - project) * 256L * 1024, 0));
-                builder.AddLink(file, new(folder.Identity), "data.bin");
+                builder.AddLink(file, new(folder.Identity), item == 12 ? "data.pyc" : "data.bin");
                 if (item % 4 == 3)
                 { int marker = builder.AddFile(new(new(id++), FileAttributes.Normal, 0, 0, 0)); builder.AddLink(marker, new(folder.Identity), ".git"); }
-                folders.Add((folder.Index, (item % 4) switch { 0 => ".NET build output", 1 => "Node dependencies", 2 => "Python virtual environment", _ => "Linked Git checkout" },
+                folders.Add((folder.Index, item == 8 ? "Possible Node build output" : item == 12 ? "Python bytecode cache" : (item % 4) switch { 0 => ".NET build output", 1 => "Node dependencies", 2 => "Python virtual environment", _ => "Linked Git checkout" },
                     (item % 4) switch { 0 => "Build output", 1 => "Dependencies", 2 => "Python environments", _ => "Git worktrees" }));
             }
         }
@@ -720,11 +726,11 @@ public sealed class DesktopTests
         Assert.Equal(1000, cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Build files").Matches.Count);
         window.UpdateLayout();
         var firstCard = cards.ItemContainerGenerator.ContainerFromIndex(0);
-        var groupCheck = Descendants(firstCard).OfType<CheckBox>().Single();
+        var groupCheck = Descendants(firstCard).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, cards.Items[0]));
         groupCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal("1 group selected · 1,000 folders", selection.Text);
         Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
-        Descendants(firstCard).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Descendants(firstCard).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, cards.Items[0])).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(1000, list.Items.Count); Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
         Assert.IsType<OpportunityRow>(list.Items[0]).Selected = false;
         Assert.Equal(Visibility.Visible, ((Button)window.FindName("BackToCleanupButton")).Visibility);
@@ -732,7 +738,7 @@ public sealed class DesktopTests
         Assert.Empty(list.Items); Assert.Equal("1 group selected · 999 folders", selection.Text);
         Assert.Null(cards.Items.Cast<OpportunityGroupRow>().First().Checked);
         window.UpdateLayout();
-        Descendants(cards.ItemContainerGenerator.ContainerFromIndex(0)).OfType<CheckBox>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Descendants(cards.ItemContainerGenerator.ContainerFromIndex(0)).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, cards.Items[0])).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal("1 group selected · 1,000 folders", selection.Text);
         ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
@@ -749,6 +755,7 @@ public sealed class DesktopTests
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-groups-compact-{theme}.png"), 1020, 790);
         }
 #pragma warning restore WPF0001
+        CheckBuildClassification();
         CheckWorktreeFilters();
         grouping.SelectedIndex = 1;
         navigation.SelectedIndex = 0;
@@ -805,6 +812,74 @@ public sealed class DesktopTests
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-stale-dark.png"), 1220, 910);
         ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.DoesNotContain("selected", selection.Text);
+
+        void CheckBuildClassification()
+        {
+            var build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
+            Assert.Equal(4, build.Children.Count);
+            var csharp = Assert.Single(build.Children, row => row.Name == "C# / .NET");
+            Assert.Equal(400, csharp.Matches.Count); Assert.Equal("200 projects", csharp.ProjectCount);
+            Assert.Equal(1000, build.Children.Sum(child => child.Matches.Count));
+            window.UpdateLayout();
+            var container = cards.ItemContainerGenerator.ContainerFromItem(build);
+            var checkbox = Descendants(container).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, csharp));
+            checkbox.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.True(csharp.Checked); Assert.Null(build.Checked);
+            Assert.Equal("1 group selected · 400 folders", selection.Text);
+            Descendants(container).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, csharp)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("BuildScopeText")).Text);
+            Assert.Equal(200, navigation.Items.Count); Assert.Equal(2, list.Items.Count);
+            Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+            ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(400, list.Items.Count);
+            Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.Equal(".NET build output", row.Title));
+            navigation.SelectedItem = navigation.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Chatty-NPC");
+            Assert.Equal(2, list.Items.Count); Assert.Contains("398 outside this view", selection.Text);
+            Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
+            // Retain language/project scope and existing selections through refreshed metadata publication.
+            var chosen = csharp.Matches.Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
+            publish.Invoke(window, [scan, locations, groups, chosen, ((OpportunityRow)list.SelectedItem).Path, true]);
+            Assert.Equal(2, list.Items.Count); Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("BuildScopeText")).Text);
+            var withoutProject = locations.Where(item => !item.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || !chosen.Contains(item.Path)).ToArray();
+            publish.Invoke(window, [scan, withoutProject, OpportunityGrouping.Build(scan, withoutProject), chosen, null, true]);
+            Assert.Empty(list.Items); Assert.Equal(199, navigation.Items.Count);
+            Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+            Assert.Contains("No matching build folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);
+            Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
+            publish.Invoke(window, [scan, locations, groups, chosen, null, true]);
+            Assert.Equal(2, list.Items.Count); // Restoring the project keeps the same scope.
+            search.Text = "good-shit";
+            PumpUntil(() => list.Items.Count == 2 && ((OpportunityRow)list.Items[0]).GroupName == "good-shit", TimeSpan.FromSeconds(3));
+            Assert.Single(navigation.Items.Cast<object>());
+            navigation.SelectedIndex = 0;
+#pragma warning disable WPF0001
+            foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+            {
+                app.ThemeMode = mode;
+                string theme = mode == ThemeMode.Light ? "light" : "dark";
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"build-projects-{theme}.png"), 1220, 910);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"build-projects-compact-{theme}.png"), 1020, 790);
+            }
+#pragma warning restore WPF0001
+            search.Text = "node_modules";
+            PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3)); // Never escape the selected build-language scope.
+            ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Contains("400 outside this view", selection.Text);
+            var remaining = locations.Where(item => !chosen.Contains(item.Path)).ToArray();
+            publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), chosen, null, true]);
+            Assert.Empty(navigation.Items); Assert.Empty(list.Items);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("BuildScopeText")).Text);
+            ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Empty(list.Items); // A disappeared classification does not expose unrelated findings.
+            publish.Invoke(window, [scan, locations, groups, chosen, null, true]);
+            ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BuildScopeText")).Visibility);
+            build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
+            Assert.Null(build.Checked); Assert.True(build.Children.Single(row => row.Name == "C# / .NET").Checked);
+            ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.All(build.Children, child => Assert.False(child.Checked));
+        }
 
         void CheckWorktreeFilters()
         {

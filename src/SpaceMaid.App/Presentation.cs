@@ -43,7 +43,7 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 
-internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<OpportunityRow> matches) : INotifyPropertyChanged
+internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<OpportunityRow> matches, bool showChildren = false) : INotifyPropertyChanged
 {
     private int _selected;
     public OpportunityGroup Group { get; } = group;
@@ -55,6 +55,9 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
         : SizeText.Format(Group.ObservedBytes);
     public string Summary => Group.Summary;
     public string Kind => Group.Kind;
+    public IReadOnlyList<OpportunityGroupRow> Children { get; } = showChildren ? CreateChildren(group, matches) : [];
+    public bool HasChildren => Children.Count > 0;
+    public string ProjectCount => $"{Group.Children?.Count ?? 0:N0} {(Group.Children?.Count == 1 ? "project" : "projects")}";
     public bool CanSelectGroup => Group.Key != "cleanup:worktrees";
     public string SelectionHint => CanSelectGroup ? "Select this group for fresh validation and cleanup review."
         : "Use Check worktrees and adjust the worktree cleanup rule to find matching clean checkouts. View folders to inspect the other checkouts.";
@@ -63,7 +66,17 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
         + (_selected > 0 ? $" · {_selected:N0} selected" : "");
     public string Description => $"{Name}, {Path}, {Size} observed candidate size. {Count}. {Group.Kind}.";
     public void SetSelectedCount(int count)
-    { if (_selected == count) return; _selected = count; PropertyChanged?.Invoke(this, new(nameof(Count))); PropertyChanged?.Invoke(this, new(nameof(Description))); PropertyChanged?.Invoke(this, new(nameof(Checked))); }
+    {
+        foreach (var child in Children) child.SetSelectedCount(child.Matches.Count(row => row.Selected));
+        if (_selected == count) return;
+        _selected = count; PropertyChanged?.Invoke(this, new(nameof(Count))); PropertyChanged?.Invoke(this, new(nameof(Description))); PropertyChanged?.Invoke(this, new(nameof(Checked)));
+    }
+    private static IReadOnlyList<OpportunityGroupRow> CreateChildren(OpportunityGroup group, IReadOnlyList<OpportunityRow> matches)
+        => (group.Children ?? []).Select(child =>
+        {
+            var paths = child.Locations.Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
+            return new OpportunityGroupRow(child, matches.Where(row => paths.Contains(row.Path)).ToArray());
+        }).Where(child => child.Matches.Count > 0).OrderByDescending(child => child.Group.ObservedBytes).ThenBy(child => child.Name).ToArray();
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 
