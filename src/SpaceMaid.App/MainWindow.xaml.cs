@@ -27,7 +27,7 @@ public partial class MainWindow : Window
             try
             {
                 if (drive.IsReady)
-                    drives.Add(new(drive.Name, $"{drive.Name}  ·  {SizeText.Format(drive.AvailableFreeSpace)} free",
+                    drives.Add(new(drive.Name, drive.Name,
                         drive.TotalSize, drive.AvailableFreeSpace));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* A drive may disconnect. */ }

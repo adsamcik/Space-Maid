@@ -34,5 +34,5 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
 
 internal sealed record DriveChoice(string Path, string Label, long TotalBytes, long FreeBytes)
 {
-    public override string ToString() => Label;
+    public override string ToString() => $"{Label}  ·  {SizeText.Format(FreeBytes)} free of {SizeText.Format(TotalBytes)} total";
 }
