@@ -25,10 +25,31 @@ public sealed class FolderDeletionTarget
 
     public static FolderDeletionTarget FromScan(ScanSnapshot scan, int link)
     {
+        var (entry, path) = ResolveSelection(scan, link);
+        var live = ReadIdentity(path);
+        // Basic enumeration has synthetic IDs. In that mode capture the live
+        // identity for the confirmation; otherwise reject a replaced scan entry.
+        if (scan.HasAllocationData && live.Identity != scan.Records[entry.FileIndex].Identity)
+            throw new InvalidOperationException("This folder has changed since scanning. Rescan before deleting it.");
+        return new(path, entry, scan.HasAllocationData, live.Identity, live.Volume);
+    }
+
+    // Menu eligibility uses snapshot metadata only. Live identity/permissions
+    // are still verified off the UI thread before confirmation and execution.
+    public static string? SelectionBlockReason(ScanSnapshot scan, int link)
+    {
+        try { ResolveSelection(scan, link); return null; }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) { return ex.Message; }
+    }
+
+    private static (ScanEntry Entry, string Path) ResolveSelection(ScanSnapshot scan, int link)
+    {
         var entry = scan.Entry(link);
-        if (!entry.IsDirectory || !entry.IsPrimaryName)
+        if (!entry.IsDirectory)
             throw new InvalidOperationException("Select a folder in Explore to recycle it.");
         string path = scan.EntryPath(link) ?? throw new InvalidOperationException("An unresolved entry cannot be deleted. Rescan first.");
+        if (!entry.IsPrimaryName)
+            throw new InvalidOperationException("Select the primary folder entry in Explore to recycle it.");
         path = ValidatePath(path);
         string scanRoot = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(scan.RootPath));
         if (!path.Equals(scanRoot, StringComparison.OrdinalIgnoreCase)
@@ -36,12 +57,7 @@ public sealed class FolderDeletionTarget
             throw new InvalidOperationException("This path is outside the scanned location.");
         if ((scan.Records[entry.FileIndex].Attributes & FileAttributes.ReparsePoint) != 0)
             throw new InvalidOperationException("Linked or reparse folders cannot be recycled here.");
-        var live = ReadIdentity(path);
-        // Basic enumeration has synthetic IDs. In that mode capture the live
-        // identity for the confirmation; otherwise reject a replaced scan entry.
-        if (scan.HasAllocationData && live.Identity != scan.Records[entry.FileIndex].Identity)
-            throw new InvalidOperationException("This folder has changed since scanning. Rescan before deleting it.");
-        return new(path, entry, scan.HasAllocationData, live.Identity, live.Volume);
+        return (entry, path);
     }
 
     public void ValidateCurrent()

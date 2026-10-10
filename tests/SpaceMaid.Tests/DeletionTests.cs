@@ -30,8 +30,10 @@ public sealed class DeletionTests
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         int folderLink = Assert.Single(scan.SortedChildren(scan.RootIndex));
         var target = FolderDeletionTarget.FromScan(scan, folderLink);
+        Assert.Null(FolderDeletionTarget.SelectionBlockReason(scan, folderLink));
         int fileLink = Assert.Single(scan.SortedChildren(scan.Entry(folderLink).FileIndex));
         Assert.Throws<InvalidOperationException>(() => FolderDeletionTarget.FromScan(scan, fileLink));
+        Assert.NotNull(FolderDeletionTarget.SelectionBlockReason(scan, fileLink));
         Assert.Throws<ArgumentOutOfRangeException>(() => FolderDeletionTarget.FromScan(scan, -2));
         Directory.Move(folder, folder + "-original");
         Directory.CreateDirectory(folder);
@@ -58,8 +60,12 @@ public sealed class DeletionTests
         int reparse = builder.AddFile(new(new(3), FileAttributes.Directory | FileAttributes.ReparsePoint, 0, 0, 0));
         builder.AddLink(reparse, new(1), "junction");
         var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, 0, default);
-        Assert.Throws<InvalidOperationException>(() => FolderDeletionTarget.FromScan(scan, scan.PrimaryLink(unresolved)));
+        int unresolvedLink = Array.FindIndex(scan.Links, l => l.FileIndex == unresolved);
+        Assert.Throws<InvalidOperationException>(() => FolderDeletionTarget.FromScan(scan, unresolvedLink));
         Assert.Throws<InvalidOperationException>(() => FolderDeletionTarget.FromScan(scan, scan.PrimaryLink(reparse)));
+        Assert.Contains("Drive roots", FolderDeletionTarget.SelectionBlockReason(scan, -1));
+        Assert.Contains("unresolved", FolderDeletionTarget.SelectionBlockReason(scan, unresolvedLink));
+        Assert.Contains("reparse", FolderDeletionTarget.SelectionBlockReason(scan, scan.PrimaryLink(reparse)));
     }
 
     [Fact]
@@ -97,11 +103,28 @@ public sealed class DeletionTests
         string metadata = Path.Join(Path.GetDirectoryName(recycled)!, "$I" + Path.GetFileName(recycled)[2..]);
         if (File.Exists(metadata))
         {
-            var data = File.ReadAllBytes(metadata);
+            byte[] data = [];
+            RetrySharingViolation(() =>
+            {
+                using var input = new FileStream(metadata, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var buffer = new MemoryStream();
+                input.CopyTo(buffer);
+                data = buffer.ToArray();
+            });
             Assert.Contains(folder, System.Text.Encoding.Unicode.GetString(data), StringComparison.OrdinalIgnoreCase);
             Directory.Move(recycled, folder);
-            File.Delete(metadata);
+            RetrySharingViolation(() => File.Delete(metadata));
         }
         else Directory.Move(recycled, folder);
+    }
+
+    private static void RetrySharingViolation(Action action)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try { action(); return; }
+            catch (IOException ex) when ((ex.HResult & 0xffff) is 32 or 33 && attempt < 5)
+            { Thread.Sleep(100); } // Windows can briefly retain our own $I record after completion.
+        }
     }
 }

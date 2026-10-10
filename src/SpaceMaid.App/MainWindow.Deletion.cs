@@ -27,11 +27,21 @@ public partial class MainWindow
         await DeleteSelectedFolderAsync();
     }
 
-    internal async Task<RecycleResult?> DeleteSelectedFolderAsync()
+    internal Task<RecycleResult?> DeleteSelectedFolderAsync()
     {
-        if (_closing || _work is not null || _browsing || _deleting || _snapshot is null) return null;
+        if (_snapshot is not { } scan || !CanUseFolderMenu(scan)) return Task.FromResult<RecycleResult?>(null);
+        if (_selectionIsGroup)
+        {
+            StatusText.Text = "Grouped entries cannot be deleted. Select an exact folder in the tree.";
+            return Task.FromResult<RecycleResult?>(null);
+        }
+        return DeleteFolderAsync(scan, _selectedLink);
+    }
+
+    private async Task<RecycleResult?> DeleteFolderAsync(ScanSnapshot scan, int link)
+    {
+        if (!CanUseFolderMenu(scan)) return null;
         if (_scanStale) { StatusText.Text = "Results are out of date. Rescan before deleting another folder."; return null; }
-        if (_selectionIsGroup) { StatusText.Text = "Grouped entries cannot be deleted. Select an exact folder in the tree."; return null; }
         _deleting = true; // Guard modal reentrancy as well as repeated key presses.
         using var work = new CancellationTokenSource();
         _work = work;
@@ -41,8 +51,6 @@ public partial class MainWindow
             SetBusy(true);
             // Resolve and validate live metadata off the dispatcher. The
             // selected entry is captured before opening the confirmation.
-            var scan = _snapshot;
-            int link = _selectedLink;
             var target = await Task.Run(() => FolderDeletionTarget.FromScan(scan, link), work.Token);
             if (_closing || work.IsCancellationRequested) return null;
             var confirmation = new RecycleFolderWindow(target) { Owner = this };

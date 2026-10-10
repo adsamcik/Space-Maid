@@ -71,9 +71,10 @@
                           <TextBlock x:Name="LogicalHeader" Text="Logical" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" /><TextBlock Text="% parent" Grid.Column="3" HorizontalAlignment="Right" FontSize="12" />
                       </Grid>
                       <ListBox x:Name="SpaceTree" Grid.Row="2" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
-                               SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick"
+                               SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
-                               ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation.">
+                               ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation. Right-click a folder for its operations.">
+                          <ListBox.ContextMenu><ContextMenu /></ListBox.ContextMenu>
                           <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
                           <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="5,0" /><Setter Property="AutomationProperties.Name" Value="{Binding Description}" /></Style></ListBox.ItemContainerStyle>
                           <ListBox.ItemTemplate>

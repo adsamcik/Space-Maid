@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -78,10 +79,70 @@ public sealed class DesktopTests
                 var tree = (ListBox)window.FindName("SpaceTree");
                 var explorer = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 Assert.True(tree.Items.Count >= 2);
+                stage = "opening folder operations through routed right-click events";
+                int binLink = explorer.Scan.PrimaryLink(row.Item.DirectoryIndex);
+                int projectLink = explorer.Scan.PrimaryLink(explorer.Scan.Entry(binLink).ParentIndex);
+                var projectContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(projectLink)));
+                string rootMapTotal = ((TextBlock)window.FindName("MapTotal")).Text;
+                RightClick(window, projectContainer);
+                Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                Assert.Equal(rootMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                Assert.Equal(new[] { "Open in File Explorer", "Move to Recycle Bin" }, tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
+                Assert.True(tree.ContextMenu.Items.Cast<MenuItem>().All(i => i.IsEnabled));
+                var capturedRecycle = (MenuItem)tree.ContextMenu.Items[1];
+                tree.ContextMenu.IsOpen = false;
+                var rootMap = (TreemapPanel)window.FindName("SpaceMap");
+                var projectTile = rootMap.Children.Cast<Button>().Single(b => ((SpaceContribution)b.DataContext).Path == project);
+                RightClick(window, projectTile);
+                PumpUntil(() => projectTile.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.Equal(rootMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                Assert.Equal(2, projectTile.ContextMenu.Items.Count);
+                projectTile.ContextMenu.IsOpen = false;
+
+                stage = "revealing a map folder beneath a collapsed tree branch";
+                var openProject = window.NavigateToEntryAsync(projectLink);
+                PumpUntil(() => openProject.IsCompleted, TimeSpan.FromSeconds(10));
+                openProject.GetAwaiter().GetResult();
+                Assert.False(explorer.IsExpanded(projectLink));
+                Assert.Equal(-1, explorer.Find(binLink));
+                var binTile = rootMap.Children.Cast<Button>().Single(b => ((SpaceContribution)b.DataContext).Path == bin);
+                string projectMapTotal = ((TextBlock)window.FindName("MapTotal")).Text;
+                RightClick(window, binTile);
+                PumpUntil(() => binTile.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                Assert.True(explorer.IsExpanded(projectLink));
+                Assert.Same(binTile, rootMap.Children.Cast<Button>().Single(b => ((SpaceContribution)b.DataContext).Path == bin));
+                Assert.Equal(projectMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                binTile.ContextMenu.IsOpen = false;
+                RightClick(window, tree, keyboard: true);
+                PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                tree.ContextMenu.IsOpen = false;
+
                 var navigation = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
                 PumpUntil(() => navigation.IsCompleted, TimeSpan.FromSeconds(10));
                 navigation.GetAwaiter().GetResult();
                 Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                stage = "keeping a folder menu action bound to its original target";
+                string? menuConfirmationPath = null;
+                var menuTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+                {
+                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
+                    if (dialog is null) return;
+                    menuConfirmationPath = ((TextBox)dialog.FindName("TargetPath")).Text;
+                    dialog.Close();
+                }, Dispatcher.CurrentDispatcher);
+                capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
+                menuTimer.Stop();
+                Assert.Equal(project, menuConfirmationPath); // Current selection is bin, menu was opened on its parent.
+                Assert.True(Directory.Exists(project));
+                RightClick(window, tree, keyboard: true);
+                PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                tree.ContextMenu.IsOpen = false;
                 var map = (TreemapPanel)window.FindName("SpaceMap");
                 var tile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
                 Assert.Equal(8192, Assert.IsType<SpaceContribution>(tile.DataContext).Bytes);
@@ -158,6 +219,12 @@ public sealed class DesktopTests
                     Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
                     Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
                     Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                    var staleBinContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(binLink)));
+                    RightClick(window, staleBinContainer);
+                    PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                    Assert.True(((MenuItem)tree.ContextMenu.Items[0]).IsEnabled);
+                    Assert.False(((MenuItem)tree.ContextMenu.Items[1]).IsEnabled);
+                    tree.ContextMenu.IsOpen = false;
                     var retry = window.DeleteSelectedFolderAsync();
                     Assert.Null(retry.GetAwaiter().GetResult());
                     Assert.Contains("out of date", ((TextBlock)window.FindName("StatusText")).Text);
@@ -266,11 +333,22 @@ public sealed class DesktopTests
                 stage = "blocking deletion of grouped map entries";
                 var groupedTile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
                 Assert.Equal(-2, Assert.IsType<SpaceContribution>(groupedTile.DataContext).Link);
+                Assert.Null(groupedTile.ContextMenu);
                 groupedTile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
                 var groupedDelete = window.DeleteSelectedFolderAsync();
                 Assert.Null(groupedDelete.GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
+                stage = "disabling recycling on a drive-root context menu";
+                RightClick(window, Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0)));
+                PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.True(((MenuItem)tree.ContextMenu.Items[0]).IsEnabled);
+                Assert.False(((MenuItem)tree.ContextMenu.Items[1]).IsEnabled);
+                Assert.Contains("Drive roots", Assert.IsType<string>(((MenuItem)tree.ContextMenu.Items[1]).ToolTip));
+                RenderMenu(tree.ContextMenu, Path.Join(artifactRoot, "artifacts", "ui", "folder-menu-dark.png"));
+                tree.ContextMenu.IsOpen = false;
+                RightClick(window, tree);
+                Assert.False(tree.ContextMenu.IsOpen); // Blank tree space does not reuse the selected root's menu.
                 stage = "scrolling to the final wide-folder entry";
                 var wideRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 tree.SelectedIndex = wideRows.Count - 1;
@@ -278,11 +356,20 @@ public sealed class DesktopTests
                 wideContent.UpdateLayout();
                 PumpUntil(() => tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1) is not null, TimeSpan.FromSeconds(10));
                 Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100, "Scrolling realized the whole wide folder.");
+                var finalFile = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1));
+                RightClick(window, finalFile);
+                PumpUntil(() => true, TimeSpan.FromSeconds(1));
+                Assert.False(tree.ContextMenu.IsOpen); // File rows do not expose folder operations.
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
                 picker.ItemsSource = new[] { new DriveChoice(Path.GetPathRoot(fixture.Path)!, "Another target", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };
                 picker.SelectedIndex = 0;
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BackendStatusText")).Visibility);
+                Assert.Empty(tree.ContextMenu.Items.Cast<object>());
+                int dialogsBefore = app.Windows.OfType<RecycleFolderWindow>().Count();
+                capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                Assert.True(scanButton.IsEnabled);
+                Assert.Equal(dialogsBefore, app.Windows.OfType<RecycleFolderWindow>().Count()); // An older scan's menu cannot delete a current target.
                 stage = "closing windows";
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
             }
@@ -307,6 +394,43 @@ public sealed class DesktopTests
         Dispatcher.PushFrame(frame);
         pulse.Stop();
         Assert.True(completed(), "The desktop operation did not complete.");
+    }
+
+    // Offscreen HWNDs do not receive normal mouse hit testing from SendMessage.
+    // Route mouse/menu events through the real controls, then show the real WPF
+    // popup. WPF's menu-event constructors are internal, so only the test uses reflection.
+    private static void RightClick(Window window, FrameworkElement target, bool keyboard = false)
+    {
+        window.UpdateLayout();
+        if (!keyboard)
+            target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Right)
+                { RoutedEvent = Mouse.PreviewMouseDownEvent });
+        var args = (ContextMenuEventArgs)Activator.CreateInstance(typeof(ContextMenuEventArgs),
+            BindingFlags.Instance | BindingFlags.NonPublic, null, [target, true, keyboard ? -1d : 10d, keyboard ? -1d : 10d], null)!;
+        target.RaiseEvent(args);
+        var menu = target.ContextMenu ?? (ItemsControl.ItemsControlFromItemContainer(target) as FrameworkElement)?.ContextMenu;
+        if (!args.Handled && menu is not null)
+        {
+            menu.PlacementTarget = target;
+            menu.IsOpen = true;
+        }
+    }
+
+    private static void RenderMenu(ContextMenu menu, string path)
+    {
+        menu.UpdateLayout();
+        Assert.True(menu.ActualWidth > 0 && menu.ActualHeight > 0);
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(menu.ActualWidth), (int)Math.Ceiling(menu.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen())
+            drawing.DrawRectangle(new VisualBrush(menu) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top },
+                null, new Rect(0, 0, menu.ActualWidth, menu.ActualHeight));
+        bitmap.Render(visual);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var output = File.Create(path);
+        encoder.Save(output);
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject? parent)

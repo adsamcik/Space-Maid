@@ -23,6 +23,13 @@ public partial class MainWindow
     private void ClearExplorer()
     {
         _browseWork?.Cancel();
+        // Menus capture a scan for command safety; discard their callbacks
+        // when clearing results so a prior large inventory is not retained.
+        SpaceTree.ContextMenu.IsOpen = false;
+        SpaceTree.ContextMenu.Items.Clear();
+        ContextMenuService.SetPlacementTarget(SpaceTree, null);
+        foreach (Button tile in SpaceMap.Children)
+            if (tile.ContextMenu is { } menu) { menu.IsOpen = false; menu.Items.Clear(); }
         _explorer = null;
         _selectedLink = -1;
         _selectionIsGroup = false;
@@ -120,16 +127,7 @@ public partial class MainWindow
     internal Task NavigateToEntryAsync(int link) => BrowseAsync(async token =>
     {
         var scan = _snapshot!;
-        var target = scan.Entry(link);
-        var ancestors = new Stack<int>();
-        var visited = new HashSet<int>();
-        int parent = target.ParentIndex;
-        while (parent >= 0 && visited.Add(parent))
-        {
-            int ancestor = scan.PrimaryLink(parent);
-            ancestors.Push(ancestor);
-            parent = scan.Entry(ancestor).ParentIndex;
-        }
+        var ancestors = AncestorLinks(scan, link);
         while (ancestors.TryPop(out int ancestor))
         {
             var entry = scan.Entry(ancestor);
@@ -138,6 +136,20 @@ public partial class MainWindow
         SelectTree(link);
         await DisplayEntryAsync(link, token);
     });
+
+    private static Stack<int> AncestorLinks(ScanSnapshot scan, int link)
+    {
+        var ancestors = new Stack<int>();
+        var visited = new HashSet<int>();
+        int parent = scan.Entry(link).ParentIndex;
+        while (parent >= 0 && visited.Add(parent))
+        {
+            int ancestor = scan.PrimaryLink(parent);
+            ancestors.Push(ancestor);
+            parent = scan.Entry(ancestor).ParentIndex;
+        }
+        return ancestors;
+    }
 
     private async Task ToggleFolderAsync(ExplorerRow row, CancellationToken token)
     {
@@ -167,8 +179,15 @@ public partial class MainWindow
     {
         // Re-selecting the same real row resolves a preceding grouped map
         // selection even when WPF does not raise SelectionChanged again.
-        if (ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is ListBoxItem)
+        if (ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is ListBoxItem item)
+        {
             _selectionIsGroup = false;
+            if (e.ChangedButton == MouseButton.Right && item.DataContext is ExplorerRow row && CanUseFolderMenu(row.Scan))
+            {
+                // Avoid ListBox selection triggering async navigation before menu opening.
+                e.Handled = SelectContextEntry(row.Scan, row.Entry.LinkIndex);
+            }
+        }
     }
     private async void Tree_DoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -231,6 +250,14 @@ public partial class MainWindow
             text.Children.Add(new TextBlock { Text = total > 0 ? $"{100d * contribution.Bytes / total:0.#}%" : "—", Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
             var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {(total > 0 ? 100d * contribution.Bytes / total : 0):0.#}% of folder" };
             AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}. {contribution.Path}");
+            if (contribution.Link >= 0 && scan.Entry(contribution.Link).IsDirectory && scan.EntryPath(contribution.Link) is not null)
+            {
+                button.ContextMenu = new ContextMenu();
+                button.ContextMenuOpening += (_, args) =>
+                {
+                    if (!PrepareFolderMenu(button.ContextMenu, scan, contribution.Link)) args.Handled = true;
+                };
+            }
             button.Click += async (_, _) =>
             {
                 if (contribution.Link >= 0)

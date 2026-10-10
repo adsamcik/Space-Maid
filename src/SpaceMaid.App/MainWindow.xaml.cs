@@ -262,11 +262,15 @@ public partial class MainWindow : Window
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
         if (OpportunityGrid.SelectedItem is not OpportunityRow row) return;
+        OpenFolderInExplorer(row.Path);
+    }
+    private void OpenFolderInExplorer(string path)
+    {
         try
         {
-            if (!Directory.Exists(row.Path)) { StatusText.Text = "This location is no longer available. Rescan to refresh the results."; return; }
+            if (!Directory.Exists(path)) { StatusText.Text = "This location is no longer available. Rescan to refresh the results."; return; }
             var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
-            start.ArgumentList.Add(row.Path);
+            start.ArgumentList.Add(path);
             using var process = Process.Start(start);
         }
         catch (Win32Exception ex) { StatusText.Text = $"Could not open the folder: {ex.Message}"; }
