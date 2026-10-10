@@ -42,15 +42,14 @@ public sealed class VolumeScanner
             }
         }
         token.ThrowIfCancellationRequested();
-        var standard = new ScanBuilder();
-        if (fallbackReason is not null) standard.Warn(fallbackReason);
+        var standard = new ScanBuilder { FallbackReason = fallbackReason };
         string backend = "Standard Windows scan";
         try { AcquireDirectories(target, standard, reporter, token); }
         catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87)
         {
-            standard = new ScanBuilder { AllocationData = false };
-            if (fallbackReason is not null) standard.Warn(fallbackReason);
-            standard.Warn("This filesystem provides logical sizes only. Allocation, alternate streams, and external hard links are unverified.");
+            standard = new ScanBuilder { AllocationData = false, FallbackReason =
+                (fallbackReason is null ? "" : fallbackReason + " ") +
+                "This filesystem does not provide usable file identities/allocation. Basic logical-size scanning was used." };
             AcquireBasic(target, standard, reporter, token);
             backend = "Basic folder scan";
         }
@@ -124,7 +123,7 @@ public sealed class VolumeScanner
                 using var handle = OpenDirectory(directory.Path);
                 if (handle.IsInvalid)
                 {
-                    builder.Warn($"Could not read {directory.Path}: {new Win32Exception(Marshal.GetLastPInvokeError()).Message}");
+                    builder.Warn($"Could not read {directory.Path}: {new Win32Exception(Marshal.GetLastPInvokeError()).Message}", directory.Id);
                     continue;
                 }
                 while (true)
@@ -138,7 +137,7 @@ public sealed class VolumeScanner
                         int error = Marshal.GetLastPInvokeError();
                         if (error == NativeMethods.NoMoreFiles) break;
                         if (directory.Id == rootId && error is 1 or 50 or 87) throw new Win32Exception(error);
-                        builder.Warn($"Could not finish reading {directory.Path}: {new Win32Exception(error).Message}");
+                        builder.Warn($"Could not finish reading {directory.Path}: {new Win32Exception(error).Message}", directory.Id);
                         break;
                     }
                     int offset = 0;
@@ -169,7 +168,7 @@ public sealed class VolumeScanner
                             {
                                 uint tag = LayoutParser.U32(buffer, offset + 68);
                                 if ((tag & 0x20000000) != 0)
-                                    builder.Warn("Junction and symbolic-link targets were not followed.");
+                                    builder.Warn($"Junction/symbolic-link target not followed: {Path.Join(directory.Path, new string(name))}", id);
                                 else if (visited.Add(id)) pending.Enqueue((Path.Join(directory.Path, new string(name)), id));
                             }
                         }
@@ -214,14 +213,14 @@ public sealed class VolumeScanner
                     if ((entry.Attributes & FileAttributes.Directory) != 0)
                     {
                         if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
-                            builder.Warn("Reparse directories were not followed by basic scanning.");
+                            builder.Warn($"Reparse directory not followed: {Path.Join(directory.Path, entry.Name)}", id);
                         else pending.Enqueue((Path.Join(directory.Path, entry.Name), id));
                     }
                     reporter.Report("Reading folders", builder.Count);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { builder.Warn($"Could not finish reading {directory.Path}: {ex.Message}"); }
+            { builder.Warn($"Could not finish reading {directory.Path}: {ex.Message}", directory.Id); }
         }
     }
 

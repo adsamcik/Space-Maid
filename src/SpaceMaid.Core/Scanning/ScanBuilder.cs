@@ -11,12 +11,14 @@ internal sealed class ScanBuilder
     private int _nameCount;
     private int _omissions;
     private readonly List<string> _warnings = [];
+    private readonly HashSet<FileIdentity> _incomplete = [];
 
     public int Count => _files.Count;
     public int RootIndex { get; set; } = -1;
     public bool AllStreams { get; set; }
     public bool AllocationData { get; set; } = true;
     public bool CompleteVolumeLinks { get; set; }
+    public string? FallbackReason { get; set; }
 
     public int AddFile(FileRecord file)
     {
@@ -40,11 +42,12 @@ internal sealed class ScanBuilder
         _nameCount = needed;
     }
 
-    public void Warn(string message)
+    public void Warn(string message, FileIdentity? directory = null)
     {
         _omissions++;
         CompleteVolumeLinks = false;
         if (_warnings.Count < 8) _warnings.Add(message);
+        if (directory is { } id) _incomplete.Add(id);
     }
 
     public ScanSnapshot Build(string rootPath, string backend, TimeSpan acquisition,
@@ -57,6 +60,10 @@ internal sealed class ScanBuilder
         int[] first = Enumerable.Repeat(-1, files.Length).ToArray();
         int[] heads = Enumerable.Repeat(-1, files.Length).ToArray();
         int[] next = Enumerable.Repeat(-1, links.Length).ToArray();
+        byte[] flags = new byte[files.Length]; // shared-name and incomplete-branch bits
+        foreach (var id in _incomplete)
+            if (_ids.TryGetValue(id, out int index)) flags[index] |= 2;
+        int directoryCount = 0;
         for (int i = 0; i < links.Length; i++)
         {
             if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
@@ -71,6 +78,7 @@ internal sealed class ScanBuilder
             next[i] = heads[parent];
             heads[parent] = i;
             if (first[link.FileIndex] < 0) first[link.FileIndex] = i;
+            else flags[link.FileIndex] |= 1;
         }
 
         // Attribute each file's allocation once, even when it has several names.
@@ -81,6 +89,7 @@ internal sealed class ScanBuilder
         {
             logical[i] = files[i].LogicalBytes;
             allocated[i] = files[i].AllocatedBytes;
+            if (files[i].IsDirectory) directoryCount++;
             if (i != RootIndex && files[i].IsDirectory && first[i] >= 0)
                 pending[links[first[i]].ParentIndex]++;
         }
@@ -105,13 +114,21 @@ internal sealed class ScanBuilder
             int parent = links[first[directory]].ParentIndex;
             logical[parent] = checked(logical[parent] + logical[directory]);
             allocated[parent] = checked(allocated[parent] + allocated[directory]);
+            flags[parent] |= (byte)(flags[directory] & 2);
             if (--pending[parent] == 0) ready.Enqueue(parent);
         }
-        if (pending.Any(p => p > 0)) Warn("Directory relationships changed or contain a cycle; some totals are incomplete.");
+        if (pending.Any(p => p > 0))
+        {
+            Warn("Directory relationships changed or contain a cycle; some totals are incomplete.");
+            for (int i = 0; i < pending.Length; i++) if (pending[i] > 0) flags[i] |= 2;
+        }
+        if (_omissions > 0) flags[RootIndex] |= 2;
         if (_omissions > _warnings.Count) _warnings.Add($"{_omissions:N0} coverage warnings in total.");
         timer.Stop();
+        using var process = Process.GetCurrentProcess();
         return new(rootPath, backend, files, links, _names, RootIndex, first, heads, next,
             logical, allocated, AllStreams, AllocationData, CompleteVolumeLinks,
-            _warnings.ToArray(), new(acquisition, timer.Elapsed, GC.GetTotalAllocatedBytes(false) - allocatedBefore));
+            _warnings.ToArray(), new(acquisition, timer.Elapsed, GC.GetTotalAllocatedBytes(false) - allocatedBefore,
+                process.PeakWorkingSet64), flags, _omissions, directoryCount, FallbackReason);
     }
 }
