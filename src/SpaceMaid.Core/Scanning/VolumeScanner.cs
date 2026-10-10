@@ -110,6 +110,7 @@ public sealed class VolumeScanner
             if (!NativeMethods.GetFileInformationByHandleEx(rootHandle, 18, pointer, 24))
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
         var rootId = new FileIdentity(LayoutParser.U64(idBuffer, 8), LayoutParser.U64(idBuffer, 16));
+        if (rootId == default) throw new Win32Exception(50);
         builder.RootIndex = builder.AddFile(new(rootId, FileAttributes.Directory, 0, 0, 0));
         var pending = new Queue<(string Path, FileIdentity Id)>();
         var visited = new HashSet<FileIdentity> { rootId };
@@ -154,6 +155,9 @@ public sealed class VolumeScanner
                         if (!name.SequenceEqual(".") && !name.SequenceEqual(".."))
                         {
                             var id = new FileIdentity(LayoutParser.U64(buffer, offset + 72), LayoutParser.U64(buffer, offset + 80));
+                            // Some providers return successful records without usable IDs.
+                            // Restart in basic mode rather than merging unrelated files under ID zero.
+                            if (id == default) throw new Win32Exception(50);
                             var attributes = (FileAttributes)LayoutParser.U32(buffer, offset + 56);
                             bool isDirectory = (attributes & FileAttributes.Directory) != 0;
                             long logical = isDirectory ? 0 : LayoutParser.I64(buffer, offset + 40);

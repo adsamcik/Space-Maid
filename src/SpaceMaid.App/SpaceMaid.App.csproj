@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
+    <InternalsVisibleTo Include="SpaceMaid.Tests" />
+  </ItemGroup>
+</Project>

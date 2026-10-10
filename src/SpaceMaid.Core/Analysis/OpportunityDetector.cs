@@ -59,8 +59,8 @@ public static class OpportunityDetector
         if (Is(name, "Cache") && ParentNamed(scan, parent, "pip") && AncestorNamed(scan, parent, "AppData"))
             return new("pip cache", "Package caches", "pip's usual Windows cache directory.",
                 "Future installs may need to download or rebuild cached wheels.", "Review it with python -m pip cache info.");
-        if ((Is(name, "logs") || Is(name, "sessions") || Is(name, "archived_sessions")) && ParentNamed(scan, parent, ".codex"))
-            return new(Is(name, "logs") ? "Codex logs" : "Codex session history", "Agent files",
+        if ((Is(name, "log") || Is(name, "logs") || Is(name, "sessions") || Is(name, "archived_sessions")) && ParentNamed(scan, parent, ".codex"))
+            return new(Is(name, "log") || Is(name, "logs") ? "Codex logs" : "Codex session history", "Agent files",
                 "A known Codex log or session-history directory.",
                 "Session files can preserve useful conversations and recovery context. Age is not proof that they are disposable.",
                 "Review in Codex and preserve any history you need.", true);

@@ -108,7 +108,7 @@ internal sealed class ScanBuilder
             if (--pending[parent] == 0) ready.Enqueue(parent);
         }
         if (pending.Any(p => p > 0)) Warn("Directory relationships changed or contain a cycle; some totals are incomplete.");
-        if (_omissions > _warnings.Count) _warnings.Add($"{_omissions:N0} metadata omissions in total.");
+        if (_omissions > _warnings.Count) _warnings.Add($"{_omissions:N0} coverage warnings in total.");
         timer.Stop();
         return new(rootPath, backend, files, links, _names, RootIndex, first, heads, next,
             logical, allocated, AllStreams, AllocationData, CompleteVolumeLinks,

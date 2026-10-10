@@ -1,3 +1,4 @@
+using System.IO;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 using Xunit;
@@ -55,7 +56,7 @@ public sealed class AnalysisTests
     public async Task KnownCacheAndAgentDirectoriesAreRecognizedWithoutInferringAbandonment()
     {
         using var fixture = new TestDirectory();
-        string[] folders = [".nuget/packages", ".gradle/caches", ".codex/sessions", ".codex/logs", ".claude/debug", "AppData/Local/npm-cache", "AppData/Local/pip/Cache"];
+        string[] folders = [".nuget/packages", ".gradle/caches", ".codex/sessions", ".codex/log", ".codex/logs", ".claude/debug", "AppData/Local/npm-cache", "AppData/Local/pip/Cache"];
         foreach (string folder in folders) Directory.CreateDirectory(Path.Join(fixture.Path, folder));
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var found = OpportunityDetector.Find(scan);

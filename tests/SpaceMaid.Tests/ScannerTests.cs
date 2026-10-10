@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using SpaceMaid.Core.Scanning;
@@ -85,14 +86,59 @@ public sealed class ScannerTests
     public async Task CancellationDoesNotReturnACompleteSnapshot()
     {
         using var fixture = new TestDirectory();
+        Directory.CreateDirectory(System.IO.Path.Join(fixture.Path, "nested"));
+        await File.WriteAllTextAsync(System.IO.Path.Join(fixture.Path, "unchanged.txt"), "keep");
         using var token = new CancellationTokenSource();
-        token.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new VolumeScanner().ScanAsync(fixture.Path, cancellationToken: token.Token));
+        var progress = new InlineProgress<ScanProgress>(_ => token.Cancel());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new VolumeScanner().ScanAsync(fixture.Path,
+            progress, token.Token, preferFast: false));
+        Assert.Equal("keep", await File.ReadAllTextAsync(System.IO.Path.Join(fixture.Path, "unchanged.txt")));
     }
+
+    [Fact]
+    public async Task SparseFileSizeIsNotPresentedAsAllocatedSpace()
+    {
+        using var fixture = new TestDirectory();
+        string path = System.IO.Path.Join(fixture.Path, "sparse.bin");
+        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            Assert.True(SetSparse(file.SafeFileHandle, 0x900C4, 0, 0, 0, 0, out _, 0));
+            file.SetLength(16 * 1024 * 1024);
+        }
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        Assert.Equal(16 * 1024 * 1024, scan.LogicalBytes);
+        Assert.Equal(0, scan.AllocatedBytes);
+    }
+
+    [Fact]
+    public void LayoutIncludesAlternateDataStreams()
+    {
+        var builder = new ScanBuilder { AllStreams = true };
+        builder.RootIndex = builder.AddFile(new(new(5), FileAttributes.Directory, 0, 0, 0));
+        byte[] batch = LayoutFixture.File(42, 5, "file", 1, 70, 4096);
+        int secondStream = batch.Length - 48;
+        LayoutFixture.Put32(batch, secondStream + 36, 0x80);
+        LayoutFixture.Put64(batch, secondStream + 16, 4096);
+        LayoutFixture.Put64(batch, secondStream + 24, 1234);
+        LayoutParser.Parse(batch, builder);
+        var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+        Assert.Equal(1304, scan.LogicalBytes);
+        Assert.Equal(8192, scan.AllocatedBytes);
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "DeviceIoControl", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetSparse(Microsoft.Win32.SafeHandles.SafeFileHandle handle, uint code,
+        nint input, int inputLength, nint output, int outputLength, out int returned, nint overlapped);
 
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLink(string name, string existing, nint security);
+}
+
+internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
 }
 
 internal sealed class TestDirectory : IDisposable
