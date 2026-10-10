@@ -150,7 +150,9 @@ public sealed class ScannerTests
         await File.WriteAllBytesAsync(original, content);
         Assert.True(CreateHardLink(Path.Join(folder, "alias.bin"), original, 0), $"Hard link error: {Marshal.GetLastWin32Error()}");
         var diagnostics = new List<ScanDiagnostic>();
-        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false, diagnostic: diagnostics.Add);
+        var reports = new List<ScanProgress>();
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, new InlineProgress<ScanProgress>(reports.Add),
+            preferFast: false, diagnostic: diagnostics.Add);
         Assert.Equal(8192, scan.LogicalBytes);
         Assert.Equal(8192, scan.AllocatedBytes);
         Assert.Equal(4, scan.FileCount); // root, project, bin, one file object
@@ -161,6 +163,11 @@ public sealed class ScannerTests
         Assert.Equal(scan.FileCount, complete.FileObjects);
         Assert.True(complete.QueryCount > 0);
         Assert.Equal(scan.NameCount, complete.Names);
+        var preview = Assert.IsType<ScanPreliminary>(reports[^1].Preliminary);
+        Assert.Equal(scan.LogicalBytes, preview.LogicalBytes);
+        Assert.Equal(scan.AllocatedBytes, preview.AllocatedBytes);
+        Assert.Equal(8192, Assert.Single(preview.LargestFiles).LogicalBytes);
+        Assert.Contains(Assert.Single(preview.LargestFiles).Path, new[] { original, Path.Join(folder, "alias.bin") });
         Assert.Equal(content, await File.ReadAllBytesAsync(original));
     }
 

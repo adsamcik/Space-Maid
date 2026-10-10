@@ -127,18 +127,67 @@ public sealed class DesktopTests
                 Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The treemap overlaps its selected-entry details.");
 
                 stage = "checking wide-folder UI virtualization";
-                var wideBuilder = new ScanBuilder();
+                var wideBuilder = new ScanBuilder(trackPreliminary: true);
                 wideBuilder.RootIndex = wideBuilder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
                 for (int i = 0; i < 50_000; i++)
                 {
                     int file = wideBuilder.AddFile(new(new((ulong)i + 2), FileAttributes.Normal, 4096, 4096, 0));
                     wideBuilder.AddLink(file, new(1), $"file-{i}.bin");
                 }
+                stage = "showing bounded preliminary results";
+                window.RetainCancelledPreliminary(); // Clear the completed fixture before simulating acquisition.
+                window.SetBusy(true);
+                ((TextBlock)window.FindName("StatusText")).Text = "Reading folders · 50,001 file objects · 1.0s";
+                var preliminary = wideBuilder.Preliminary(@"C:\");
+                // Add one unresolved path to exercise the visible pending label.
+                preliminary = preliminary with { LargestFiles = preliminary.LargestFiles.Select((f, i) => i == 0 ? f with { Path = null } : f).ToArray() };
+                window.ShowPreliminary(preliminary);
+                var preliminaryPanel = (FrameworkElement)window.FindName("PreliminaryPanel");
+                var preliminaryFiles = (ListBox)window.FindName("PreliminaryFiles");
+                Assert.Equal(Visibility.Visible, preliminaryPanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, ((Grid)window.FindName("ExplorePanel")).Visibility);
+                Assert.Equal(100, preliminaryFiles.Items.Count);
+                Assert.True(preliminaryFiles.IsEnabled);
+                Assert.False(picker.IsEnabled);
+                Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.Equal(Visibility.Visible, ((Button)window.FindName("CancelButton")).Visibility);
+                Assert.Equal("Path pending…", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).PathText);
+                Assert.Contains("PRELIMINARY", ((TextBlock)window.FindName("ScannedSizeLabel")).Text);
+#pragma warning disable WPF0001
+                foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+                {
+                    app.ThemeMode = mode;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"preliminary-{(mode == ThemeMode.Light ? "light" : "dark")}.png"), 1220, 910);
+                }
+#pragma warning restore WPF0001
+                stage = "retaining cancelled partial results and resetting a fallback";
+                window.RetainCancelledPreliminary();
+                window.SetBusy(false);
+                ((TextBlock)window.FindName("StatusText")).Text = "Scan cancelled · Preliminary results retained.";
+                Assert.Equal(100, preliminaryFiles.Items.Count);
+                Assert.Empty(tree.Items.Cast<object>());
+                Assert.Empty(grid.Items.Cast<object>());
+                Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.Contains("cancelled", ((TextBlock)window.FindName("PreliminaryCaption")).Text);
+                Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", "preliminary-cancelled-compact.png"), 1020, 790);
+                window.ShowPreliminary(new(0, 0, false, Array.Empty<PreliminaryFile>()));
+                Assert.Empty(preliminaryFiles.Items.Cast<object>());
+                Assert.Equal("0 B", ((TextBlock)window.FindName("ScannedSizeText")).Text);
+                Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("PreliminaryHint")).Visibility);
+                Assert.Contains("LOGICAL", ((TextBlock)window.FindName("ScannedSizeLabel")).Text);
+                Assert.Contains("Hard links may repeat", ((TextBlock)window.FindName("PreliminaryNote")).Text);
+                Assert.Contains("Waiting", ((TextBlock)window.FindName("PreliminaryHint")).Text);
+                // A backend restart is a fresh acquisition view, not cancelled.
+                Assert.DoesNotContain("cancelled", ((TextBlock)window.FindName("PreliminaryCaption")).Text);
                 var wideScan = wideBuilder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
                 stage = "binding the wide-folder indexed source";
                 var wideLoad = window.InitializeExplorerAsync(wideScan, [], CancellationToken.None);
                 PumpUntil(() => wideLoad.IsCompleted, TimeSpan.FromSeconds(10));
                 wideLoad.GetAwaiter().GetResult();
+                Assert.Equal(Visibility.Collapsed, preliminaryPanel.Visibility);
+                Assert.Empty(preliminaryFiles.Items.Cast<object>());
+                Assert.Equal(Visibility.Visible, ((Grid)window.FindName("ExplorePanel")).Visibility);
                 var wideContent = (FrameworkElement)window.Content;
                 stage = "measuring the wide-folder window";
                 window.UpdateLayout();

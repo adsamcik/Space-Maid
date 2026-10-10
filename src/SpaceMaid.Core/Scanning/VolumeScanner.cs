@@ -22,46 +22,59 @@ public sealed class VolumeScanner
         string root = Path.GetPathRoot(target)!;
         var timer = Stopwatch.StartNew();
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
-        var reporter = new ScanReporter(progress, diagnostic, timer, allocatedBefore);
+        var reporter = new ScanReporter(progress, diagnostic, timer, allocatedBefore, target);
         reporter.Event("scan-start", $"Target: {target}; preferFast: {preferFast}");
         string? fallbackReason = null;
-        if (preferFast && string.Equals(target, root, StringComparison.OrdinalIgnoreCase)
-            && root.Length == 3 && new DriveInfo(root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+        ScanBuilder? active = null;
+        try
         {
-            var fast = new ScanBuilder { AllStreams = true, CompleteVolumeLinks = true };
-            fast.WarningReported = message => reporter.Event("coverage-warning", message, fast);
-            reporter.UseBackend("Fast NTFS scan", "Attempting FSCTL_QUERY_FILE_LAYOUT (0x00090277).");
-            try
+            if (preferFast && string.Equals(target, root, StringComparison.OrdinalIgnoreCase)
+                && root.Length == 3 && new DriveInfo(root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
             {
-                AcquireLayout(root, fast, reporter, token);
-                return Finish(fast, "Fast NTFS scan");
+                var fast = new ScanBuilder(progress is not null) { AllStreams = true, CompleteVolumeLinks = true };
+                active = fast;
+                fast.WarningReported = message => reporter.Event("coverage-warning", message, fast);
+                reporter.UseBackend("Fast NTFS scan", "Attempting FSCTL_QUERY_FILE_LAYOUT (0x00090277).", fast);
+                try
+                {
+                    AcquireLayout(root, fast, reporter, token);
+                    return Finish(fast, "Fast NTFS scan");
+                }
+                catch (Exception ex) when (ex is Win32Exception or InvalidDataException)
+                {
+                    fallbackReason = ex is Win32Exception { NativeErrorCode: 5 }
+                        ? "Fast NTFS access was unavailable. Standard scanning was used; administrator access can enable the fast scan."
+                        : $"Fast NTFS scanning was unavailable ({ex.Message}). Standard scanning was used.";
+                    reporter.Fallback(fallbackReason, fast, (ex as Win32Exception)?.NativeErrorCode);
+                    active = null; // The discarded backend must not be republished on cancellation.
+                }
             }
-            catch (Exception ex) when (ex is Win32Exception or InvalidDataException)
-            {
-                fallbackReason = ex is Win32Exception { NativeErrorCode: 5 }
-                    ? "Fast NTFS access was unavailable. Standard scanning was used; administrator access can enable the fast scan."
-                    : $"Fast NTFS scanning was unavailable ({ex.Message}). Standard scanning was used.";
-                reporter.Fallback(fallbackReason, fast, (ex as Win32Exception)?.NativeErrorCode);
-            }
-        }
-        token.ThrowIfCancellationRequested();
-        var standard = new ScanBuilder { FallbackReason = fallbackReason };
-        standard.WarningReported = message => reporter.Event("coverage-warning", message, standard);
-        string backend = "Standard Windows scan";
-        reporter.UseBackend(backend, fallbackReason ?? "Using directory metadata enumeration; fast mode was not requested or the target is not a whole local NTFS volume.");
-        try { AcquireDirectories(target, standard, reporter, token); }
-        catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87)
-        {
-            standard = new ScanBuilder { AllocationData = false, FallbackReason =
-                (fallbackReason is null ? "" : fallbackReason + " ") +
-                "This filesystem does not provide usable file identities/allocation. Basic logical-size scanning was used." };
+            token.ThrowIfCancellationRequested();
+            var standard = new ScanBuilder(progress is not null) { FallbackReason = fallbackReason };
+            active = standard;
             standard.WarningReported = message => reporter.Event("coverage-warning", message, standard);
-            reporter.Fallback(standard.FallbackReason, standard, ex.NativeErrorCode);
-            reporter.UseBackend("Basic folder scan", "Using logical-size-only enumeration.");
-            AcquireBasic(target, standard, reporter, token);
-            backend = "Basic folder scan";
+            string backend = "Standard Windows scan";
+            reporter.UseBackend(backend, fallbackReason ?? "Using directory metadata enumeration; fast mode was not requested or the target is not a whole local NTFS volume.", standard);
+            try { AcquireDirectories(target, standard, reporter, token); }
+            catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87)
+            {
+                standard = new ScanBuilder(progress is not null) { AllocationData = false, FallbackReason =
+                    (fallbackReason is null ? "" : fallbackReason + " ") +
+                    "This filesystem does not provide usable file identities/allocation. Basic logical-size scanning was used." };
+                active = standard;
+                standard.WarningReported = message => reporter.Event("coverage-warning", message, standard);
+                reporter.Fallback(standard.FallbackReason, standard, ex.NativeErrorCode);
+                reporter.UseBackend("Basic folder scan", "Using logical-size-only enumeration.", standard);
+                AcquireBasic(target, standard, reporter, token);
+                backend = "Basic folder scan";
+            }
+            return Finish(standard, backend);
         }
-        return Finish(standard, backend);
+        catch (OperationCanceledException)
+        {
+            if (active is not null) reporter.Report("Scan cancelled", active, force: true);
+            throw;
+        }
 
         ScanSnapshot Finish(ScanBuilder builder, string actualBackend)
         {
@@ -251,26 +264,30 @@ public sealed class VolumeScanner
         }
     }
 
-    private sealed class ScanReporter(IProgress<ScanProgress>? progress, Action<ScanDiagnostic>? diagnostic, Stopwatch timer, long allocatedBefore)
+    private sealed class ScanReporter(IProgress<ScanProgress>? progress, Action<ScanDiagnostic>? diagnostic,
+        Stopwatch timer, long allocatedBefore, string rootPath)
     {
         private long _lastUpdate = -250;
+        private long _lastPreliminary = -1000;
         private long _lastDiagnostic = -1000, _queries, _batches, _returnedBytes;
         private double _queryMs, _parseMs;
         private string _backend = "Selecting backend";
         private string? _fallback;
         public void QueryCompleted(long started, int bytes) { _queries++; _returnedBytes += bytes; _queryMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
         public void ParseCompleted(long started) { _batches++; _parseMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
-        public void UseBackend(string backend, string message)
+        public void UseBackend(string backend, string message, ScanBuilder builder)
         {
             _backend = backend;
+            _lastPreliminary = timer.ElapsedMilliseconds;
             Event("backend-selected", message);
-            progress?.Report(new("Starting metadata acquisition", 0, timer.Elapsed, _backend, _fallback));
+            progress?.Report(new("Starting metadata acquisition", 0, timer.Elapsed, _backend, _fallback, builder.Preliminary(rootPath)));
         }
         public void Fallback(string reason, ScanBuilder builder, int? error)
         {
             _fallback = reason;
             Event("backend-fallback", reason, builder, error);
-            progress?.Report(new("Switching scanner", builder.Count, timer.Elapsed, _backend, _fallback));
+            progress?.Report(new("Switching scanner", 0, timer.Elapsed, _backend, _fallback,
+                new(0, 0, builder.AllocationData, Array.Empty<PreliminaryFile>())));
         }
         public void Event(string eventName, string message, ScanBuilder? builder = null, int? error = null)
         {
@@ -284,7 +301,13 @@ public sealed class VolumeScanner
         {
             if (!force && timer.ElapsedMilliseconds - _lastUpdate < 250) return;
             _lastUpdate = timer.ElapsedMilliseconds;
-            progress?.Report(new(phase, builder.Count, timer.Elapsed, _backend, _fallback));
+            ScanPreliminary? preliminary = null;
+            if (progress is not null && (force || timer.ElapsedMilliseconds - _lastPreliminary >= 1000))
+            {
+                _lastPreliminary = timer.ElapsedMilliseconds;
+                preliminary = builder.Preliminary(rootPath);
+            }
+            progress?.Report(new(phase, builder.Count, timer.Elapsed, _backend, _fallback, preliminary));
             if (force || timer.ElapsedMilliseconds - _lastDiagnostic >= 1000)
             { _lastDiagnostic = timer.ElapsedMilliseconds; Event("progress", phase, builder); }
         }

@@ -67,6 +67,7 @@ public partial class MainWindow : Window
     private void ClearResults()
     {
         ClearExplorer();
+        ClearPreliminary();
         _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
         _snapshot = null;
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
@@ -76,6 +77,8 @@ public partial class MainWindow : Window
         EmptyState.Visibility = Visibility.Visible;
         EmptyCaption.Text = "Scan a drive to review build output, caches,\nenvironments, and files left by coding agents.";
         ScannedSizeText.Text = CandidateText.Text = "—";
+        ScannedSizeLabel.Text = "OBSERVED ALLOCATION";
+        ScannedSizeCaption.Text = "Files counted once across hard links";
         OpportunityHeading.Text = "Opportunities";
         OpportunitiesTab.Content = "Opportunities";
         CandidateCaption.Text = "An estimate, subject to review";
@@ -101,18 +104,25 @@ public partial class MainWindow : Window
             Runtime = Environment.Version.ToString(), OperatingSystem = Environment.OSVersion.ToString(), ProcessId = Environment.ProcessId });
         SetBusy(true);
         EmptyCaption.Text = "Reading file metadata. You can cancel at any time.";
+        CandidateCaption.Text = "Available when the scan finishes";
+        bool acquiring = true;
+        var progress = new ScanUiProgress(p =>
+        {
+            if (!_closing && acquiring && ReferenceEquals(_work, work))
+            {
+                StatusText.Text = $"{p.Phase} · {p.Files:N0} file objects · {p.Elapsed.TotalSeconds:0.0}s";
+                BackendStatusText.Text = p.Backend + (p.FallbackReason is null ? "" : $" · {p.FallbackReason}")
+                    + (log.Error is null ? "" : $" · Logging unavailable: {log.Error}");
+                if (p.Preliminary is { } preliminary) ShowPreliminary(preliminary);
+            }
+        });
         try
         {
-            var progress = new Progress<ScanProgress>(p =>
-            {
-                if (!_closing && ReferenceEquals(_work, work))
-                {
-                    StatusText.Text = $"{p.Phase} · {p.Files:N0} file objects · {p.Elapsed.TotalSeconds:0.0}s";
-                    BackendStatusText.Text = p.Backend + (p.FallbackReason is null ? "" : $" · {p.FallbackReason}")
-                        + (log.Error is null ? "" : $" · Logging unavailable: {log.Error}");
-                }
-            });
             var scan = await new VolumeScanner().ScanAsync(drive.Path, progress, work.Token, diagnostic: d => log.Record(d.Event, d));
+            acquiring = false;
+            if (_closing) return;
+            if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
+            PreliminaryCaption.Text = "Preparing folder totals and cleanup estimates… These results are preliminary.";
             BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : $" · {scan.FallbackReason}");
             StatusText.Text = "Finding development clutter…";
             log.Record("detection-start", new { scan.FileCount, scan.DirectoryCount });
@@ -146,6 +156,7 @@ public partial class MainWindow : Window
             if (_rows.Count > 0) OpportunityGrid.SelectedIndex = 0;
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
+            ScannedSizeCaption.Text = "Files counted once across hard links";
             _presentationElapsed = presentation.Elapsed;
             using var diagnosticProcess = Process.GetCurrentProcess();
             log.Record("app-scan-complete", new { scan.Backend, scan.FallbackReason, scan.FileCount, scan.NameCount,
@@ -165,8 +176,16 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            acquiring = false;
             log.Record("scan-cancelled", new { Target = drive.Path });
-            if (!_closing) { ClearResults(); StatusText.Text = "Scan cancelled."; EmptyCaption.Text = "Start another scan when you're ready."; TreeHint.Text = "Scan cancelled. Start another scan when you're ready."; }
+            if (!_closing)
+            {
+                if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
+                RetainCancelledPreliminary();
+                StatusText.Text = _preliminary is null ? "Scan cancelled." : "Scan cancelled · Preliminary results retained.";
+                EmptyCaption.Text = "Start another scan to calculate cleanup estimates.";
+                TreeHint.Text = "Scan cancelled. Start another scan when you're ready.";
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
@@ -175,13 +194,14 @@ public partial class MainWindow : Window
         }
         finally
         {
+            acquiring = false;
             if (!_closing && log.Error is not null) BackendStatusText.Text += $" · Logging unavailable: {log.Error}";
             _work = null;
             if (!_closing) SetBusy(false);
         }
     }
 
-    private void SetBusy(bool busy)
+    internal void SetBusy(bool busy)
     {
         DrivePicker.IsEnabled = !busy;
         ScanButton.IsEnabled = !busy && DrivePicker.SelectedItem is not null;

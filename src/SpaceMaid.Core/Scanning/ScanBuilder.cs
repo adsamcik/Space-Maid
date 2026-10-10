@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace SpaceMaid.Core.Scanning;
 
-internal sealed class ScanBuilder
+internal sealed class ScanBuilder(bool trackPreliminary = false)
 {
     private readonly List<FileRecord> _files = [];
     private readonly List<NameLink> _links = [];
@@ -12,6 +12,10 @@ internal sealed class ScanBuilder
     private int _omissions;
     private readonly List<string> _warnings = [];
     private readonly HashSet<FileIdentity> _incomplete = [];
+    // Only interactive scans need the first-name index and bounded largest-file heap.
+    private readonly List<int>? _firstNames = trackPreliminary ? [] : null;
+    private readonly PriorityQueue<int, (long Bytes, int Tie)> _largest = new();
+    private long _observedLogical, _observedAllocated;
 
     public int Count => _files.Count;
     public int NameCount => _links.Count;
@@ -29,6 +33,19 @@ internal sealed class ScanBuilder
         int index = _files.Count;
         _ids.Add(file.Identity, index);
         _files.Add(file);
+        if (_firstNames is not null)
+        {
+            _firstNames.Add(-1);
+            _observedLogical = checked(_observedLogical + file.LogicalBytes);
+            _observedAllocated = checked(_observedAllocated + file.AllocatedBytes);
+            if (!file.IsDirectory)
+            {
+                var priority = (AllocationData ? file.AllocatedBytes : file.LogicalBytes, -index);
+                if (_largest.Count < 100) _largest.Enqueue(index, priority);
+                else if (_largest.TryPeek(out _, out var smallest) && priority.CompareTo(smallest) > 0)
+                    _largest.EnqueueDequeue(index, priority);
+            }
+        }
         return index;
     }
 
@@ -41,8 +58,44 @@ internal sealed class ScanBuilder
         if (needed > _names.Length)
             Array.Resize(ref _names, Math.Max(needed, checked(_names.Length * 2)));
         name.CopyTo(_names.AsSpan(_nameCount));
+        if (_firstNames is not null && _firstNames[file] < 0) _firstNames[file] = _links.Count;
         _links.Add(new(file, parent, _nameCount, name.Length));
         _nameCount = needed;
+    }
+
+    public ScanPreliminary Preliminary(string rootPath)
+    {
+        var largest = _largest.UnorderedItems.OrderByDescending(item => item.Priority).Select(item =>
+        {
+            var file = _files[item.Element];
+            int link = _firstNames![item.Element];
+            string name = link < 0 ? "Name pending" : LinkName(link);
+            return new PreliminaryFile(name, PreviewPath(item.Element, rootPath), file.LogicalBytes, file.AllocatedBytes);
+        }).ToArray();
+        return new(_observedLogical, _observedAllocated, AllocationData, Array.AsReadOnly(largest));
+    }
+
+    private string LinkName(int index)
+    {
+        var link = _links[index];
+        return new string(_names, link.NameOffset, link.NameLength);
+    }
+
+    private string? PreviewPath(int file, string rootPath)
+    {
+        // Parents can arrive in later NTFS batches. Do not emit coverage warnings
+        // or invent a rooted path from an unresolved/cyclic namespace.
+        var parts = new List<string>();
+        var visited = new HashSet<int>();
+        while (file != RootIndex)
+        {
+            if (!visited.Add(file) || _firstNames![file] < 0) return null;
+            var link = _links[_firstNames[file]];
+            parts.Add(LinkName(_firstNames[file]));
+            if (!_ids.TryGetValue(link.ParentIdentity, out file) || !_files[file].IsDirectory) return null;
+        }
+        parts.Reverse();
+        return Path.Join(rootPath, Path.Combine(parts.ToArray()));
     }
 
     public void Warn(string message, FileIdentity? directory = null)

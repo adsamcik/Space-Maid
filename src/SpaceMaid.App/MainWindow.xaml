@@ -45,7 +45,7 @@
             <Border Style="{StaticResource Card}" Margin="0,0,12,0">
                 <StackPanel><TextBlock x:Name="ScannedSizeLabel" Text="OBSERVED ALLOCATION" Style="{StaticResource SectionLabel}" />
                     <TextBlock x:Name="ScannedSizeText" Text="—" FontSize="27" FontWeight="SemiBold" />
-                    <TextBlock Text="Files counted once across hard links" Opacity="0.65" FontSize="12" Margin="0,5,0,0" /></StackPanel>
+                    <TextBlock x:Name="ScannedSizeCaption" Text="Files counted once across hard links" Opacity="0.65" FontSize="12" Margin="0,5,0,0" /></StackPanel>
             </Border>
             <Border Style="{StaticResource Card}">
                 <StackPanel><TextBlock Text="CANDIDATE SPACE" Style="{StaticResource SectionLabel}" />
@@ -122,6 +122,42 @@
                 </ScrollViewer>
               </Border>
           </Grid>
+          <Border x:Name="PreliminaryPanel" Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
+              <Grid>
+                  <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                  <StackPanel Margin="18,16">
+                      <TextBlock Text="Preliminary · Largest files so far" FontSize="18" FontWeight="SemiBold" />
+                      <TextBlock x:Name="PreliminaryCaption" Text="Scanning… Folder totals and cleanup estimates will appear when ready." TextWrapping="Wrap" Opacity="0.65" FontSize="12" Margin="0,6,0,0" />
+                  </StackPanel>
+                  <Grid Grid.Row="1" Margin="22,0,24,8" Opacity="0.65">
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                      <TextBlock Text="File / exact path" FontSize="12" />
+                      <TextBlock x:Name="PreliminaryAllocationHeader" Text="Allocated ↓" Grid.Column="1" HorizontalAlignment="Right" FontSize="12" />
+                      <TextBlock x:Name="PreliminaryLogicalHeader" Text="Logical" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" />
+                  </Grid>
+                  <ListBox x:Name="PreliminaryFiles" Grid.Row="2" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
+                           ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                           AutomationProperties.Name="Preliminary largest files found so far">
+                      <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                      <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="5,0" /><Setter Property="AutomationProperties.Name" Value="{Binding PathText}" /></Style></ListBox.ItemContainerStyle>
+                      <ListBox.ItemTemplate>
+                          <DataTemplate>
+                              <Grid MinHeight="54" Margin="6,0" ToolTip="{Binding PathText}">
+                                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                                  <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                      <TextBlock Text="{Binding File.Name}" TextTrimming="CharacterEllipsis" />
+                                      <TextBlock Text="{Binding PathText}" TextTrimming="CharacterEllipsis" FontSize="12" Opacity="0.65" Margin="0,4,0,0" />
+                                  </StackPanel>
+                                  <TextBlock Text="{Binding Allocated}" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12" />
+                                  <TextBlock Text="{Binding Logical}" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12" />
+                              </Grid>
+                          </DataTemplate>
+                      </ListBox.ItemTemplate>
+                  </ListBox>
+                  <TextBlock x:Name="PreliminaryHint" Grid.Row="2" Text="Waiting for file metadata…" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.65" Margin="24" TextWrapping="Wrap" />
+                  <TextBlock x:Name="PreliminaryNote" Grid.Row="3" Text="Up to 100 files · Shared file allocation counted once · Unresolved paths are marked pending" FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="18,14" />
+              </Grid>
+          </Border>
           <Grid x:Name="OpportunitiesPanel" Grid.Row="1" Visibility="Collapsed">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /><ColumnDefinition Width="310" /></Grid.ColumnDefinitions>
             <Border Style="{StaticResource Card}" Padding="0">

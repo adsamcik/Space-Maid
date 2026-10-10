@@ -62,6 +62,8 @@ public partial class MainWindow
         _explorer.Expand(-1, children);
         SelectTree(-1);
         await DisplayEntryAsync(-1, token);
+        token.ThrowIfCancellationRequested();
+        ClearPreliminary();
     }
 
     private async Task<int[]> ChildOrderAsync(int directory, CancellationToken token)
@@ -270,8 +272,9 @@ public partial class MainWindow
     }
     private void View_Changed(object sender, RoutedEventArgs e)
     {
-        if (ExplorePanel is null || OpportunitiesPanel is null) return;
-        ExplorePanel.Visibility = ExploreTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (ExplorePanel is null || OpportunitiesPanel is null || PreliminaryPanel is null) return;
+        ExplorePanel.Visibility = ExploreTab.IsChecked == true && _preliminary is null ? Visibility.Visible : Visibility.Collapsed;
+        PreliminaryPanel.Visibility = ExploreTab.IsChecked == true && _preliminary is not null ? Visibility.Visible : Visibility.Collapsed;
         OpportunitiesPanel.Visibility = ExploreTab.IsChecked == true ? Visibility.Collapsed : Visibility.Visible;
     }
     private async void ShowInTree_Click(object sender, RoutedEventArgs e)
