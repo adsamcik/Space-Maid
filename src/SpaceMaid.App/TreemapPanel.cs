@@ -124,7 +124,7 @@ internal sealed class TreemapPanel : Panel
         for (int i = 0; i < InternalChildren.Count; i++)
         {
             var rect = i < rectangles.Length ? rectangles[i] : new Rect();
-            InternalChildren[i].Measure(new(Math.Max(0, rect.Width - 4), Math.Max(0, rect.Height - 4)));
+            InternalChildren[i].Measure(new(Math.Max(0, rect.Width - 6), Math.Max(0, rect.Height - 6)));
         }
         return size;
     }
@@ -135,7 +135,7 @@ internal sealed class TreemapPanel : Panel
         {
             var rect = i < rectangles.Length ? rectangles[i] : Rect.Empty;
             if (rect.IsEmpty) { InternalChildren[i].Arrange(new Rect()); continue; }
-            InternalChildren[i].Arrange(new(rect.X + 2, rect.Y + 2, Math.Max(0, rect.Width - 4), Math.Max(0, rect.Height - 4)));
+            InternalChildren[i].Arrange(new(rect.X + 3, rect.Y + 3, Math.Max(0, rect.Width - 6), Math.Max(0, rect.Height - 6)));
             if (InternalChildren[i] is FrameworkElement element && element.Tag is StackPanel text)
             {
                 if (element is Button button) button.Padding = rect.Height < 65 || rect.Width < 90 ? new(5) : new(10);
@@ -146,9 +146,21 @@ internal sealed class TreemapPanel : Panel
             else if (InternalChildren[i] is Border { Child: Grid grid, Tag: TreemapPanel nested })
             {
                 bool show = rect.Width >= 160 && rect.Height >= 140;
+                bool compact = rect.Width < 360;
                 nested.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-                grid.RowDefinitions[0].Height = show ? new GridLength(44) : new GridLength(1, GridUnitType.Star);
+                grid.RowDefinitions[0].Height = show ? new GridLength(compact ? 56 : 44) : new GridLength(1, GridUnitType.Star);
                 grid.RowDefinitions[1].Height = show ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+                if (grid.Children[0] is Button { Content: Grid title } header)
+                {
+                    var facts = (TextBlock)title.Children[1];
+                    Grid.SetColumn(facts, compact ? 0 : 1);
+                    Grid.SetRow(facts, compact ? 1 : 0);
+                    facts.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+                    facts.Margin = compact ? new(0, 3, 0, 0) : new(12, 0, 0, 0);
+                    facts.Visibility = show || rect.Height >= 65 && rect.Width >= 130 ? Visibility.Visible : Visibility.Collapsed;
+                    title.Children[0].Visibility = rect.Height >= 24 && rect.Width >= 24 ? Visibility.Visible : Visibility.Collapsed;
+                    header.Padding = show ? new(10, 6, 10, 6) : new(5);
+                }
             }
         }
         return finalSize;

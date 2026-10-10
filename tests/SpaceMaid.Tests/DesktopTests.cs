@@ -553,7 +553,7 @@ public sealed class DesktopTests
                 Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto));
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
-                stage = "rendering nested detail at desktop and compact sizes";
+                stage = "rendering framed folders at desktop and compact sizes";
                 picker.ItemsSource = new[] { new DriveChoice(@"G:\", @"G:\", GiB(465.75), GiB(17.67)) };
                 picker.SelectedIndex = 0;
                 var layoutScan = NestedLayoutFixture();
@@ -574,13 +574,23 @@ public sealed class DesktopTests
                 {
                     app.ThemeMode = mode;
                     string theme = mode == ThemeMode.Light ? "light" : "dark";
-                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"nested-{theme}.png"), 1220, 910);
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-{theme}.png"), 1220, 910);
                     Assert.InRange(((FrameworkElement)window.FindName("ScanHeader")).ActualHeight, 100, 130);
                     AssertMapFillsPane(window, map);
-                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"nested-compact-{theme}.png"), 1020, 790);
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-compact-{theme}.png"), 1020, 790);
                     AssertMapFillsPane(window, map);
                     Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y
                         <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The nested map overlaps entry details.");
+                    var exploreLayout = (Grid)window.FindName("ExplorePanel");
+                    exploreLayout.ColumnDefinitions[0].Width = new(2, GridUnitType.Star);
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-narrow-{theme}.png"), 1020, 790);
+                    var parentBand = map.Buttons.Single(button => ((SpaceContribution)button.DataContext).Name == "Github");
+                    var title = Assert.IsType<Grid>(parentBand.Content);
+                    var name = (TextBlock)title.Children[0]; var facts = (TextBlock)title.Children[1];
+                    Assert.Equal(Visibility.Visible, facts.Visibility);
+                    Assert.True(name.TranslatePoint(new Point(0, name.ActualHeight), parentBand).Y <= facts.TranslatePoint(new Point(), parentBand).Y,
+                        "A compact parent band must keep the name and size readable without overlap.");
+                    exploreLayout.ColumnDefinitions[0].Width = new(1, GridUnitType.Star);
                 }
 #pragma warning restore WPF0001
                 stage = "revealing the parent of a nested grouped tile beneath a collapsed root";
@@ -595,6 +605,16 @@ public sealed class DesktopTests
                 Assert.False(groupedRows.IsExpanded(-1));
                 var nestedGroup = map.Buttons.Single(button => ((SpaceContribution)button.DataContext).Link == -2);
                 Assert.Null(nestedGroup.ContextMenu);
+#pragma warning disable WPF0001
+                foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+                {
+                    app.ThemeMode = mode;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-grouped-{(mode == ThemeMode.Light ? "light" : "dark")}.png"), 1220, 910);
+                    var groupFrame = Assert.IsType<System.Windows.Shapes.Rectangle>(nestedGroup.Template.FindName("GroupFrame", nestedGroup));
+                    Assert.Equal(Visibility.Visible, groupFrame.Visibility);
+                    Assert.NotEmpty(groupFrame.StrokeDashArray);
+                }
+#pragma warning restore WPF0001
                 nestedGroup.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
                 Assert.True(groupedRows.IsExpanded(-1));

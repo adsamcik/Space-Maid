@@ -288,7 +288,8 @@ public partial class MainWindow
             }
             var header = CreateMapButton(scan, contribution, folder, total, isHeader: true);
             var nestedMap = new TreemapPanel { Weights = nested.Select(part => part.Bytes).ToArray(), ClipToBounds = true };
-            nestedMap.SetResourceReference(Panel.BackgroundProperty, "CardBackgroundFillColorDefaultBrush");
+            nestedMap.Margin = new(2);
+            nestedMap.SetBinding(Panel.BackgroundProperty, new System.Windows.Data.Binding(nameof(Panel.Background)) { Source = SpaceMap });
             var nestedFolder = scan.Entry(contribution.Link);
             foreach (var part in nested) nestedMap.Children.Add(CreateMapButton(scan, part, nestedFolder, contribution.Bytes));
             var grid = new Grid();
@@ -297,8 +298,9 @@ public partial class MainWindow
             grid.Children.Add(header);
             Grid.SetRow(nestedMap, 1);
             grid.Children.Add(nestedMap);
-            var region = new Border { Child = grid, Tag = nestedMap, CornerRadius = new(5), ClipToBounds = true };
+            var region = new Border { Child = grid, Tag = nestedMap, CornerRadius = new(6), BorderThickness = new(2), ClipToBounds = true };
             region.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding(nameof(Button.Background)) { Source = header });
+            region.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding(nameof(Button.BorderBrush)) { Source = header });
             SpaceMap.Children.Add(region);
         }
         SpaceMap.InvalidateMeasure();
@@ -311,12 +313,32 @@ public partial class MainWindow
     {
         string share = total > 0 ? $"{100d * contribution.Bytes / total:0.#}%" : "—";
         var text = new StackPanel();
-        text.Children.Add(new TextBlock { Text = contribution.Name + (isHeader ? " ›" : ""), FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        text.Children.Add(new TextBlock { Text = contribution.Name + (isHeader ? " ›" : ""), FontWeight = contribution.Link == -2 ? FontWeights.Normal : FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes) + (isHeader ? $" · {share}" : ""), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = isHeader ? 11 : 12 });
         if (!isHeader) text.Children.Add(new TextBlock { Text = share, Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
         string type = contribution.Link >= 0 && !scan.Entry(contribution.Link).IsDirectory
             ? FileTypeClassifier.Describe(contribution.Name) : "";
         var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" + (type.Length > 0 ? $"\n{type}" : "") };
+        if (isHeader)
+        {
+            // Wide parent bands keep size on the right; compact bands stack it
+            // below the name within the parent band.
+            var title = new Grid();
+            title.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            title.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            title.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            title.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            var name = (TextBlock)text.Children[0];
+            var facts = (TextBlock)text.Children[1];
+            text.Children.Clear();
+            name.VerticalAlignment = VerticalAlignment.Center;
+            facts.FontSize = 12; facts.Opacity = .85;
+            title.Children.Add(name); title.Children.Add(facts);
+            button.Content = title; button.Tag = title;
+            button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+            button.VerticalContentAlignment = VerticalAlignment.Center;
+            button.BorderThickness = new(0, 0, 0, 1);
+        }
         AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path} {type}");
         if (contribution.Link >= 0 && scan.EntryPath(contribution.Link) is not null)
         {
@@ -360,7 +382,7 @@ public partial class MainWindow
     {
         if (SpaceMap is null) return;
         bool dark = Background is SolidColorBrush brush && brush.Color.R + brush.Color.G + brush.Color.B < 384;
-        Brush ColorFor(SpaceKind kind)
+        Brush ColorFor(SpaceKind kind, bool alternate = false)
         {
             if (SystemParameters.HighContrast) return SystemColors.ControlBrush;
             string color = (kind, dark) switch
@@ -368,12 +390,26 @@ public partial class MainWindow
                 (SpaceKind.Project, false) => "#DCEBF4", (SpaceKind.Project, true) => "#2F4655",
                 (SpaceKind.Cache, false) => "#F3E8CB", (SpaceKind.Cache, true) => "#554932",
                 (SpaceKind.Agent, false) => "#EADDF2", (SpaceKind.Agent, true) => "#4A3A54",
-                (_, false) => "#E8EAED", _ => "#3E4147"
+                (_, false) => "#DFE3E9", _ => "#373B42"
             };
-            var result = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)); result.Freeze(); return result;
+            var value = (Color)ColorConverter.ConvertFromString(color);
+            byte Tone(byte channel) => (byte)Math.Min(255, channel + (dark ? 18 : 12));
+            if (alternate) value = Color.FromRgb(Tone(value.R), Tone(value.G), Tone(value.B));
+            var result = new SolidColorBrush(value); result.Freeze(); return result;
         }
+        Brush frame = SystemParameters.HighContrast ? SystemColors.ControlTextBrush
+            : new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#69717B" : "#A9AFB8"));
+        Brush parent = SystemParameters.HighContrast ? SystemColors.ControlBrush
+            : new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#30353C" : "#DCE0E6"));
+        SpaceMap.Background = SystemParameters.HighContrast ? SystemColors.ControlBrush
+            : new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#1E2023" : "#D2D5DA"));
+        int sibling = 0;
         foreach (var button in SpaceMap.Buttons)
-            if (button.DataContext is SpaceContribution item) { button.Background = ColorFor(item.Kind); button.Foreground = Foreground; }
+            if (button.DataContext is SpaceContribution item)
+            {
+                button.Background = item.Children is { Count: > 0 } || item.Link == -2 ? parent : ColorFor(item.Kind, sibling++ % 2 == 0);
+                button.BorderBrush = frame; button.Foreground = Foreground;
+            }
         ProjectSwatch.Background = ColorFor(SpaceKind.Project); CacheSwatch.Background = ColorFor(SpaceKind.Cache);
         AgentSwatch.Background = ColorFor(SpaceKind.Agent); OtherSwatch.Background = ColorFor(SpaceKind.Other);
     }

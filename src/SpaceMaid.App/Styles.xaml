@@ -24,16 +24,32 @@
     </Style>
     <Style x:Key="TreemapTile" TargetType="Button">
         <Setter Property="Padding" Value="10" />
-        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="BorderThickness" Value="1" />
         <Setter Property="HorizontalContentAlignment" Value="Left" />
         <Setter Property="VerticalContentAlignment" Value="Top" />
         <Setter Property="MinWidth" Value="0" /><Setter Property="MinHeight" Value="0" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}" ClipToBounds="True">
-                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
-                    </Border>
+                    <Grid>
+                        <Border x:Name="TileSurface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" Padding="{TemplateBinding Padding}" ClipToBounds="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                        </Border>
+                        <Rectangle x:Name="GroupFrame" Stroke="{TemplateBinding BorderBrush}" StrokeThickness="1" StrokeDashArray="3,2" RadiusX="5" RadiusY="5" Margin="0.5" IsHitTestVisible="False" Visibility="Collapsed" />
+                        <Border x:Name="FocusFrame" BorderBrush="{TemplateBinding Foreground}" BorderThickness="2" CornerRadius="4" Margin="2" IsHitTestVisible="False" Visibility="Collapsed" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Link}" Value="-2">
+                            <Setter TargetName="TileSurface" Property="BorderThickness" Value="0" />
+                            <Setter TargetName="GroupFrame" Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="TileSurface" Property="BorderBrush" Value="{DynamicResource WindowForeground}" />
+                            <Setter TargetName="GroupFrame" Property="Stroke" Value="{DynamicResource WindowForeground}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="FocusFrame" Property="Visibility" Value="Visible" /></Trigger>
+                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="FocusFrame" Property="Visibility" Value="Visible" /></Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
