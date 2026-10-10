@@ -6,57 +6,62 @@
         WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="14"
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}"
         Loaded="Window_Loaded" Closing="Window_Closing">
-    <Grid Margin="28">
+    <Grid Margin="16">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-            <RowDefinition Height="*" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <Border Style="{StaticResource Card}" Margin="0,0,0,18" Padding="18">
+        <Border x:Name="ScanHeader" Style="{StaticResource Card}" Margin="0,0,0,10" Padding="14,12">
             <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Label Content="_Drive" Target="{Binding ElementName=DrivePicker}" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <ComboBox x:Name="DrivePicker" MinWidth="330" SelectionChanged="Drive_Changed" AutomationProperties.Name="Drive to scan" />
+                <DockPanel VerticalAlignment="Center" Margin="0,0,16,0" MaxWidth="460" HorizontalAlignment="Left">
+                    <Label Content="_Drive" Target="{Binding ElementName=DrivePicker}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox x:Name="DrivePicker" MinWidth="260" SelectionChanged="Drive_Changed" AutomationProperties.Name="Drive to scan" />
+                </DockPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="ElevateButton" Content="Enable fast scanning" Click="Elevate_Click" Margin="0,0,8,0" Padding="12,5" />
+                    <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0" Visibility="Collapsed" Padding="12,5" />
+                    <Button x:Name="ScanButton" Content="Scan drive" Click="Scan_Click" Style="{DynamicResource AccentButtonStyle}" Padding="18,5" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button x:Name="ElevateButton" Content="Enable fast scanning" Click="Elevate_Click" Margin="0,0,12,0" />
-                    <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="0,0,10,0" Visibility="Collapsed" />
-                    <Button x:Name="ScanButton" Content="Scan drive" Click="Scan_Click" Style="{DynamicResource AccentButtonStyle}" Padding="24,10" />
-                </StackPanel>
+                <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,9,0,0">
+                    <UniformGrid Columns="3">
+                        <StackPanel Margin="0,0,16,0">
+                            <WrapPanel><TextBlock Text="Free" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <TextBlock x:Name="FreeSpaceText" Text="—" FontSize="20" FontWeight="SemiBold" />
+                                <TextBlock x:Name="CapacityText" Text="Choose a drive" Opacity="0.65" FontSize="12" Margin="7,0,0,0" VerticalAlignment="Center" /></WrapPanel>
+                            <ProgressBar x:Name="DriveCapacityBar" Minimum="0" Maximum="100" Height="4" MinHeight="0" Margin="0,6,0,0" AutomationProperties.Name="Free space as a share of drive capacity" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,16,0">
+                            <WrapPanel><TextBlock x:Name="ScannedSizeLabel" Text="Scanned" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <TextBlock x:Name="ScannedSizeText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
+                            <TextBlock x:Name="ScannedSizeCaption" Text="Allocated · Shared files counted once" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <WrapPanel><TextBlock Text="Candidates" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <TextBlock x:Name="CandidateText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
+                            <TextBlock x:Name="CandidateCaption" Text="Estimate · Subject to review" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        </StackPanel>
+                    </UniformGrid>
+                </Border>
             </Grid>
         </Border>
-        <UniformGrid Grid.Row="1" Columns="3" Margin="0,0,0,22">
-            <Border Style="{StaticResource Card}" Margin="0,0,12,0">
-                <StackPanel><TextBlock Text="FREE ON DRIVE" Style="{StaticResource SectionLabel}" />
-                    <TextBlock x:Name="FreeSpaceText" Text="—" FontSize="27" FontWeight="SemiBold" />
-                    <TextBlock x:Name="CapacityText" Text="Choose a drive" Opacity="0.65" FontSize="12" Margin="0,5,0,0" /></StackPanel>
-            </Border>
-            <Border Style="{StaticResource Card}" Margin="0,0,12,0">
-                <StackPanel><TextBlock x:Name="ScannedSizeLabel" Text="OBSERVED ALLOCATION" Style="{StaticResource SectionLabel}" />
-                    <TextBlock x:Name="ScannedSizeText" Text="—" FontSize="27" FontWeight="SemiBold" />
-                    <TextBlock x:Name="ScannedSizeCaption" Text="Files counted once across hard links" Opacity="0.65" FontSize="12" Margin="0,5,0,0" /></StackPanel>
-            </Border>
-            <Border Style="{StaticResource Card}">
-                <StackPanel><TextBlock Text="CANDIDATE SPACE" Style="{StaticResource SectionLabel}" />
-                    <TextBlock x:Name="CandidateText" Text="—" FontSize="27" FontWeight="SemiBold" />
-                    <TextBlock x:Name="CandidateCaption" Text="An estimate, subject to review" Opacity="0.65" FontSize="12" Margin="0,5,0,0" /></StackPanel>
-            </Border>
-        </UniformGrid>
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="1">
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
               <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource ViewTab}" GroupName="View" IsChecked="True" Checked="View_Changed" Margin="0,0,22,0" />
               <RadioButton x:Name="OpportunitiesTab" Content="Opportunities" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" />
           </StackPanel>
           <Grid x:Name="ExplorePanel" Grid.Row="1" PreviewKeyDown="Explore_KeyDown">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="0.92*" /></Grid.ColumnDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="1.1*" /></Grid.ColumnDefinitions>
               <Border Style="{StaticResource Card}" Padding="0">
                   <Grid>
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <Grid Margin="18,16,20,8" Opacity="0.65">
+                      <Grid Margin="12,6,14,4">
                           <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
-                          <TextBlock Text="Name" FontSize="12" /><TextBlock x:Name="AllocationHeader" Text="Allocated ↓" Grid.Column="1" HorizontalAlignment="Right" FontSize="12" />
-                          <TextBlock x:Name="LogicalHeader" Text="Logical" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" /><TextBlock Text="% parent" Grid.Column="3" HorizontalAlignment="Right" FontSize="12" />
+                          <Button x:Name="NameHeader" Content="Name" Tag="Name" Click="TreeSort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
+                          <Button x:Name="AllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="TreeSort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
+                          <Button x:Name="LogicalHeader" Content="Logical" Tag="Logical" Click="TreeSort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
+                          <Button x:Name="ShareHeader" Content="% parent" Tag="Share" Click="TreeSort_Click" Grid.Column="3" Style="{StaticResource ColumnHeader}" />
                       </Grid>
                       <ListBox x:Name="SpaceTree" Grid.Row="1" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
@@ -83,32 +88,29 @@
                           </ListBox.ItemTemplate>
                       </ListBox>
                       <TextBlock x:Name="TreeHint" Text="Scan a drive to explore its files." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
-                      <TextBlock x:Name="TreeNote" Text="Observed totals · Shared file allocation counted once" Grid.Row="2" Margin="16,12" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
+                      <TextBlock x:Name="TreeNote" Text="Observed totals · Shared file allocation counted once" Grid.Row="2" Margin="12,8" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
                   </Grid>
               </Border>
-              <Border Grid.Column="2" Style="{StaticResource Card}" Padding="16">
-                <ScrollViewer x:Name="MapScroller" SizeChanged="MapGeometry_Changed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                  <Grid x:Name="MapLayout" SizeChanged="MapGeometry_Changed">
-                      <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <DockPanel Margin="0,0,0,12"><TextBlock x:Name="MapBasis" Text="Area = allocated size" DockPanel.Dock="Right" Opacity="0.65" FontSize="12" /><TextBlock Text="Largest contributors" FontSize="18" FontWeight="SemiBold" /></DockPanel>
-                      <WrapPanel x:Name="Breadcrumbs" Grid.Row="1" Margin="0,0,0,10" />
-                      <DockPanel Grid.Row="2" Margin="0,0,0,10"><TextBlock x:Name="MapTotal" DockPanel.Dock="Right" FontWeight="SemiBold" FontSize="12" /><TextBlock x:Name="MapCount" Opacity="0.65" FontSize="12" /></DockPanel>
-                      <local:TreemapPanel x:Name="SpaceMap" Grid.Row="3" Height="180" MinHeight="120" ClipToBounds="True" AutomationProperties.Name="Treemap. Choose a contributor to see its files." />
-                      <TextBlock x:Name="MapHint" Grid.Row="3" Text="Choose a folder to see its largest contributors." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
-                      <WrapPanel Grid.Row="4" Margin="0,12,0,12" Opacity="0.75">
+              <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">
+                  <Grid x:Name="MapLayout">
+                      <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                      <DockPanel Margin="0,0,0,8"><TextBlock x:Name="MapTotal" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="12" Opacity="0.7" Margin="8,0,0,0" /><WrapPanel x:Name="Breadcrumbs" VerticalAlignment="Center" /></DockPanel>
+                      <local:TreemapPanel x:Name="SpaceMap" Grid.Row="1" MinHeight="120" ClipToBounds="True" AutomationProperties.Name="Treemap with one nested child level. Choose a contributor to see its files." />
+                      <TextBlock x:Name="MapHint" Grid.Row="1" Text="Choose a folder to see its largest contributors." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
+                      <WrapPanel Grid.Row="2" Margin="0,8,0,0" Opacity="0.75">
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="ProjectSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Projects &amp; data" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="CacheSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Build &amp; cache" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="AgentSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Agent files" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,0,5"><Border x:Name="OtherSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Other" FontSize="11" /></StackPanel>
+                          <TextBlock x:Name="MapBasis" Text="Area = allocated size" FontSize="11" Margin="12,0,0,5" />
                       </WrapPanel>
-                      <StackPanel Grid.Row="5" x:Name="EntryDetail" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite">
-                          <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
-                          <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" Margin="0,5,0,10" />
-                          <StackPanel Orientation="Horizontal"><StackPanel Margin="0,0,22,0"><TextBlock Text="Allocated" Opacity="0.65" FontSize="12" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" /></StackPanel><StackPanel Margin="0,0,22,0"><TextBlock Text="Logical" Opacity="0.65" FontSize="12" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" /></StackPanel><StackPanel><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" /></StackPanel></StackPanel>
-                          <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" Opacity="0.65" FontSize="12" Margin="0,10,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+                      <StackPanel Grid.Row="3" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
+                          <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,7" />
+                          <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
+                          <WrapPanel Margin="0,4,0,0"><TextBlock Text="Allocated" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Logical" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
+                          <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.65" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
                       </StackPanel>
                   </Grid>
-                </ScrollViewer>
               </Border>
           </Grid>
           <Border x:Name="PreliminaryPanel" Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
@@ -118,11 +120,11 @@
                       <TextBlock Text="Preliminary · Largest files so far" FontSize="18" FontWeight="SemiBold" />
                       <TextBlock x:Name="PreliminaryCaption" Text="Scanning… Folder totals and cleanup estimates will appear when ready." TextWrapping="Wrap" Opacity="0.65" FontSize="12" Margin="0,6,0,0" />
                   </StackPanel>
-                  <Grid Grid.Row="1" Margin="22,0,24,8" Opacity="0.65">
+                  <Grid Grid.Row="1" Margin="22,0,24,8">
                       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
-                      <TextBlock Text="File / exact path" FontSize="12" />
-                      <TextBlock x:Name="PreliminaryAllocationHeader" Text="Allocated ↓" Grid.Column="1" HorizontalAlignment="Right" FontSize="12" />
-                      <TextBlock x:Name="PreliminaryLogicalHeader" Text="Logical" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" />
+                      <Button x:Name="PreliminaryNameHeader" Content="File / exact path" Tag="Name" Click="PreliminarySort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
+                      <Button x:Name="PreliminaryAllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="PreliminarySort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
+                      <Button x:Name="PreliminaryLogicalHeader" Content="Logical" Tag="Logical" Click="PreliminarySort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
                   </Grid>
                   <ListBox x:Name="PreliminaryFiles" Grid.Row="2" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
                            ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -206,7 +208,7 @@
             </Border>
           </Grid>
         </Grid>
-        <StackPanel Grid.Row="3" Margin="0,18,0,0">
+        <StackPanel Grid.Row="2" Margin="0,12,0,0">
             <ProgressBar x:Name="ScanProgressBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,10" />
             <DockPanel>
                 <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" />

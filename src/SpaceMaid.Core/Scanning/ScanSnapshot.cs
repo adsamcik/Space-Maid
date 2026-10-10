@@ -21,6 +21,8 @@ public sealed record ScanProgress(string Phase, int Files, TimeSpan Elapsed, str
 public sealed record ScanMetrics(TimeSpan Acquisition, TimeSpan Aggregation, long ManagedAllocatedBytes,
     long PeakProcessWorkingSetBytes = 0);
 
+public enum ScanSortColumn { Name, Allocated, Logical, Share }
+
 public readonly record struct ScanEntry(int LinkIndex, int FileIndex, int ParentIndex,
     string Name, bool IsDirectory, bool IsPrimaryName, bool IsShared, bool IsIncomplete,
     long LogicalBytes, long AllocatedBytes)
@@ -103,7 +105,10 @@ public sealed class ScanSnapshot
     public string? EntryPath(int linkIndex) => linkIndex == -1 ? RootPath : PathForLink(linkIndex);
     public int PrimaryLink(int fileIndex) => fileIndex == RootIndex ? -1 : FirstLinks[fileIndex];
 
-    public int[] SortedChildren(int directoryIndex, CancellationToken token = default)
+    public int[] SortedChildren(int directoryIndex, CancellationToken token = default) =>
+        SortedChildren(directoryIndex, ScanSortColumn.Share, descending: true, token);
+
+    public int[] SortedChildren(int directoryIndex, ScanSortColumn column, bool descending, CancellationToken token = default)
     {
         if ((uint)directoryIndex >= (uint)Records.Length || !Records[directoryIndex].IsDirectory)
             throw new ArgumentOutOfRangeException(nameof(directoryIndex));
@@ -117,8 +122,16 @@ public sealed class ScanSnapshot
         // Compare pooled names directly; sorting a large folder creates no path/name strings.
         Array.Sort(sorted, (a, b) =>
         {
-            int size = AttributedBytes(b).CompareTo(AttributedBytes(a));
-            return size != 0 ? size : Name(a).CompareTo(Name(b), StringComparison.OrdinalIgnoreCase);
+            int comparison = column switch
+            {
+                ScanSortColumn.Name => Name(a).CompareTo(Name(b), StringComparison.OrdinalIgnoreCase),
+                ScanSortColumn.Allocated => HasAllocationData ? AttributedBytes(a).CompareTo(AttributedBytes(b)) : 0,
+                ScanSortColumn.Logical => DirectoryLogical[Links[a].FileIndex].CompareTo(DirectoryLogical[Links[b].FileIndex]),
+                _ => AttributedBytes(a).CompareTo(AttributedBytes(b))
+            };
+            if (comparison != 0) return descending ? -comparison : comparison;
+            int name = Name(a).CompareTo(Name(b), StringComparison.OrdinalIgnoreCase);
+            return name != 0 ? name : a.CompareTo(b);
         });
         token.ThrowIfCancellationRequested();
         return sorted;

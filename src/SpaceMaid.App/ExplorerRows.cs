@@ -69,6 +69,26 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
         _visible.RemoveRange(index + 1, end - index - 1);
         Changed();
     }
+
+    public void Reorder(IReadOnlyDictionary<int, int[]> childOrders, CancellationToken token = default)
+    {
+        var reordered = new List<Position>(_visible.Count);
+        var pending = new Stack<Position>();
+        pending.Push(new(-1, 0));
+        while (pending.TryPop(out var position))
+        {
+            if ((reordered.Count & 4095) == 0) token.ThrowIfCancellationRequested();
+            reordered.Add(position);
+            if (!_expanded.Contains(position.Link)) continue;
+            int directory = Scan.Entry(position.Link).FileIndex;
+            var children = childOrders[directory];
+            for (int i = children.Length - 1; i >= 0; i--) pending.Push(new(children[i], position.Depth + 1));
+        }
+        token.ThrowIfCancellationRequested();
+        _visible.Clear();
+        _visible.AddRange(reordered);
+        Changed();
+    }
     private void Changed()
     {
         CollectionChanged?.Invoke(this, new(NotifyCollectionChangedAction.Reset));

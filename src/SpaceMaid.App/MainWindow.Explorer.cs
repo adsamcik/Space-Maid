@@ -13,6 +13,7 @@ public partial class MainWindow
 {
     private ExplorerRows? _explorer;
     private readonly Dictionary<int, int[]> _childOrders = [];
+    private readonly Dictionary<int, int[]> _mapOrders = [];
     private IReadOnlyDictionary<int, SpaceKind> _kinds = new Dictionary<int, SpaceKind>();
     private CancellationTokenSource? _browseWork;
     private bool _browsing, _syncTree, _selectionIsGroup;
@@ -28,19 +29,18 @@ public partial class MainWindow
         SpaceTree.ContextMenu.IsOpen = false;
         SpaceTree.ContextMenu.Items.Clear();
         ContextMenuService.SetPlacementTarget(SpaceTree, null);
-        foreach (Button tile in SpaceMap.Children)
-            if (tile.ContextMenu is { } menu) { menu.IsOpen = false; menu.Items.Clear(); }
+        ClearMap();
         _explorer = null;
         _selectedLink = -1;
         _selectionIsGroup = false;
-        _childOrders.Clear(); _kinds = new Dictionary<int, SpaceKind>();
+        _childOrders.Clear(); _mapOrders.Clear(); _kinds = new Dictionary<int, SpaceKind>();
         SpaceTree.ItemsSource = null;
-        Breadcrumbs.Children.Clear(); SpaceMap.Children.Clear(); SpaceMap.Weights = [];
+        Breadcrumbs.Children.Clear(); Breadcrumbs.ToolTip = null;
         EntryDetail.DataContext = null; EntryDetail.Visibility = Visibility.Collapsed;
         MapHint.Visibility = TreeHint.Visibility = Visibility.Visible;
         MapHint.Text = "Choose a folder to see its largest contributors.";
         TreeHint.Text = "Scan a drive to explore its files.";
-        MapTotal.Text = MapCount.Text = "";
+        MapTotal.Text = "";
     }
 
     internal async Task InitializeExplorerAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> opportunities, CancellationToken token)
@@ -66,8 +66,9 @@ public partial class MainWindow
         TreeNote.Text = scan.HasAllocationData ? "Observed totals · Shared file allocation counted once"
             : "Logical sizes only · Physical allocation is unavailable";
         MapBasis.Text = scan.HasAllocationData ? "Area = allocated size" : "Area = logical size";
-        AllocationHeader.Text = scan.HasAllocationData ? "Allocated ↓" : "Allocated";
-        LogicalHeader.Text = scan.HasAllocationData ? "Logical" : "Logical ↓";
+        _treeSortColumn = scan.HasAllocationData ? ScanSortColumn.Allocated : ScanSortColumn.Logical;
+        _treeDescending = true;
+        UpdateTreeSortHeaders();
         var children = await ChildOrderAsync(scan.RootIndex, token);
         _explorer.Expand(-1, children);
         SelectTree(-1);
@@ -81,9 +82,29 @@ public partial class MainWindow
         token.ThrowIfCancellationRequested();
         if (_childOrders.TryGetValue(directory, out var cached)) return cached;
         var scan = _snapshot!;
-        var children = await Task.Run(() => scan.SortedChildren(directory, token), token);
+        var column = _treeSortColumn;
+        bool descending = _treeDescending;
+        var children = await Task.Run(() => scan.SortedChildren(directory, column, descending, token), token);
         token.ThrowIfCancellationRequested();
         _childOrders[directory] = children;
+        return children;
+    }
+
+    private async Task<int[]> MapOrderAsync(int directory, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (_mapOrders.TryGetValue(directory, out var cached)) return cached;
+        var scan = _snapshot!;
+        if (_treeDescending && (_treeSortColumn == ScanSortColumn.Share
+            || (_treeSortColumn == ScanSortColumn.Allocated && scan.HasAllocationData))
+            && _childOrders.TryGetValue(directory, out var treeOrder))
+        {
+            _mapOrders[directory] = treeOrder;
+            return treeOrder;
+        }
+        var children = await Task.Run(() => scan.SortedChildren(directory, token), token);
+        token.ThrowIfCancellationRequested();
+        _mapOrders[directory] = children;
         return children;
     }
 
@@ -218,10 +239,25 @@ public partial class MainWindow
         var row = new ExplorerRow(scan, selected, 0, _explorer!.IsExpanded(link));
         EntryDetail.DataContext = row; EntryDetail.Visibility = Visibility.Visible;
         var folder = selected.IsDirectory && selected.IsPrimaryName ? selected : scan.Entry(scan.PrimaryLink(selected.ParentIndex));
-        var children = await ChildOrderAsync(folder.FileIndex, token);
+        await ChildOrderAsync(folder.FileIndex, token); // Also makes context-menu ancestor expansion available.
+        var children = await MapOrderAsync(folder.FileIndex, token);
         token.ThrowIfCancellationRequested();
         var kinds = _kinds;
-        var contributions = await Task.Run(() => TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds), token);
+        long total = folder.AttributedBytes(scan.HasAllocationData);
+        var contributions = await Task.Run(() =>
+        {
+            var parts = TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds);
+            return parts.Count > 32 && parts.Any(part => TreemapLayout.CanNest(scan, part, total))
+                ? TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds, maximum: 32) : parts;
+        }, token);
+        var nestedOrders = new Dictionary<int, int[]>();
+        foreach (var part in contributions.Where(part => TreemapLayout.CanNest(scan, part, total)))
+        {
+            int directory = scan.Entry(part.Link).FileIndex;
+            await ChildOrderAsync(directory, token);
+            nestedOrders[directory] = await MapOrderAsync(directory, token);
+        }
+        contributions = await Task.Run(() => TreemapLayout.Nest(scan, contributions, nestedOrders, kinds), token);
         token.ThrowIfCancellationRequested();
         Breadcrumbs.Children.Clear();
         var crumbs = new Stack<ScanEntry>(); var visited = new HashSet<int>();
@@ -237,48 +273,83 @@ public partial class MainWindow
             button.Click += async (_, _) => await NavigateToEntryAsync(destination);
             Breadcrumbs.Children.Add(button);
         }
-        MapCount.Text = $"{children.Length:N0} immediate entries";
+        Breadcrumbs.ToolTip = $"{children.Length:N0} immediate entries";
         MapTotal.Text = SizeText.Format(folder.AttributedBytes(scan.HasAllocationData)) + (scan.HasAllocationData ? " allocated" : " logical");
-        SpaceMap.Children.Clear();
+        ClearMap();
         SpaceMap.Weights = contributions.Select(item => item.Bytes).ToArray();
         foreach (var contribution in contributions)
         {
-            var text = new StackPanel();
-            text.Children.Add(new TextBlock { Text = contribution.Name, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-            text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes), Margin = new(0, 4, 0, 0), FontSize = 12 });
-            long total = folder.AttributedBytes(scan.HasAllocationData);
-            text.Children.Add(new TextBlock { Text = total > 0 ? $"{100d * contribution.Bytes / total:0.#}%" : "—", Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
-            var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {(total > 0 ? 100d * contribution.Bytes / total : 0):0.#}% of folder" };
-            AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}. {contribution.Path}");
-            if (contribution.Link >= 0 && scan.Entry(contribution.Link).IsDirectory && scan.EntryPath(contribution.Link) is not null)
+            if (contribution.Children is not { Count: > 0 } nested)
             {
-                button.ContextMenu = new ContextMenu();
-                button.ContextMenuOpening += (_, args) =>
-                {
-                    if (!PrepareFolderMenu(button.ContextMenu, scan, contribution.Link)) args.Handled = true;
-                };
+                SpaceMap.Children.Add(CreateMapButton(scan, contribution, folder, total));
+                continue;
             }
-            button.Click += async (_, _) =>
-            {
-                if (contribution.Link >= 0)
-                {
-                    await NavigateToEntryAsync(contribution.Link);
-                    SpaceTree.Focus();
-                }
-                else await BrowseAsync(async cancellation =>
-                {
-                    if (!_explorer!.IsExpanded(folder.LinkIndex)) _explorer.Expand(folder.LinkIndex, await ChildOrderAsync(folder.FileIndex, cancellation));
-                    SelectTree(folder.LinkIndex); SpaceTree.Focus();
-                    await DisplayEntryAsync(folder.LinkIndex, cancellation);
-                    _selectionIsGroup = true;
-                });
-            };
-            SpaceMap.Children.Add(button);
+            var header = CreateMapButton(scan, contribution, folder, total, isHeader: true);
+            var nestedMap = new TreemapPanel { Weights = nested.Select(part => part.Bytes).ToArray(), ClipToBounds = true };
+            nestedMap.SetResourceReference(Panel.BackgroundProperty, "CardBackgroundFillColorDefaultBrush");
+            var nestedFolder = scan.Entry(contribution.Link);
+            foreach (var part in nested) nestedMap.Children.Add(CreateMapButton(scan, part, nestedFolder, contribution.Bytes));
+            var grid = new Grid();
+            grid.RowDefinitions.Add(new() { Height = new(44) });
+            grid.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
+            grid.Children.Add(header);
+            Grid.SetRow(nestedMap, 1);
+            grid.Children.Add(nestedMap);
+            var region = new Border { Child = grid, Tag = nestedMap, CornerRadius = new(5), ClipToBounds = true };
+            region.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding(nameof(Button.Background)) { Source = header });
+            SpaceMap.Children.Add(region);
         }
         SpaceMap.InvalidateMeasure();
         MapHint.Text = scan.HasAllocationData ? "No observed allocation in this folder." : "No observed logical bytes in this folder.";
         MapHint.Visibility = contributions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateMapColors();
+    }
+
+    private Button CreateMapButton(ScanSnapshot scan, SpaceContribution contribution, ScanEntry folder, long total, bool isHeader = false)
+    {
+        string share = total > 0 ? $"{100d * contribution.Bytes / total:0.#}%" : "—";
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock { Text = contribution.Name + (isHeader ? " ›" : ""), FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes) + (isHeader ? $" · {share}" : ""), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = isHeader ? 11 : 12 });
+        if (!isHeader) text.Children.Add(new TextBlock { Text = share, Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
+        var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" };
+        AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path}");
+        if (contribution.Link >= 0 && scan.Entry(contribution.Link).IsDirectory && scan.EntryPath(contribution.Link) is not null)
+        {
+            button.ContextMenu = new ContextMenu();
+            button.ContextMenuOpening += (_, args) =>
+            {
+                if (!PrepareFolderMenu(button.ContextMenu, scan, contribution.Link)) args.Handled = true;
+            };
+        }
+        button.Click += async (_, _) =>
+        {
+            if (contribution.Link >= 0)
+            {
+                await NavigateToEntryAsync(contribution.Link);
+                SpaceTree.Focus();
+            }
+            else await BrowseAsync(async cancellation =>
+            {
+                var ancestors = AncestorLinks(scan, folder.LinkIndex);
+                while (ancestors.TryPop(out int ancestor))
+                    if (!_explorer!.IsExpanded(ancestor))
+                        _explorer.Expand(ancestor, await ChildOrderAsync(scan.Entry(ancestor).FileIndex, cancellation));
+                if (!_explorer!.IsExpanded(folder.LinkIndex)) _explorer.Expand(folder.LinkIndex, await ChildOrderAsync(folder.FileIndex, cancellation));
+                SelectTree(folder.LinkIndex); SpaceTree.Focus();
+                await DisplayEntryAsync(folder.LinkIndex, cancellation);
+                _selectionIsGroup = true;
+            });
+        };
+        return button;
+    }
+
+    private void ClearMap()
+    {
+        foreach (var button in SpaceMap.Buttons)
+            if (button.ContextMenu is { } menu) { menu.IsOpen = false; menu.Items.Clear(); }
+        SpaceMap.Children.Clear();
+        SpaceMap.Weights = [];
     }
 
     private void UpdateMapColors()
@@ -297,17 +368,10 @@ public partial class MainWindow
             };
             var result = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)); result.Freeze(); return result;
         }
-        foreach (Button button in SpaceMap.Children)
+        foreach (var button in SpaceMap.Buttons)
             if (button.DataContext is SpaceContribution item) { button.Background = ColorFor(item.Kind); button.Foreground = Foreground; }
         ProjectSwatch.Background = ColorFor(SpaceKind.Project); CacheSwatch.Background = ColorFor(SpaceKind.Cache);
         AgentSwatch.Background = ColorFor(SpaceKind.Agent); OtherSwatch.Background = ColorFor(SpaceKind.Other);
-    }
-    private void MapGeometry_Changed(object sender, SizeChangedEventArgs e)
-    {
-        if (MapScroller is null || MapLayout is null || SpaceMap is null || MapScroller.ActualHeight <= 0) return;
-        double other = MapLayout.RowDefinitions.Where((_, index) => index != 3).Sum(row => row.ActualHeight);
-        double height = Math.Max(120, MapScroller.ActualHeight - other);
-        if (Math.Abs(SpaceMap.Height - height) > .5) SpaceMap.Height = height;
     }
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {

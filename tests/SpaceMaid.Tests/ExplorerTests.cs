@@ -26,6 +26,12 @@ public sealed class ExplorerTests
         rows.Expand(-1, folders);
         foreach (int link in folders) rows.Expand(link, scan.SortedChildren(scan.Entry(link).FileIndex));
         Assert.Equal(5, rows.Count);
+        var orders = new Dictionary<int, int[]> { [scan.RootIndex] = folders.Reverse().ToArray() };
+        foreach (int link in folders) orders[scan.Entry(link).FileIndex] = scan.SortedChildren(scan.Entry(link).FileIndex);
+        rows.Reorder(orders);
+        Assert.Equal(folders[1], rows.Row(1).Entry.LinkIndex);
+        Assert.All(folders, link => Assert.True(rows.IsExpanded(link)));
+        Assert.Equal("file.bin", rows.Row(rows.Find(folders[1]) + 1).Name);
         rows.Collapse(folders[0]);
         Assert.Equal(4, rows.Count);
         Assert.True(rows.IsExpanded(folders[1]));
@@ -83,6 +89,51 @@ public sealed class ExplorerTests
         Assert.Equal(2, scan.RegularFileCount);
         Assert.Equal(1, scan.DirectoryCount);
         Assert.Equal(@"C:\alias.bin", scan.EntryPath(alias.LinkIndex));
+        Assert.Equal(new[] { "alias.bin", "original.bin", "sparse.bin" },
+            scan.SortedChildren(scan.RootIndex, ScanSortColumn.Name, false).Select(link => scan.Entry(link).Name));
+        Assert.Equal("sparse.bin", scan.Entry(scan.SortedChildren(scan.RootIndex, ScanSortColumn.Name, true)[0]).Name);
+        Assert.Equal("sparse.bin", scan.Entry(scan.SortedChildren(scan.RootIndex, ScanSortColumn.Logical, true)[0]).Name);
+        Assert.Equal("original.bin", scan.Entry(scan.SortedChildren(scan.RootIndex, ScanSortColumn.Allocated, true)[0]).Name);
+        Assert.Equal("alias.bin", scan.Entry(scan.SortedChildren(scan.RootIndex, ScanSortColumn.Share, false)[0]).Name);
+    }
+
+    [Fact]
+    public void NestedMapSharesOneBlockBudgetAndPreservesEveryLevelTotal()
+    {
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 512, 0));
+        for (ulong id = 2; id <= 3; id++)
+        {
+            int folder = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 512, 0));
+            builder.AddLink(folder, new(1), $"folder-{id}");
+            for (ulong i = 0; i < 40; i++)
+            {
+                long bytes = id == 2 ? 16384 : 8192;
+                int file = builder.AddFile(new(new(id * 100 + i), FileAttributes.Normal, bytes, bytes, 0));
+                builder.AddLink(file, new(id), $"child-{i}.bin");
+            }
+        }
+        for (ulong i = 0; i < 60; i++)
+        {
+            int file = builder.AddFile(new(new(1000 + i), FileAttributes.Normal, 4096, 4096, 0));
+            builder.AddLink(file, new(1), $"small-{i}.bin");
+        }
+        var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+        var kinds = new Dictionary<int, SpaceKind>();
+        var top = TreemapLayout.Contributions(scan, scan.RootIndex, scan.SortedChildren(scan.RootIndex), kinds, maximum: 32);
+        var orders = top.Where(part => TreemapLayout.CanNest(scan, part, scan.AllocatedBytes))
+            .ToDictionary(part => scan.Entry(part.Link).FileIndex, part => scan.SortedChildren(scan.Entry(part.Link).FileIndex));
+        var nested = TreemapLayout.Nest(scan, top, orders, kinds);
+        Assert.Equal(scan.AllocatedBytes, nested.Sum(part => part.Bytes));
+        Assert.Equal(64, nested.Count + nested.Sum(part => part.Children?.Count ?? 0));
+        Assert.Equal(2, nested.Count(part => part.Children is not null));
+        foreach (var part in nested.Where(part => part.Children is not null))
+        {
+            var children = part.Children!;
+            Assert.Equal(part.Bytes, children.Sum(child => child.Bytes));
+            Assert.All(children, child => Assert.Null(child.Children));
+            Assert.Contains(children, child => child.GroupedCount > 0);
+        }
     }
 
     [Fact]

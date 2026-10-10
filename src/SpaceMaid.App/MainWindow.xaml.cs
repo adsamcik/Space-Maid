@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        UpdateTreeSortHeaders();
         OpportunityGrid.ItemsSource = _rows;
         var drives = new List<DriveChoice>();
         foreach (var drive in DriveInfo.GetDrives())
@@ -55,8 +56,7 @@ public partial class MainWindow : Window
         if (FreeSpaceText is null) return;
         if (DrivePicker.SelectedItem is DriveChoice drive)
         {
-            FreeSpaceText.Text = SizeText.Format(drive.FreeBytes);
-            CapacityText.Text = $"of {SizeText.Format(drive.TotalBytes)} total";
+            ShowDriveSpace(drive.TotalBytes, drive.FreeBytes);
         }
         // Results always belong to the selected target, never the previous drive.
         ClearResults();
@@ -78,11 +78,11 @@ public partial class MainWindow : Window
         EmptyState.Visibility = Visibility.Visible;
         EmptyCaption.Text = "Scan a drive to review build output, caches,\nenvironments, and files left by coding agents.";
         ScannedSizeText.Text = CandidateText.Text = "—";
-        ScannedSizeLabel.Text = "OBSERVED ALLOCATION";
-        ScannedSizeCaption.Text = "Files counted once across hard links";
+        ScannedSizeLabel.Text = "Scanned";
+        ScannedSizeCaption.Text = "Allocated · Shared files counted once";
         OpportunityHeading.Text = "Opportunities";
         OpportunitiesTab.Content = "Opportunities";
-        CandidateCaption.Text = "An estimate, subject to review";
+        CandidateCaption.Text = "Estimate · Subject to review";
         DetailsButton.Visibility = Visibility.Collapsed;
         UpdateSelection();
     }
@@ -148,16 +148,17 @@ public partial class MainWindow : Window
                 _rows.Add(row);
             }
             OpportunityHeading.Text = $"Opportunities  ·  {_rows.Count:N0}";
-            ScannedSizeLabel.Text = scan.HasAllocationData ? "OBSERVED ALLOCATION" : "OBSERVED LOGICAL SIZE";
+            ScannedSizeLabel.Text = "Scanned";
             ScannedSizeText.Text = SizeText.Format(scan.HasAllocationData ? scan.AllocatedBytes : scan.LogicalBytes);
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
-            CandidateCaption.Text = $"{_rows.Count:N0} {(_rows.Count == 1 ? "location" : "locations")} · overlapping paths counted once";
+            CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "location" : "locations")} · overlapping paths counted once";
             EmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             EmptyCaption.Text = "No matching development clutter was found in the accessible files.";
             if (_rows.Count > 0) OpportunityGrid.SelectedIndex = 0;
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
-            ScannedSizeCaption.Text = "Files counted once across hard links";
+            ScannedSizeCaption.Text = scan.HasAllocationData ? "Allocated · Shared files counted once"
+                : "Logical · Physical allocation unavailable";
             _presentationElapsed = presentation.Elapsed;
             using var diagnosticProcess = Process.GetCurrentProcess();
             log.Record("app-scan-complete", new { scan.Backend, scan.FallbackReason, scan.FileCount, scan.NameCount,
@@ -171,7 +172,7 @@ public partial class MainWindow : Window
             try
             {
                 var refreshed = new DriveInfo(drive.Path);
-                FreeSpaceText.Text = SizeText.Format(refreshed.AvailableFreeSpace);
+                ShowDriveSpace(refreshed.TotalSize, refreshed.AvailableFreeSpace);
             }
             catch (IOException) { }
         }
@@ -212,6 +213,15 @@ public partial class MainWindow : Window
         OpportunityGrid.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
+    }
+
+    private void ShowDriveSpace(long total, long free)
+    {
+        FreeSpaceText.Text = SizeText.Format(free);
+        CapacityText.Text = $"of {SizeText.Format(total)} total";
+        DriveCapacityBar.Value = total > 0 ? Math.Clamp(100d * free / total, 0, 100) : 0;
+        DriveCapacityBar.ToolTip = $"{SizeText.Format(free)} free of {SizeText.Format(total)} total";
+        System.Windows.Automation.AutomationProperties.SetHelpText(DriveCapacityBar, (string)DriveCapacityBar.ToolTip);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();

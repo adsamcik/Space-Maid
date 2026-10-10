@@ -10,11 +10,12 @@ public partial class MainWindow
     internal void ShowPreliminary(ScanPreliminary preliminary)
     {
         _preliminary = preliminary;
+        if (!_preliminaryUserSorted) _preliminarySortColumn = preliminary.HasAllocationData ? ScanSortColumn.Allocated : ScanSortColumn.Logical;
         PreliminaryCaption.Text = "Scanning… Folder totals and cleanup estimates will appear when ready.";
         PreliminaryHint.Text = "Waiting for file metadata…";
-        PreliminaryFiles.ItemsSource = preliminary.LargestFiles.Select(file => new PreliminaryRow(file, preliminary.HasAllocationData)).ToArray();
+        RefreshPreliminaryRows();
         PreliminaryHint.Visibility = preliminary.LargestFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ScannedSizeLabel.Text = preliminary.HasAllocationData ? "PRELIMINARY ALLOCATION" : "PRELIMINARY LOGICAL SIZE";
+        ScannedSizeLabel.Text = preliminary.HasAllocationData ? "PRELIMINARY" : "PRELIMINARY LOGICAL";
         ScannedSizeText.Text = SizeText.Format(preliminary.HasAllocationData ? preliminary.AllocatedBytes : preliminary.LogicalBytes);
         ScannedSizeCaption.Text = preliminary.HasAllocationData
             ? $"{SizeText.Format(preliminary.LogicalBytes)} logical · Files counted once"
@@ -22,14 +23,15 @@ public partial class MainWindow
         PreliminaryNote.Text = preliminary.HasAllocationData
             ? "Up to 100 files · Shared file allocation counted once · Unresolved paths are marked pending"
             : "Up to 100 files · Hard links may repeat without file identities · Unresolved paths are marked pending";
-        PreliminaryAllocationHeader.Text = preliminary.HasAllocationData ? "Allocated ↓" : "Allocated";
-        PreliminaryLogicalHeader.Text = preliminary.HasAllocationData ? "Logical" : "Logical ↓";
         View_Changed(this, new RoutedEventArgs());
     }
 
     private void ClearPreliminary()
     {
         _preliminary = null;
+        _preliminarySortColumn = ScanSortColumn.Allocated;
+        _preliminaryDescending = true;
+        _preliminaryUserSorted = false;
         PreliminaryFiles.ItemsSource = null;
         PreliminaryCaption.Text = "Scanning… Folder totals and cleanup estimates will appear when ready.";
         PreliminaryHint.Text = "Waiting for file metadata…";
@@ -41,8 +43,13 @@ public partial class MainWindow
         // Clear any partially prepared final tree/opportunities, then restore
         // only the bounded acquisition preview. It never enables cleanup review.
         var preliminary = _preliminary;
+        var column = _preliminarySortColumn;
+        bool descending = _preliminaryDescending, userSorted = _preliminaryUserSorted;
         ClearResults();
         if (preliminary is null) return;
+        _preliminarySortColumn = column;
+        _preliminaryDescending = descending;
+        _preliminaryUserSorted = userSorted;
         ShowPreliminary(preliminary);
         PreliminaryCaption.Text = "Scan cancelled · These partial results cover only metadata read before cancellation.";
         PreliminaryHint.Text = "No file metadata was read before cancellation.";
