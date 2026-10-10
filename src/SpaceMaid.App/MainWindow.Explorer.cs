@@ -15,15 +15,17 @@ public partial class MainWindow
     private readonly Dictionary<int, int[]> _childOrders = [];
     private IReadOnlyDictionary<int, SpaceKind> _kinds = new Dictionary<int, SpaceKind>();
     private CancellationTokenSource? _browseWork;
-    private bool _browsing, _syncTree;
+    private bool _browsing, _syncTree, _selectionIsGroup;
     private int _selectedLink = -1;
-    private string _scanStatus = "Ready · Your files stay untouched";
+    private string _scanStatus = "Ready · Scan a drive to explore space";
     private TimeSpan _detectionElapsed, _presentationElapsed;
 
     private void ClearExplorer()
     {
         _browseWork?.Cancel();
         _explorer = null;
+        _selectedLink = -1;
+        _selectionIsGroup = false;
         _childOrders.Clear(); _kinds = new Dictionary<int, SpaceKind>();
         SpaceTree.ItemsSource = null;
         Breadcrumbs.Children.Clear(); SpaceMap.Children.Clear(); SpaceMap.Weights = [];
@@ -38,6 +40,7 @@ public partial class MainWindow
     {
         ClearExplorer();
         _snapshot = scan;
+        _scanStale = false;
         _explorer = new(scan);
         var kinds = new Dictionary<int, SpaceKind>();
         foreach (var opportunity in opportunities)
@@ -104,6 +107,7 @@ public partial class MainWindow
     {
         if (_explorer is null) return;
         _selectedLink = link;
+        _selectionIsGroup = false;
         _syncTree = true;
         try
         {
@@ -156,7 +160,15 @@ public partial class MainWindow
     {
         if (_syncTree || _work is not null || SpaceTree.SelectedItem is not ExplorerRow row) return;
         _selectedLink = row.Entry.LinkIndex;
+        _selectionIsGroup = false;
         await BrowseAsync(token => DisplayEntryAsync(_selectedLink, token));
+    }
+    private void Tree_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // Re-selecting the same real row resolves a preceding grouped map
+        // selection even when WPF does not raise SelectionChanged again.
+        if (ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is ListBoxItem)
+            _selectionIsGroup = false;
     }
     private async void Tree_DoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -221,12 +233,17 @@ public partial class MainWindow
             AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}. {contribution.Path}");
             button.Click += async (_, _) =>
             {
-                if (contribution.Link >= 0) await NavigateToEntryAsync(contribution.Link);
+                if (contribution.Link >= 0)
+                {
+                    await NavigateToEntryAsync(contribution.Link);
+                    SpaceTree.Focus();
+                }
                 else await BrowseAsync(async cancellation =>
                 {
                     if (!_explorer!.IsExpanded(folder.LinkIndex)) _explorer.Expand(folder.LinkIndex, await ChildOrderAsync(folder.FileIndex, cancellation));
                     SelectTree(folder.LinkIndex); SpaceTree.Focus();
                     await DisplayEntryAsync(folder.LinkIndex, cancellation);
+                    _selectionIsGroup = true;
                 });
             };
             SpaceMap.Children.Add(button);

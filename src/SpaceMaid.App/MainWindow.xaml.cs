@@ -70,6 +70,7 @@ public partial class MainWindow : Window
         ClearPreliminary();
         _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
         _snapshot = null;
+        _scanStale = false;
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
         _rows.Clear();
         DetailPanel.Visibility = Visibility.Collapsed;
@@ -230,7 +231,7 @@ public partial class MainWindow : Window
     {
         int selected = _rows.Count(row => row.Selected);
         SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected" : "Select locations to preview cleanup";
-        ReviewButton.IsEnabled = selected > 0 && _work is null;
+        ReviewButton.IsEnabled = selected > 0 && _work is null && !_scanStale;
     }
 
     private void Opportunity_Changed(object sender, SelectionChangedEventArgs e)
@@ -243,7 +244,7 @@ public partial class MainWindow : Window
 
     private async void Review_Click(object sender, RoutedEventArgs e)
     {
-        if (_snapshot is null || _work is not null) return;
+        if (_snapshot is null || _work is not null || _scanStale) return;
         var scan = _snapshot;
         var selected = _rows.Where(r => r.Selected).Select(r => r.Item).ToArray();
         using var work = new CancellationTokenSource();

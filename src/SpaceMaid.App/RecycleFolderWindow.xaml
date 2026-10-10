@@ -1,0 +1,19 @@
+<Window x:Class="SpaceMaid.App.RecycleFolderWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Move folder to Recycle Bin" Width="590" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
+    <StackPanel Margin="24">
+        <TextBlock Text="Move this folder to the Recycle Bin?" FontSize="21" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock Text="The folder and its current contents will be moved." Margin="0,10,0,14" TextWrapping="Wrap" />
+        <TextBox x:Name="TargetPath" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.Name="Exact folder to recycle" />
+        <TextBlock x:Name="TargetSize" Margin="0,12,0,0" TextWrapping="Wrap" />
+        <TextBlock x:Name="CoverageNote" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+        <TextBlock Text="Space stays occupied until the Recycle Bin is emptied. You can restore the folder from the Recycle Bin. Cancellation may leave some contents already moved." Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button x:Name="KeepButton" Content="Keep folder" IsCancel="True" IsDefault="True" Margin="0,0,10,0" />
+            <Button x:Name="RecycleButton" Content="Move to Recycle Bin" Click="Recycle_Click" />
+        </StackPanel>
+    </StackPanel>
+</Window>

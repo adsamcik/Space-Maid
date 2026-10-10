@@ -71,7 +71,7 @@ public static class CleanupPlanner
     }
 
     public static void Execute(CleanupPreview preview) =>
-        throw new NotSupportedException("Cleanup is disabled in this read-only release.");
+        throw new NotSupportedException("Bulk cleanup is disabled. This plan is a read-only preview.");
 
     private static bool HasSelectedAncestor(ScanSnapshot scan, int directory, HashSet<int> selected)
     {

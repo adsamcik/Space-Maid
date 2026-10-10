@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -15,7 +16,7 @@ namespace SpaceMaid.Tests;
 public sealed class DesktopTests
 {
     [Fact]
-    public void FluentDesktopLoadsScansAndPreviewsWithCleanupDisabled()
+    public void FluentDesktopLoadsScansPreviewsAndConfirmedFolderRecycling()
     {
         Exception? failure = null;
         string stage = "starting";
@@ -102,7 +103,74 @@ public sealed class DesktopTests
                 Assert.Equal("No skipped-path warnings", ((TextBlock)details.FindName("CoverageText")).Text);
                 Assert.Contains(Descendants(startup.Content as DependencyObject).OfType<Button>(), b => Equals(b.Content, "Continue without admin"));
 
+                stage = "checking folder Delete confirmation and its safe default";
+                var returnToFolder = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
+                PumpUntil(() => returnToFolder.IsCompleted, TimeSpan.FromSeconds(10));
+                returnToFolder.GetAwaiter().GetResult();
+                Exception? confirmationFailure = null;
+                bool confirmed = false;
+                var confirmationTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+                {
+                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
+                    if (dialog is null) return;
+                    try
+                    {
+                        Assert.Equal(bin, ((TextBox)dialog.FindName("TargetPath")).Text);
+                        Assert.True(((Button)dialog.FindName("KeepButton")).IsDefault);
+                        Assert.Contains("8 KiB", ((TextBlock)dialog.FindName("TargetSize")).Text);
+                        confirmed = true;
+                    }
+                    catch (Exception ex) { confirmationFailure = ex; }
+                    finally { dialog.Close(); }
+                }, Dispatcher.CurrentDispatcher);
+                var deleteKey = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(tree), Environment.TickCount, Key.Delete)
+                    { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                tree.RaiseEvent(deleteKey);
+                PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
+                confirmationTimer.Stop();
+                if (confirmationFailure is not null) throw confirmationFailure;
+                Assert.True(deleteKey.Handled);
+                Assert.True(confirmed);
+                Assert.True(Directory.Exists(bin));
+                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+                // Delete while the exact path text field is focused must not
+                // invoke folder recycling.
+                var pathField = Descendants(((StackPanel)window.FindName("EntryDetail"))).OfType<TextBox>().Single();
+                var fieldKey = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(pathField), Environment.TickCount, Key.Delete)
+                    { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                pathField.RaiseEvent(fieldKey);
+                Assert.False(fieldKey.Handled);
+
+                stage = "recycling a fixture through the actual UI and marking its scan stale";
+                var approveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+                {
+                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
+                    if (dialog is not null) ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }, Dispatcher.CurrentDispatcher);
+                var recycleTask = window.DeleteSelectedFolderAsync();
+                PumpUntil(() => recycleTask.IsCompleted, TimeSpan.FromSeconds(10));
+                approveTimer.Stop();
+                var recycled = Assert.IsType<RecycleResult>(recycleTask.GetAwaiter().GetResult());
+                try
+                {
+                    Assert.False(Directory.Exists(bin));
+                    Assert.Contains("Rescan", ((TextBlock)window.FindName("StatusText")).Text);
+                    Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
+                    Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
+                    Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                    var retry = window.DeleteSelectedFolderAsync();
+                    Assert.Null(retry.GetAwaiter().GetResult());
+                    Assert.Contains("out of date", ((TextBlock)window.FindName("StatusText")).Text);
+                }
+                finally { DeletionTests.RestoreFixture(Assert.IsType<string>(recycled.RecycledPath), bin); }
+                var refreshedExplorer = window.InitializeExplorerAsync(scan, [row.Item], default);
+                PumpUntil(() => refreshedExplorer.IsCompleted, TimeSpan.FromSeconds(10));
+                refreshedExplorer.GetAwaiter().GetResult();
+                window.SetBusy(false);
+                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+
                 string artifactRoot = FindRepository();
+                var recyclePreview = new RecycleFolderWindow(FolderDeletionTarget.FromScan(scan, scan.PrimaryLink(row.Item.DirectoryIndex)));
 #pragma warning disable WPF0001 // Exercise the same Fluent theme through its experimental C# API in this smoke test only.
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {
@@ -116,6 +184,7 @@ public sealed class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"main-{theme}.png"), 1220, 910);
                     Render(review, Path.Join(artifactRoot, "artifacts", "ui", $"review-{theme}.png"), 860, 700);
                     Render(details, Path.Join(artifactRoot, "artifacts", "ui", $"details-{theme}.png"), 700, 680);
+                    Render(recyclePreview, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-{theme}.png"), 590, 460);
                 }
 #pragma warning restore WPF0001
                 Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 305);
@@ -194,6 +263,14 @@ public sealed class DesktopTests
                 Assert.Equal(50_001, tree.Items.Count);
                 int realized = Descendants(tree).OfType<ListBoxItem>().Count();
                 Assert.True(realized is > 0 and <= 100, $"The wide folder realized {realized:N0} containers.");
+                stage = "blocking deletion of grouped map entries";
+                var groupedTile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
+                Assert.Equal(-2, Assert.IsType<SpaceContribution>(groupedTile.DataContext).Link);
+                groupedTile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+                var groupedDelete = window.DeleteSelectedFolderAsync();
+                Assert.Null(groupedDelete.GetAwaiter().GetResult());
+                Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 stage = "scrolling to the final wide-folder entry";
                 var wideRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 tree.SelectedIndex = wideRows.Count - 1;
@@ -207,7 +284,7 @@ public sealed class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BackendStatusText")).Visibility);
                 stage = "closing windows";
-                startup.Close(); review.Close(); details.Close(); window.Close();
+                startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
             }
             catch (Exception ex) { failure = ex; }
             finally { stage = "shutting down WPF"; app?.Shutdown(); }
