@@ -86,6 +86,15 @@ public sealed class DesktopTests
                 int binLink = explorer.Scan.PrimaryLink(row.Item.DirectoryIndex);
                 int projectLink = explorer.Scan.PrimaryLink(explorer.Scan.Entry(binLink).ParentIndex);
                 var projectContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(projectLink)));
+                stage = "checking expansion hit targets beyond the arrow glyph";
+                window.UpdateLayout();
+                var projectExpander = Descendants(projectContainer).OfType<Button>().Single();
+                Assert.True(projectExpander.ActualWidth >= 40 && projectExpander.ActualHeight >= 34);
+                var expansionTargets = Descendants(projectExpander).Append(projectExpander).ToHashSet();
+                foreach (var point in new[] { new Point(2, 2), new Point(projectExpander.ActualWidth - 2, 2),
+                    new Point(2, projectExpander.ActualHeight - 2), new Point(projectExpander.ActualWidth - 2, projectExpander.ActualHeight - 2) })
+                    Assert.Contains(Assert.IsAssignableFrom<DependencyObject>(tree.InputHitTest(projectExpander.TranslatePoint(point, tree))), expansionTargets);
+                stage = "opening folder operations through routed right-click events";
                 string rootMapTotal = ((TextBlock)window.FindName("MapTotal")).Text;
                 RightClick(window, projectContainer);
                 Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);

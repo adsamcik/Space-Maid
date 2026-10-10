@@ -83,8 +83,8 @@
                                   <Grid MinHeight="34" ToolTip="{Binding EntryTooltip}">
                                       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
                                       <Grid Margin="{Binding Indent}">
-                                          <Grid.ColumnDefinitions><ColumnDefinition Width="22" /><ColumnDefinition Width="21" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                          <Button Content="{Binding Expander}" IsEnabled="{Binding CanExpand}" Click="Expand_Click" Focusable="False" Padding="0" BorderThickness="0" Background="Transparent" MinWidth="0" MinHeight="0" AutomationProperties.Name="Expand or collapse folder" />
+                                          <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="21" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                          <Button Content="{Binding Expander}" IsEnabled="{Binding CanExpand}" Click="Expand_Click" Style="{StaticResource FolderExpander}" AutomationProperties.Name="{Binding Name, StringFormat='Expand or collapse {0}'}" />
                                           <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" Opacity="0.65" Grid.Column="1" VerticalAlignment="Center" />
                                           <StackPanel Grid.Column="2" VerticalAlignment="Center"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Flags}" FontSize="11" Opacity="0.65"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Flags}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel>
                                       </Grid>
