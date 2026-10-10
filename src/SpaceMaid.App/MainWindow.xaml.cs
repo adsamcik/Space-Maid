@@ -16,8 +16,11 @@ public partial class MainWindow : Window
     private ScanSnapshot? _snapshot;
     private CancellationTokenSource? _work;
     private bool _closing;
+    private bool _extensionsClosed;
     private bool _startupOffered;
     private string? _scanLogPath;
+    private HelperLayoutSource? _scanHelper;
+    private bool _fastEnabled;
     internal string LogDirectory { get; set; } = ScanLog.DefaultDirectory;
 
     public MainWindow()
@@ -44,12 +47,16 @@ public partial class MainWindow : Window
         if (drives.Count == 0) StatusText.Text = "No accessible drives were found.";
     }
 
-    private void Window_Loaded(object sender, RoutedEventArgs e)
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_startupOffered || Elevation.IsAdministrator) return;
+        if (_startupOffered) return;
         _startupOffered = true;
-        var startup = new StartupWindow { Owner = this };
-        if (startup.ShowDialog() == true) RequestElevation();
+        if (!Elevation.IsAdministrator)
+        {
+            var startup = new StartupWindow { Owner = this };
+            if (startup.ShowDialog() == true) await RequestElevationAsync();
+        }
+        if (!_closing) await InitializeExtensionsAsync();
     }
 
     private void Drive_Changed(object sender, SelectionChangedEventArgs e)
@@ -123,8 +130,23 @@ public partial class MainWindow : Window
         });
         try
         {
-            var scan = await new VolumeScanner().ScanAsync(drive.Path, progress, work.Token, diagnostic: d => log.Record(d.Event, d));
+            string? helperFailure = null;
+            var selectedDrive = new DriveInfo(drive.Path);
+            if (_fastEnabled && _scanHelper is null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
+                && selectedDrive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+            {
+                try { _scanHelper = await HelperLayoutSource.CreateAsync(true, work.Token); }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or Win32Exception)
+                {
+                    _fastEnabled = false; helperFailure = $"Fast scan helper was unavailable: {ex.Message}. Standard scanning was used.";
+                    log.Record("helper-unavailable", new { Error = ex.ToString() });
+                }
+            }
+            var scan = await new VolumeScanner().ScanAsync(drive.Path, progress, work.Token,
+                preferFast: _fastEnabled || Elevation.IsAdministrator, diagnostic: d => log.Record(d.Event, d), layoutSource: _scanHelper,
+                fastUnavailableReason: helperFailure);
             acquiring = false;
+            _scanHelper?.Dispose(); _scanHelper = null;
             if (_closing) return;
             if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
             PreliminaryCaption.Text = "Preparing folder totals and cleanup estimates… These results are preliminary.";
@@ -201,6 +223,7 @@ public partial class MainWindow : Window
         finally
         {
             acquiring = false;
+            _scanHelper?.Dispose(); _scanHelper = null;
             if (!_closing && log.Error is not null) BackendStatusText.Text += $" · Logging unavailable: {log.Error}";
             _work = null;
             if (!_closing) SetBusy(false);
@@ -209,6 +232,7 @@ public partial class MainWindow : Window
 
     internal void SetBusy(bool busy)
     {
+        _extensions?.SetDiscoveryBusy(busy);
         DrivePicker.IsEnabled = !busy;
         ScanButton.IsEnabled = !busy && DrivePicker.SelectedItem is not null;
         ElevateButton.IsEnabled = !busy;
@@ -298,12 +322,37 @@ public partial class MainWindow : Window
         new ScanDetailsWindow(scan, _detectionElapsed, _presentationElapsed) { Owner = this }.ShowDialog();
     }
 
-    private void Elevate_Click(object sender, RoutedEventArgs e) => RequestElevation();
-    private void RequestElevation()
+    private async void Elevate_Click(object sender, RoutedEventArgs e) => await RequestElevationAsync();
+    private async Task RequestElevationAsync()
     {
-        if (Elevation.TryRelaunch(out var error)) Close();
-        else StatusText.Text = error is null ? "Continuing without administrator access. Standard scanning is available."
-            : $"Could not enable fast scanning: {error}. Standard scanning is available.";
+        if (_work is not null || _closing) return;
+        using var work = new CancellationTokenSource(); _work = work; SetBusy(true);
+        try
+        {
+            _scanHelper?.Dispose(); _scanHelper = await HelperLayoutSource.CreateAsync(true, work.Token);
+            _fastEnabled = true; StatusText.Text = "Fast scanning enabled. Standard scanning remains available for other drives.";
+        }
+        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidDataException or OperationCanceledException)
+        {
+            _fastEnabled = false;
+            StatusText.Text = ex is Win32Exception { NativeErrorCode: 1223 } or OperationCanceledException
+                ? "Continuing with standard scanning."
+                : $"Fast scanning could not start: {ex.Message}. Standard scanning is available.";
+        }
+        finally { _work = null; if (!_closing) SetBusy(false); }
     }
-    private void Window_Closing(object? sender, CancelEventArgs e) { _closing = true; _work?.Cancel(); _browseWork?.Cancel(); }
+    private async void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_closing) { e.Cancel = _extensions is not null && !_extensionsClosed; return; }
+        _closing = true; _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        if (_extensions is null) return;
+        e.Cancel = true;
+        try { await _extensions.DisposeAsync(); }
+        catch (Exception error) { Debug.WriteLine($"Extension shutdown: {error}"); }
+        finally
+        {
+            _extensionsClosed = true;
+            _ = Dispatcher.BeginInvoke(new Action(Close));
+        }
+    }
 }

@@ -3,9 +3,31 @@
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
+    <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
+    <ProjectReference Include="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" ReferenceOutputAssembly="false" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>
+  <Target Name="CopyScanHelper" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
+      <Output TaskParameter="TargetOutputs" ItemName="HelperTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <HelperFiles Include="%(HelperTarget.RootDir)%(HelperTarget.Directory)SpaceMaid.ScanHelper.*;%(HelperTarget.RootDir)%(HelperTarget.Directory)SpaceMaid.Core.dll" />
+      <Content Include="@(HelperFiles)" Link="ScanHelper/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+  <Target Name="CopyBundledPhotos" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
+      <Output TaskParameter="TargetOutputs" ItemName="PhotosTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <PhotosFiles Include="%(PhotosTarget.RootDir)%(PhotosTarget.Directory)**/*" Exclude="%(PhotosTarget.RootDir)%(PhotosTarget.Directory)SpaceMaid.Extensions.Contracts.*" />
+      <Content Include="@(PhotosFiles)" Link="Extensions/space-maid.photos/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 </Project>

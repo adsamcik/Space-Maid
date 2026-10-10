@@ -47,10 +47,18 @@
         </Border>
         <Grid Grid.Row="1">
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+          <DockPanel Margin="0,0,0,10">
+            <Button Content="Extensions" Click="Extensions_Click" DockPanel.Dock="Right" Padding="10,4" MinHeight="28" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource ViewTab}" GroupName="View" IsChecked="True" Checked="View_Changed" Margin="0,0,22,0" />
-              <RadioButton x:Name="OpportunitiesTab" Content="Opportunities" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" />
-          </StackPanel>
+              <RadioButton x:Name="OpportunitiesTab" Content="Opportunities" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" Margin="0,0,22,0" />
+              <RadioButton x:Name="PhotosTab" Content="Photos" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" />
+            </StackPanel>
+          </DockPanel>
+          <Grid x:Name="PhotosPanel" Grid.Row="1" Visibility="Collapsed">
+              <ContentControl x:Name="PhotosContent" />
+              <Border x:Name="PhotosPlaceholder" Style="{StaticResource Card}"><TextBlock x:Name="ExtensionsStatusText" Text="Loading Photos…" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" /></Border>
+          </Grid>
           <Grid x:Name="ExplorePanel" Grid.Row="1" PreviewKeyDown="Explore_KeyDown">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="1.1*" /></Grid.ColumnDefinitions>
               <Border Style="{StaticResource Card}" Padding="0">
@@ -210,6 +218,7 @@
           </Grid>
         </Grid>
         <StackPanel Grid.Row="2" Margin="0,12,0,0">
+            <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" AutomationProperties.LiveSetting="Polite" />
             <ProgressBar x:Name="ScanProgressBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,10" />
             <DockPanel>
                 <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" />

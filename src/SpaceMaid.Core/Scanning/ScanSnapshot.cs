@@ -22,6 +22,8 @@ public sealed record ScanMetrics(TimeSpan Acquisition, TimeSpan Aggregation, lon
     long PeakProcessWorkingSetBytes = 0);
 
 public enum ScanSortColumn { Name, Allocated, Logical, Share }
+public readonly record struct ScanEntryMetadata(uint Attributes, long LastWriteFileTime,
+    ulong? NativeIdLow, ulong? NativeIdHigh);
 
 public readonly record struct ScanEntry(int LinkIndex, int FileIndex, int ParentIndex,
     string Name, bool IsDirectory, bool IsPrimaryName, bool IsShared, bool IsIncomplete,
@@ -134,6 +136,22 @@ public sealed class ScanSnapshot
         return result;
     }
     public int PrimaryLink(int fileIndex) => fileIndex == RootIndex ? -1 : FirstLinks[fileIndex];
+
+    public ScanEntryMetadata GetMetadata(int linkIndex)
+    {
+        var file = Records[Entry(linkIndex).FileIndex];
+        bool nativeIdentity = Backend != "Basic folder scan";
+        return new((uint)file.Attributes, file.LastWriteFileTime,
+            nativeIdentity ? file.Identity.Low : null, nativeIdentity ? file.Identity.High : null);
+    }
+
+    // Streaming traversal avoids sorting or copying a large directory for extensions.
+    public IEnumerable<int> EnumerateChildren(int directoryIndex)
+    {
+        if ((uint)directoryIndex >= (uint)Records.Length || !Records[directoryIndex].IsDirectory)
+            throw new ArgumentOutOfRangeException(nameof(directoryIndex));
+        return Children(directoryIndex);
+    }
 
     public int[] SortedChildren(int directoryIndex, CancellationToken token = default) =>
         SortedChildren(directoryIndex, ScanSortColumn.Share, descending: true, token);

@@ -10,8 +10,9 @@ namespace SpaceMaid.Core.Scanning;
 public sealed class VolumeScanner
 {
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
-        CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null) =>
-        Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic), cancellationToken);
+        CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null,
+        INtfsLayoutSource? layoutSource = null, string? fastUnavailableReason = null) =>
+        Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic, layoutSource, fastUnavailableReason), cancellationToken);
 
     // Parent rechecks read immediate names only, including at a drive root.
     internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token, bool allStreams = false) => Task.Run(() =>
@@ -92,7 +93,7 @@ public sealed class VolumeScanner
     }
 
     private static ScanSnapshot Scan(string path, IProgress<ScanProgress>? progress,
-        CancellationToken token, bool preferFast, Action<ScanDiagnostic>? diagnostic)
+        CancellationToken token, bool preferFast, Action<ScanDiagnostic>? diagnostic, INtfsLayoutSource? layoutSource, string? fastUnavailableReason)
     {
         string target = Path.GetFullPath(path);
         if (!Directory.Exists(target)) throw new DirectoryNotFoundException("The selected drive or folder is unavailable.");
@@ -102,7 +103,7 @@ public sealed class VolumeScanner
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
         var reporter = new ScanReporter(progress, diagnostic, timer, allocatedBefore, target);
         reporter.Event("scan-start", $"Target: {target}; preferFast: {preferFast}");
-        string? fallbackReason = null;
+        string? fallbackReason = fastUnavailableReason;
         ScanBuilder? active = null;
         try
         {
@@ -115,10 +116,10 @@ public sealed class VolumeScanner
                 reporter.UseBackend("Fast NTFS scan", "Attempting FSCTL_QUERY_FILE_LAYOUT (0x00090277).", fast);
                 try
                 {
-                    AcquireLayout(root, fast, reporter, token);
+                    AcquireLayout(root, fast, reporter, token, layoutSource ?? new NativeNtfsLayoutSource());
                     return Finish(fast, "Fast NTFS scan");
                 }
-                catch (Exception ex) when (ex is Win32Exception or InvalidDataException)
+                catch (Exception ex) when (ex is Win32Exception or InvalidDataException or IOException)
                 {
                     fallbackReason = ex is Win32Exception { NativeErrorCode: 5 }
                         ? "Fast NTFS access was unavailable. Standard scanning was used; administrator access can enable the fast scan."
@@ -164,54 +165,21 @@ public sealed class VolumeScanner
         }
     }
 
-    private static unsafe void AcquireLayout(string root, ScanBuilder builder, ScanReporter reporter, CancellationToken token)
+    private static void AcquireLayout(string root, ScanBuilder builder, ScanReporter reporter, CancellationToken token, INtfsLayoutSource source)
     {
-        using var volume = NativeMethods.CreateFile(@"\\.\" + root[..2], 0x80000000, 7, 0, 3, 0, 0);
-        if (volume.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        byte[] input = new byte[32]; // Includes the unused filter union, as required by sizeof(INPUT).
-        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x37);
-        int size = 1024 * 1024;
-        byte[] output = ArrayPool<byte>.Shared.Rent(size);
-        try
+        source.Acquire(root, block =>
         {
-            while (true)
-            {
-                token.ThrowIfCancellationRequested();
-                bool success;
-                int bytes;
-                long queryStarted = Stopwatch.GetTimestamp();
-                fixed (byte* inputPointer = input)
-                fixed (byte* outputPointer = output)
-                    success = NativeMethods.DeviceIoControl(volume, NativeMethods.QueryFileLayout,
-                        inputPointer, input.Length, outputPointer, size, out bytes, 0);
-                int error = success ? 0 : Marshal.GetLastPInvokeError();
-                reporter.QueryCompleted(queryStarted, success ? bytes : 0);
-                if (!success)
-                {
-                    if (error == NativeMethods.HandleEof) break;
-                    if (error is 122 or 234 && size < 64 * 1024 * 1024)
-                    {
-                        ArrayPool<byte>.Shared.Return(output);
-                        size *= 2;
-                        output = ArrayPool<byte>.Shared.Rent(size);
-                        reporter.Event("buffer-growth", $"NTFS output buffer increased to {size:N0} bytes.", builder, error);
-                        continue;
-                    }
-                    throw new Win32Exception(error);
-                }
-                if (bytes < 16 || bytes > size) throw new InvalidDataException("The NTFS metadata response has an invalid length.");
-                int before = builder.Count;
-                long parseStarted = Stopwatch.GetTimestamp();
-                LayoutParser.Parse(output.AsSpan(0, bytes), builder);
-                reporter.ParseCompleted(parseStarted);
-                if (builder.Count == before) throw new InvalidDataException("The NTFS enumeration made no forward progress.");
-                BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x36);
-                reporter.Report("Reading NTFS metadata", builder);
-            }
-        }
-        finally { ArrayPool<byte>.Shared.Return(output); }
+            token.ThrowIfCancellationRequested();
+            reporter.QueryObserved(block.QueryMilliseconds, block.Data.Length);
+            if (block.Data.IsEmpty) return;
+            int before = builder.Count;
+            long started = Stopwatch.GetTimestamp();
+            LayoutParser.Parse(block.Data.Span, builder);
+            reporter.ParseCompleted(started);
+            if (builder.Count == before) throw new InvalidDataException("The NTFS enumeration made no forward progress.");
+            reporter.Report("Reading NTFS metadata", builder);
+        }, token);
     }
-
     private static unsafe void AcquireDirectories(string target, ScanBuilder builder, ScanReporter reporter, CancellationToken token,
         bool recursive = true, bool validateIdentity = false)
     {
@@ -360,6 +328,7 @@ public sealed class VolumeScanner
         private string _backend = "Selecting backend";
         private string? _fallback;
         public void QueryCompleted(long started, int bytes) { _queries++; _returnedBytes += bytes; _queryMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
+        public void QueryObserved(double milliseconds, int bytes) { _queries++; _returnedBytes += bytes; _queryMs += milliseconds; }
         public void ParseCompleted(long started) { _batches++; _parseMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
         public void UseBackend(string backend, string message, ScanBuilder builder)
         {

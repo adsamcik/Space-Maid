@@ -2,7 +2,7 @@
 
 Space Maid should keep its fast storage scanner and add specialized workflows through trusted .NET 10 WPF extensions. The first extension would be Photos: selected photo collections, persistent evidence, and review of duplicates and related files. Expensive image reads, hashing, and external tools would run as separate jobs after discovery.
 
-**Status: proposed architecture for approval.** This document authorizes no implementation, tool installation, conversion, or media cleanup. The supplied *Media Library Optimizer* PDF is research input; its broader standalone photo/video release scope is not a requirement for this Photos extension.
+**Status: approved first milestone, implemented in the source tree.** The user approved the architecture, Photos layout and initial resource limits. The implementation covers stages 1–4 below; current verification and limits are recorded in the README. Tool installation, Adobe integration, conversion and photo cleanup remain outside this milestone. The supplied *Media Library Optimizer* PDF is research input; its broader standalone photo/video release scope is not a requirement for this Photos extension.
 
 ## Proposed boundaries
 
@@ -49,7 +49,7 @@ Enable, disable, and update take effect after restart. A disabled extension is n
 
 ## Administrator access
 
-Today `Elevation.TryRelaunch` restarts the whole application as administrator. That would also elevate extension code and child media tools. Change the privilege boundary before enabling extensions: the WPF host stays unelevated, and **Enable fast scanning** requests UAC for the fixed bundled scan helper. Cancelling UAC leaves standard scanning available.
+The WPF host stays unelevated, and **Enable fast scanning** requests UAC for the fixed bundled scan helper. Cancelling UAC leaves standard scanning available. Whole-app administrator relaunch has been removed; a manually elevated host blocks extension loading and media tools until reopened normally.
 
 The helper accepts only a local NTFS volume scan request, cancellation, and shutdown. It performs the documented metadata query, sends size-bounded binary batches plus query diagnostics, and exits after the scan. Parsing, aggregation, preliminary results, and the final compact inventory remain in Core within the host. Do not construct two full inventories or serialize millions of file/path objects as JSON.
 
@@ -77,7 +77,7 @@ Do not broadcast an event per file or materialize a second drive-sized DTO/path 
 
 ## Jobs and persistence
 
-The host owns scheduling and process lifetime. Photos owns durable analysis records and resume checkpoints in `%LOCALAPPDATA%\SpaceMaid\Extensions\space-maid.photos\photos.db`. On reopening, it validates unfinished work and submits remaining jobs to the host. Interrupted running jobs become interrupted, never silently completed. Catalog updates commit before results are published to the UI.
+The host owns scheduling and process lifetime. Photos owns durable analysis records and checkpoints in `%LOCALAPPDATA%\SpaceMaid\Extensions\space-maid.photos\photos.db`. On reopening, unfinished running jobs are marked interrupted, never silently completed. The user explicitly chooses Refresh or Analyze to restart and revalidate the selected scope; content reads do not resume automatically, and Analyze validates from the scope's start. Catalog updates commit before results are published to the UI.
 
 Use `Microsoft.Data.Sqlite` directly, without an ORM. Photos serializes its writes, uses WAL and short background reads, and pages indexed queries with stable sort keys. All database operations stay off the WPF dispatcher: [Microsoft.Data.Sqlite async methods run synchronously](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async). Pin and inspect the shipped managed/native SQLite versions when implementing; an installed tool's SQLite is not proof of this app's dependency.
 
@@ -142,4 +142,6 @@ Visual similarity, JPEG XL trials, conversion, family-aware file recycling, vide
 
 Use the existing test framework for meaningful logic checks and real sample copies for tool/UI integration. A build cannot establish codec support, Adobe fidelity or responsiveness. Record time to first useful results, indexed page latency, total memory including tools, content bytes read, and cache usage; calibrate targets on the actual library instead of inheriting unmeasured targets from the PDF.
 
-The decisions requested for the first implementation are the trusted local DLL model, WPF contract, separate elevated scan helper, Photos-owned local SQLite catalog using `Microsoft.Data.Sqlite`, and the read-only Photos scope above. Approving this first milestone would not approve later conversion or source cleanup.
+The approved first implementation uses the trusted local DLL model, WPF contract, separate elevated scan helper, Photos-owned local SQLite catalog using `Microsoft.Data.Sqlite`, and the read-only Photos scope above. Approval does not include later conversion or source cleanup. Additional trusted views open from the Extensions manager; Photos is embedded beside Explore and Opportunities.
+
+Implementation details: 100 rows per page, 160-pixel previews, 64 MiB decoded and 512 MiB disk caches, one content worker, two thumbnail workers and 128 admitted jobs. Add/Refresh perform current scoped metadata discovery; Analyze explicitly enables source reads, including previews. Every refresh clears the collection's earlier content authorization before enumeration. Interrupted discovery retains unseen locations with incomplete coverage. Recognized Cloud Files placeholders are conservatively metadata-only even when ordinary attributes hide provider state. The fixed ExifTool adapter validates held metadata before creating stable read handles and launching its owned process. `Microsoft.Data.Sqlite` 10.0.10 uses an explicit compatible `SQLitePCLRaw.bundle_e_sqlite3` 2.1.13 pin; package auditing rejected its original 2.1.11 native dependency.

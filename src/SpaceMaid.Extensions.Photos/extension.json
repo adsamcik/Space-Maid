@@ -1,0 +1,9 @@
+{
+  "id": "space-maid.photos",
+  "name": "Photos",
+  "version": "1.0.0",
+  "contractVersion": 1,
+  "entryAssembly": "SpaceMaid.Extensions.Photos.dll",
+  "entryType": "SpaceMaid.Extensions.Photos.PhotosExtension",
+  "tools": ["ExifTool"]
+}

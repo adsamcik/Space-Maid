@@ -24,10 +24,12 @@ public sealed class DesktopTests
         var thread = new Thread(() =>
         {
             Application? app = null;
+            TestDirectory? fixture = null;
+            MainWindow? window = null;
             try
             {
                 SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
-                using var fixture = new TestDirectory();
+                fixture = new TestDirectory();
                 string project = Directory.CreateDirectory(Path.Join(fixture.Path, "sample")).FullName;
                 File.WriteAllText(Path.Join(project, "sample.csproj"), "<Project />");
                 string bin = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
@@ -39,8 +41,9 @@ public sealed class DesktopTests
 #pragma warning restore WPF0001
                 app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/SpaceMaid.App;component/Styles.xaml", UriKind.Relative) });
                 stage = "constructing main window";
-                var window = new MainWindow();
+                window = new MainWindow();
                 window.LogDirectory = Path.Join(fixture.Path, "diagnostics");
+                window.ExtensionDataRoot = Path.Join(fixture.Path, "extensions");
                 // Exercise real native layout offscreen. Detached content can be
                 // remeasured with an unbounded viewport by ScrollIntoView.
                 window.ShowActivated = false;
@@ -498,6 +501,58 @@ public sealed class DesktopTests
                 Assert.True(scanButton.IsEnabled);
                 Assert.Equal(dialogsBefore, app.Windows.OfType<RecycleFolderWindow>().Count()); // An older scan's menu cannot delete a current target.
 
+                stage = "loading the bundled Photos extension into its own assembly context";
+                PumpUntil(() => window.ExtensionsReady, TimeSpan.FromSeconds(10));
+                var photosView = Assert.IsAssignableFrom<FrameworkElement>(((ContentControl)window.FindName("PhotosContent")).Content);
+                Assert.NotSame(System.Runtime.Loader.AssemblyLoadContext.Default,
+                    System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(photosView.GetType().Assembly));
+                ((RadioButton)window.FindName("PhotosTab")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, ((Grid)window.FindName("PhotosPanel")).Visibility);
+                Assert.Equal(Visibility.Collapsed, ((Grid)window.FindName("OpportunitiesPanel")).Visibility);
+                Assert.Equal(Visibility.Collapsed, ((Grid)window.FindName("ExplorePanel")).Visibility);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-empty.png"), 1220, 940);
+                Assert.Contains(Descendants(photosView).OfType<Button>(), button => Equals(button.Content, "Cleanup unavailable") && !button.IsEnabled);
+                stage = "discovering and analyzing owned photos through the loaded extension and real tool broker";
+                PumpUntil(() => !string.IsNullOrEmpty(((TextBlock)photosView.FindName("ToolText")).Text), TimeSpan.FromSeconds(10));
+                string photoFolder = Directory.CreateDirectory(Path.Join(fixture.Path, "photo-review")).FullName;
+                string originalPhoto = Path.Join(photoFolder, "original.png"), copyPhoto = Path.Join(photoFolder, "copy.png");
+                var sample = BitmapSource.Create(200, 100, 96, 96, PixelFormats.Bgra32, null,
+                    Enumerable.Repeat((byte)120, 200 * 100 * 4).ToArray(), 200 * 4);
+                var photoEncoder = new PngBitmapEncoder(); photoEncoder.Frames.Add(BitmapFrame.Create(sample));
+                using (var output = File.Create(originalPhoto)) photoEncoder.Save(output);
+                File.Copy(originalPhoto, copyPhoto);
+                byte[] originalBytes = File.ReadAllBytes(originalPhoto);
+                var addPhotos = (Task)photosView.GetType().GetMethod("AddFolderAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(photosView, [photoFolder])!;
+                PumpUntil(() => addPhotos.IsCompleted, TimeSpan.FromSeconds(10)); addPhotos.GetAwaiter().GetResult();
+                var photoFiles = (DataGrid)photosView.FindName("FileList");
+                Assert.Equal(2, photoFiles.Items.Count);
+                photoFiles.SelectedIndex = 0; window.UpdateLayout();
+                Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
+                Assert.Contains("Analyze", ((TextBlock)photosView.FindName("PreviewStatusText")).Text);
+                var analyzePhotos = (Button)photosView.FindName("AnalyzeButton");
+                analyzePhotos.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => analyzePhotos.IsEnabled && ((TextBlock)photosView.FindName("StatusText")).Text.Contains("Analysis complete", StringComparison.Ordinal), TimeSpan.FromSeconds(10));
+                ((RadioButton)photosView.FindName("DuplicatesTab")).IsChecked = true;
+                PumpUntil(() => photoFiles.Items.Count == 2 && ((TextBlock)photosView.FindName("CoverageText")).Text.Contains("Default-stream equality", StringComparison.Ordinal), TimeSpan.FromSeconds(10));
+                photoFiles.SelectedIndex = 0;
+                PumpUntil(() => ((Image)photosView.FindName("SelectedPreview")).Source is not null, TimeSpan.FromSeconds(10));
+                var photoPreview = Assert.IsAssignableFrom<BitmapSource>(((Image)photosView.FindName("SelectedPreview")).Source);
+                Assert.InRange(photoPreview.PixelWidth, 1, 160); Assert.InRange(photoPreview.PixelHeight, 1, 160);
+                Assert.Contains("PNG", ((TextBox)photosView.FindName("SelectionText")).Text);
+                ((Button)photosView.FindName("RetainButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Contains("Review preference", ((TextBox)photosView.FindName("SelectionText")).Text);
+                Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto)); Assert.Equal(originalBytes, File.ReadAllBytes(copyPhoto));
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-duplicates.png"), 1220, 940);
+                File.Delete(copyPhoto); // Only the owned fixture; refresh must invalidate earlier evidence.
+                ((Button)photosView.FindName("RefreshButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((Button)photosView.FindName("RefreshButton")).IsEnabled && photoFiles.Items.Count == 0, TimeSpan.FromSeconds(10));
+                ((RadioButton)photosView.FindName("BrowseTab")).IsChecked = true;
+                PumpUntil(() => photoFiles.Items.Count == 1, TimeSpan.FromSeconds(10));
+                photoFiles.SelectedIndex = 0;
+                Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
+                Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto));
+                ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+
                 stage = "rendering nested detail at desktop and compact sizes";
                 picker.ItemsSource = new[] { new DriveChoice(@"G:\", @"G:\", GiB(465.75), GiB(17.67)) };
                 picker.SelectedIndex = 0;
@@ -548,10 +603,22 @@ public sealed class DesktopTests
                 Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 stage = "closing windows";
+                string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
+                PumpUntil(() => !app.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(10));
+                File.Copy(extensionLog, Path.Join(artifactRoot, "artifacts", "extensions", "extension-smoke.jsonl"), true);
             }
-            catch (Exception ex) { failure = ex; }
-            finally { stage = "shutting down WPF"; app?.Shutdown(); }
+            catch (Exception ex) { failure = new InvalidOperationException($"WPF smoke failed while {stage}.", ex); }
+            finally
+            {
+                try
+                {
+                    if (window?.IsVisible == true)
+                    { window.Close(); PumpUntil(() => !app!.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(10)); }
+                    app?.Shutdown(); fixture?.Dispose();
+                }
+                catch (Exception cleanup) { failure = failure is null ? cleanup : new AggregateException(failure, cleanup); }
+            }
         });
         thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);

@@ -2,6 +2,9 @@
   <Folder Name="/src/">
     <Project Path="src/SpaceMaid.App/SpaceMaid.App.csproj" />
     <Project Path="src/SpaceMaid.Core/SpaceMaid.Core.csproj" />
+    <Project Path="src/SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" />
+    <Project Path="src/SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
+    <Project Path="src/SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SpaceMaid.Tests/SpaceMaid.Tests.csproj" />
