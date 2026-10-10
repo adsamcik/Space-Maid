@@ -1,14 +1,14 @@
 <Window x:Class="SpaceMaid.App.ReviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Cleanup review · Read-only" Width="860" Height="740" MinWidth="680" MinHeight="550"
+        Title="Cleanup review" Width="860" Height="740" MinWidth="680" MinHeight="550"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14"
-        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown">
     <Grid Margin="28">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,18">
             <TextBlock Text="Review cleanup" FontSize="27" FontWeight="SemiBold" />
-            <TextBlock Text="Review the exact locations and their cautions. Nothing will be changed." TextWrapping="Wrap" Opacity="0.7" Margin="0,6,0,0" />
+            <TextBlock Text="Review the exact folders and cautions before moving their current contents to the Recycle Bin. Stop active tools first; synced-folder deletions can also affect cloud copies and other devices." TextWrapping="Wrap" Opacity="0.7" Margin="0,6,0,0" />
             <TextBlock x:Name="ValidationText" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
         <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,18">
@@ -33,17 +33,19 @@
                             <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,8,0,0" Opacity="0.75" />
+                            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                     </Border>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
-        <DockPanel Grid.Row="3" Margin="0,18,0,0">
-            <Button Content="Close review" Click="Close_Click" IsCancel="True" IsDefault="True" DockPanel.Dock="Right" />
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="Clean up" IsEnabled="False" AutomationProperties.Name="Cleanup disabled in read-only mode" Margin="0,0,12,0" />
-                <TextBlock Text="Disabled in read-only mode" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
+        <StackPanel Grid.Row="3" Margin="0,14,0,0">
+            <ProgressBar x:Name="CleanupProgressBar" Height="4" Visibility="Collapsed" Margin="0,0,0,8" />
+            <TextBlock x:Name="ResultText" Text="No changes until you confirm. Recycled data keeps occupying space until the bin is emptied." TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10" AutomationProperties.LiveSetting="Polite" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CleanupButton" Content="Move to Recycle Bin" IsEnabled="False" Click="Cleanup_Click" Margin="0,0,12,0" />
+                <Button x:Name="CloseButton" Content="Keep folders" Click="Close_Click" IsDefault="True" />
             </StackPanel>
-        </DockPanel>
+        </StackPanel>
     </Grid>
 </Window>

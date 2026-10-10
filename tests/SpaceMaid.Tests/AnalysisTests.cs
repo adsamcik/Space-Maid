@@ -26,9 +26,7 @@ public sealed class AnalysisTests
         Assert.Equal(bin, build.Path);
         Assert.True(Assert.Single(opportunities, o => o.Category == "Git worktrees").RequiresManualReview);
         var plan = CleanupPlanner.Create(scan, [build]);
-        Assert.False(plan.CanExecute);
         Assert.Equal(8192, plan.EstimatedBytes);
-        Assert.Throws<NotSupportedException>(() => CleanupPlanner.Execute(plan));
         Assert.Equal(8192, new FileInfo(file).Length);
     }
 

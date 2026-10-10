@@ -16,7 +16,6 @@ public partial class MainWindow : Window
     private ScanSnapshot? _snapshot;
     private CancellationTokenSource? _work;
     private bool _closing;
-    private bool _extensionsClosed;
     private bool _startupOffered;
     private string? _scanLogPath;
     private HelperLayoutSource? _scanHelper;
@@ -291,7 +290,7 @@ public partial class MainWindow : Window
         {
             log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale });
             var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record);
-            var plan = await Task.Run(() => CleanupPlanner.Create(validation.Snapshot, validation.ValidatedLocations, work.Token), work.Token);
+            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token), work.Token);
             work.Token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             if (validation.CanMergeInventory)
@@ -314,16 +313,24 @@ public partial class MainWindow : Window
                 + (excluded.Count == 1 ? "1 location was excluded because it is missing, changed or no longer matches. "
                     : excluded.Count > 1 ? $"{excluded.Count:N0} locations were excluded because they are missing, changed or no longer match. " : "")
                 + "Other folders retain earlier scan data.";
-            StatusText.Text = plan.Locations.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
+            StatusText.Text = plan.Preview.Locations.Count + plan.BlockedLocations.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
             log.Record("review-validation-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds,
-                Validated = validation.ValidatedLocations.Count, validation.ExcludedPaths, validation.CanMergeInventory, plan.EstimatedBytes });
+                Validated = validation.ValidatedLocations.Count, validation.ExcludedPaths, validation.CanMergeInventory, plan.Preview.EstimatedBytes, Blocked = plan.BlockedLocations.Count });
             if (work.IsCancellationRequested)
             {
                 StatusText.Text = "Review cancelled. No preview was opened.";
                 log.Record("review-cancelled", new { Phase = "before-preview", validation.CanMergeInventory });
                 return;
             }
-            if (plan.Locations.Count > 0) new ReviewWindow(plan, note) { Owner = this }.ShowDialog();
+            if (plan.Preview.Locations.Count + plan.BlockedLocations.Count > 0)
+            {
+                var displayed = _snapshot!;
+                new ReviewWindow(plan, note, (progress, token) =>
+                {
+                    var cleanup = ExecuteCleanupAsync(plan, displayed, progress, token, work, log);
+                    _cleanupTask = cleanup; return cleanup;
+                }) { Owner = this }.ShowDialog();
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or Win32Exception
             or UnauthorizedAccessException or InvalidOperationException or ArgumentException or OperationCanceledException
@@ -334,7 +341,7 @@ public partial class MainWindow : Window
                 ? "Selection check cancelled. Review again to check the selected locations."
                 : $"Selected locations could not be checked: {ex.Message}", selected.Select(location => new ScanRecheckRequest(location.Path)));
         }
-        finally { _work = null; if (!_closing) { ShowActionLogError(log); SetBusy(false); } }
+        finally { _cleanupTask = null; _work = null; if (!_closing) { ShowActionLogError(log); SetBusy(false); } }
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -380,17 +387,23 @@ public partial class MainWindow : Window
         }
         finally { _work = null; if (!_closing) SetBusy(false); }
     }
+    private bool _shutdownComplete;
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
-        if (_closing) { e.Cancel = _extensions is not null && !_extensionsClosed; return; }
+        if (_closing) { e.Cancel = !_shutdownComplete; return; }
         _closing = true; _opportunitySearchTimer.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
-        if (_extensions is null) return;
         e.Cancel = true;
-        try { await _extensions.DisposeAsync(); }
+        try
+        {
+            if (_cleanupTask is not null)
+                try { await _cleanupTask; }
+                catch (Exception error) { Debug.WriteLine($"Cleanup shutdown: {error}"); }
+            if (_extensions is not null) await _extensions.DisposeAsync();
+        }
         catch (Exception error) { Debug.WriteLine($"Extension shutdown: {error}"); }
         finally
         {
-            _extensionsClosed = true;
+            _shutdownComplete = true;
             _ = Dispatcher.BeginInvoke(new Action(Close));
         }
     }

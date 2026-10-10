@@ -1,21 +1,71 @@
+using System.ComponentModel;
 using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.Core.Analysis;
 
-public sealed record CleanupPreview(
-    IReadOnlyList<Opportunity> Locations, long EstimatedBytes, long ExcludedSharedBytes,
-    int FileCount, bool UsesLogicalSize, IReadOnlyList<string> Cautions)
+public sealed record CleanupPreview
 {
-    public bool CanExecute => false;
+    public IReadOnlyList<Opportunity> Locations { get; }
+    public long EstimatedBytes { get; }
+    public long ExcludedSharedBytes { get; }
+    public int FileCount { get; }
+    public bool UsesLogicalSize { get; }
+    public IReadOnlyList<string> Cautions { get; }
+
+    public CleanupPreview(IReadOnlyList<Opportunity> locations, long estimatedBytes, long excludedSharedBytes,
+        int fileCount, bool usesLogicalSize, IReadOnlyList<string> cautions)
+    {
+        Locations = Array.AsReadOnly(locations.ToArray()); EstimatedBytes = estimatedBytes;
+        ExcludedSharedBytes = excludedSharedBytes; FileCount = fileCount; UsesLogicalSize = usesLogicalSize;
+        Cautions = Array.AsReadOnly(cautions.ToArray());
+    }
 }
 
 public static class CleanupPlanner
 {
-    public const bool IsReadOnly = true;
+    public static CleanupPlan Prepare(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
+        token.ThrowIfCancellationRequested();
+        var actual = new Dictionary<(int Directory, string Title, string Category, string Path), Opportunity>();
+        foreach (var finding in OpportunityDetector.Find(scan, token))
+        {
+            token.ThrowIfCancellationRequested();
+            actual.TryAdd((finding.DirectoryIndex, finding.Title, finding.Category, finding.Path), finding);
+        }
+        var valid = new List<Opportunity>(); var blocked = new List<CleanupBlockedLocation>();
+        var originals = new Dictionary<int, Opportunity>();
+        foreach (var choice in selected)
+        {
+            token.ThrowIfCancellationRequested();
+            if (actual.TryGetValue((choice.DirectoryIndex, choice.Title, choice.Category, choice.Path), out var finding))
+            { valid.Add(finding); originals.TryAdd(choice.DirectoryIndex, choice); }
+            else blocked.Add(new(choice, "This location does not match an opportunity detected in the current inventory. Recheck it before cleanup."));
+        }
+        var collapsed = Create(scan, valid, token);
+        var targets = new List<FolderDeletionTarget>(); var eligible = new List<Opportunity>();
+        foreach (var location in collapsed.Locations)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                targets.Add(FolderDeletionTarget.FromScan(scan, scan.PrimaryLink(location.DirectoryIndex)));
+                eligible.Add(location);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or IOException
+                or UnauthorizedAccessException or Win32Exception or NotSupportedException)
+            { blocked.Add(new(originals[location.DirectoryIndex], ex.Message)); }
+        }
+        token.ThrowIfCancellationRequested();
+        var preview = eligible.Count == collapsed.Locations.Count ? collapsed : Create(scan, eligible, token);
+        return new(scan, preview, targets, blocked);
+    }
 
     public static CleanupPreview Create(ScanSnapshot scan, IEnumerable<Opportunity> selected,
         CancellationToken token = default)
     {
+        ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
+        token.ThrowIfCancellationRequested();
         var roots = selected.DistinctBy(o => o.DirectoryIndex).ToArray();
         var rootSet = roots.Select(o => o.DirectoryIndex).ToHashSet();
         foreach (var root in roots)
@@ -59,7 +109,12 @@ public static class CleanupPlanner
             if (!file.IsDirectory) count++;
             specialStorage |= (file.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Offline)) != 0;
         }
-        var cautions = new List<string> { "Read-only preview. No files will be deleted, moved, cleared, or modified." };
+        var cautions = new List<string>
+        {
+            "Review the exact locations and their current contents. Folders are moved to the Recycle Bin only after confirmation.",
+            "Recycled files remain recoverable and keep occupying drive space until the Recycle Bin is emptied.",
+            "Stop active builds and tools first. Restore dependencies or rebuild generated outputs when needed; preserve any files you cannot recreate."
+        };
         if (!scan.HasAllocationData) cautions.Add("Logical size is shown; physical space that could be freed is unknown.");
         if (!scan.HasCompleteVolumeLinks) cautions.Add("Hard links outside the scanned scope may reduce the estimate. This is not a guaranteed saving.");
         if (!scan.IncludesAllDataStreams) cautions.Add("Standard scanning does not include all alternate data streams.");
@@ -69,9 +124,6 @@ public static class CleanupPlanner
         cautions.Add("This is a live scan, not a snapshot. Sizes and files can change after scanning.");
         return new(roots, estimate, shared, count, !scan.HasAllocationData, cautions);
     }
-
-    public static void Execute(CleanupPreview preview) =>
-        throw new NotSupportedException("Bulk cleanup is disabled. This plan is a read-only preview.");
 
     private static bool HasSelectedAncestor(ScanSnapshot scan, int directory, HashSet<int> selected)
     {

@@ -43,7 +43,7 @@ public sealed class OpportunityReviewValidatorTests
         Assert.Equal(scan.ScannedAtUtc, result.Snapshot.ScannedAtUtc);
         Assert.Contains("opportunity-validation-complete", events);
         var preview = CleanupPlanner.Create(result.Snapshot, result.ValidatedLocations);
-        Assert.False(preview.CanExecute); Assert.Equal(20000, new FileInfo(project.File).Length);
+        Assert.Equal(20000, new FileInfo(project.File).Length);
         var rechecked = await ScanRechecker.RefreshAsync(result.Snapshot, [new(added)]);
         Assert.Equal(65536, rechecked.Entry(rechecked.FindEntry(addedFile)!.Value).LogicalBytes);
         var measured = rechecked.Entry(rechecked.FindEntry(added)!.Value);
@@ -126,7 +126,7 @@ public sealed class OpportunityReviewValidatorTests
         Assert.Null(scan.LastRecheckUtc); Assert.Empty(result.UncheckedScopes);
         Assert.Contains(result.Snapshot.Warnings, warning => warning.Contains("Physical allocation and hard-link identity are unknown", StringComparison.Ordinal));
         var preview = CleanupPlanner.Create(result.Snapshot, result.ValidatedLocations);
-        Assert.True(preview.UsesLogicalSize); Assert.Equal(12345, preview.EstimatedBytes); Assert.False(preview.CanExecute);
+        Assert.True(preview.UsesLogicalSize); Assert.Equal(12345, preview.EstimatedBytes);
     }
 
     [Fact]

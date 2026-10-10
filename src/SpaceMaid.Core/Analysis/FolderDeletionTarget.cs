@@ -4,8 +4,8 @@ using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.Core.Analysis;
 
-// A single, resolved directory from a completed scan. This does not enable
-// opportunity cleanup or expose a permanent-deletion path.
+// A resolved directory with a captured live identity, validated again before
+// recycling. It exposes no permanent-deletion path.
 public sealed class FolderDeletionTarget
 {
     public string Path { get; }

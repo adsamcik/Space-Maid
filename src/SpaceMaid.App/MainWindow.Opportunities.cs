@@ -159,7 +159,7 @@ public partial class MainWindow
         int selected = _rows.Count(row => row.Selected);
         int hidden = selected - _visibleOpportunityRows.Count(row => row.Selected);
         SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected"
-            + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "Select locations for read-only review";
+            + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "Select locations to review cleanup";
         ReviewButton.IsEnabled = selected > 0 && _work is null;
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && _work is null;
