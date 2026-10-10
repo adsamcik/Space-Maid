@@ -43,6 +43,9 @@ public sealed class ScanSnapshot
     internal long[] DirectoryAllocated { get; }
     private readonly char[] _names;
     private readonly byte[] _entryFlags;
+    internal char[] NameArena => _names;
+    internal byte[] EntryFlags => _entryFlags;
+    public bool RetainsEarlierNtfsMetadata { get; init; }
 
     public string RootPath { get; }
     public string Backend { get; }
@@ -58,6 +61,9 @@ public sealed class ScanSnapshot
     public int RegularFileCount => FileCount - DirectoryCount;
     public string? FallbackReason { get; }
     public ScanMetrics Metrics { get; }
+    public DateTime ScannedAtUtc { get; internal init; } = DateTime.UtcNow;
+    public DateTime? LastRecheckUtc { get; internal init; }
+    public IReadOnlyList<string> RecheckedPaths { get; internal init; } = [];
     public long LogicalBytes => DirectoryLogical[RootIndex];
     public long AllocatedBytes => DirectoryAllocated[RootIndex];
 
@@ -103,6 +109,30 @@ public sealed class ScanSnapshot
     }
 
     public string? EntryPath(int linkIndex) => linkIndex == -1 ? RootPath : PathForLink(linkIndex);
+    public int? FindEntry(string path)
+    {
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(RootPath));
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        if (full.Equals(root, StringComparison.OrdinalIgnoreCase)) return -1;
+        string prefix = root.EndsWith('\\') ? root : root + "\\";
+        if (!full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        int current = RootIndex, result = -1;
+        foreach (string part in full[prefix.Length..].Split('\\'))
+        {
+            result = -1;
+            int insensitive = -1; bool ambiguous = false;
+            foreach (int child in Children(current))
+            {
+                if (Name(child).Equals(part, StringComparison.Ordinal)) { result = child; break; }
+                if (Name(child).Equals(part, StringComparison.OrdinalIgnoreCase))
+                { if (insensitive >= 0) ambiguous = true; insensitive = child; }
+            }
+            if (result < 0 && !ambiguous) result = insensitive;
+            if (result < 0) return null;
+            current = Links[result].FileIndex;
+        }
+        return result;
+    }
     public int PrimaryLink(int fileIndex) => fileIndex == RootIndex ? -1 : FirstLinks[fileIndex];
 
     public int[] SortedChildren(int directoryIndex, CancellationToken token = default) =>

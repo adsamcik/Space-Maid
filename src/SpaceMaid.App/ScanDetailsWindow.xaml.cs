@@ -33,8 +33,11 @@ public partial class ScanDetailsWindow : Window
         }
         TotalText.Text = $"Total observed work: {total:0.000} s";
         var notes = new List<string> { "A live scan is an observation, not a point-in-time snapshot. File totals can differ from drive usage because filesystem metadata and reserved storage are not fully attributed.", "Shared file names remain visible; allocation is attributed once. Other hard-link names show zero additional allocation." };
+        if (scan.LastRecheckUtc is { } rechecked)
+            notes.Insert(0, $"Targeted metadata recheck: {rechecked.ToLocalTime():g}. Other folders retain earlier data. Phase timings are from the original scan; recheck timings and locations are in the operation log.");
         if (!scan.IncludesAllDataStreams) notes.Add("Alternate data streams are not fully included in standard scanning.");
         if (!scan.HasCompleteVolumeLinks) notes.Add("Hard links outside accessible/scanned locations remain unverified.");
+        if (scan.RetainsEarlierNtfsMetadata) notes.Add("Reserved NTFS metadata retains its original scan age; directory rechecks cannot reread that hidden namespace.");
         if (!scan.HasAllocationData) notes.Add("Physical allocation is unavailable. The tree is sorted by logical size and the map uses logical size.");
         AccountingText.Text = string.Join("\n\n", notes);
         WarningHeading.Text = scan.WarningCount > 8 ? "DIAGNOSTICS · FIRST 8 EXAMPLES & TOTAL" : "DIAGNOSTICS";

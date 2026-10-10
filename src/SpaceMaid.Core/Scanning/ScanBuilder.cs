@@ -49,6 +49,8 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         return index;
     }
 
+    internal void ReplaceMetadata(FileRecord file) => _files[_ids[file.Identity]] = file;
+
     public void AddLink(int file, FileIdentity parent, ReadOnlySpan<char> name)
     {
         if (name.IsEmpty || name.SequenceEqual(".") || name.SequenceEqual("..")) return;
@@ -105,6 +107,14 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         if (_warnings.Count < 8) _warnings.Add(message);
         if (directory is { } id) _incomplete.Add(id);
         WarningReported?.Invoke(message);
+    }
+
+    internal void CarryCoverage(ScanSnapshot scan)
+    {
+        _omissions = scan.WarningCount;
+        _warnings.AddRange(scan.Warnings.Take(8));
+        for (int i = 0; i < scan.Records.Length; i++)
+            if ((scan.EntryFlags[i] & 2) != 0) _incomplete.Add(scan.Records[i].Identity);
     }
 
     public ScanSnapshot Build(string rootPath, string backend, TimeSpan acquisition,

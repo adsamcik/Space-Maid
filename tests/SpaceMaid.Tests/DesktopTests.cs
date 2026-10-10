@@ -89,7 +89,8 @@ public sealed class DesktopTests
                 PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 Assert.Equal(rootMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
-                Assert.Equal(new[] { "Open in File Explorer", "Move to Recycle Bin" }, tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
+                PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
+                Assert.Equal(new[] { "Open in File Explorer", "Move to Recycle Bin", "Recheck this folder" }, tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
                 Assert.True(tree.ContextMenu.Items.Cast<MenuItem>().All(i => i.IsEnabled));
                 var capturedRecycle = (MenuItem)tree.ContextMenu.Items[1];
                 tree.ContextMenu.IsOpen = false;
@@ -98,7 +99,8 @@ public sealed class DesktopTests
                 RightClick(window, projectTile);
                 PumpUntil(() => projectTile.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.Equal(rootMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
-                Assert.Equal(2, projectTile.ContextMenu.Items.Count);
+                PumpUntil(() => projectTile.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
+                Assert.Equal(3, projectTile.ContextMenu.Items.Count);
                 projectTile.ContextMenu.IsOpen = false;
 
                 stage = "revealing a map folder beneath a collapsed tree branch";
@@ -234,29 +236,119 @@ public sealed class DesktopTests
                 try
                 {
                     Assert.False(Directory.Exists(bin));
-                    Assert.Contains("Rescan", ((TextBlock)window.FindName("StatusText")).Text);
-                    Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
-                    Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
+                    Assert.Contains("Updated", ((TextBlock)window.FindName("StatusText")).Text);
+                    Assert.Contains("Rechecked", ((TextBlock)window.FindName("TreeNote")).Text);
+                    Assert.Equal("0 B", ((TextBlock)window.FindName("CandidateText")).Text);
                     Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
-                    var staleBinContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(binLink)));
-                    RightClick(window, staleBinContainer);
-                    PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
-                    Assert.True(((MenuItem)tree.ContextMenu.Items[0]).IsEnabled);
-                    Assert.False(((MenuItem)tree.ContextMenu.Items[1]).IsEnabled);
-                    tree.ContextMenu.IsOpen = false;
-                    var retry = window.DeleteSelectedFolderAsync();
-                    Assert.Null(retry.GetAwaiter().GetResult());
-                    Assert.Contains("out of date", ((TextBlock)window.FindName("StatusText")).Text);
+                    var updatedRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                    Assert.Null(updatedRows.Scan.FindEntry(bin));
+                    Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                    Assert.True(updatedRows.IsExpanded(updatedRows.Scan.FindEntry(project)!.Value));
+                    Assert.Equal("% parent ↓", ((Button)window.FindName("ShareHeader")).Content);
+                    capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                    Assert.True(scanButton.IsEnabled); // Captured old-scan actions cannot operate on the refreshed inventory.
                 }
                 finally { DeletionTests.RestoreFixture(Assert.IsType<string>(recycled.RecycledPath), bin); }
-                var refreshedExplorer = window.InitializeExplorerAsync(scan, [row.Item], default);
+                var refreshedExplorer = window.RecheckFolderAsync(project);
                 PumpUntil(() => refreshedExplorer.IsCompleted, TimeSpan.FromSeconds(10));
                 refreshedExplorer.GetAwaiter().GetResult();
                 window.SetBusy(false);
+                Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>())).Selected = true;
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
 
+                stage = "preserving a collapsed root and prior out-of-date scopes during rechecks";
+                var goRoot = window.NavigateToEntryAsync(-1);
+                PumpUntil(() => goRoot.IsCompleted, TimeSpan.FromSeconds(10)); goRoot.GetAwaiter().GetResult();
+                Assert.IsType<ExplorerRows>(tree.ItemsSource).Collapse(-1);
+                var collapsedRecheck = window.RecheckFolderAsync(project);
+                PumpUntil(() => collapsedRecheck.IsCompleted, TimeSpan.FromSeconds(10)); collapsedRecheck.GetAwaiter().GetResult();
+                Assert.False(Assert.IsType<ExplorerRows>(tree.ItemsSource).IsExpanded(-1));
+                Assert.Single(tree.Items.Cast<object>());
+                window.MarkScanStale("Prior fixture refresh failed.", [new(project)]);
+                var otherRecheck = window.RecheckFolderAsync(window.LogDirectory);
+                PumpUntil(() => otherRecheck.IsCompleted, TimeSpan.FromSeconds(10)); otherRecheck.GetAwaiter().GetResult();
+                Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
+                Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
+                Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                var recovery = window.RecheckFolderAsync(project);
+                PumpUntil(() => recovery.IsCompleted, TimeSpan.FromSeconds(10)); recovery.GetAwaiter().GetResult();
+                Assert.Contains("Rechecked", ((TextBlock)window.FindName("TreeNote")).Text);
+                Assert.Equal("8 KiB", ((TextBlock)window.FindName("CandidateText")).Text);
+
+                stage = "draining an Explorer-return recheck deferred while busy";
+                using (var busy = new CancellationTokenSource())
+                {
+                    typeof(MainWindow).GetField("_work", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, busy);
+                    typeof(MainWindow).GetField("_explorerRecheckPath", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, project);
+                    window.SetBusy(true);
+                    typeof(MainWindow).GetMethod("Window_Activated", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [null, EventArgs.Empty]);
+                    Assert.Equal(project, typeof(MainWindow).GetField("_explorerRecheckPath", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                    typeof(MainWindow).GetField("_work", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, null);
+                    window.SetBusy(false);
+                    PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
+                    Assert.Null(typeof(MainWindow).GetField("_explorerRecheckPath", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                }
+
+                stage = "checking an eligible native cloud file menu and cancelling its confirmation";
+                string cloudRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "synced")).FullName;
+                string cloudFile = Path.Join(cloudRoot, "photo.jpg"); File.WriteAllBytes(cloudFile, new byte[4096]);
+                OnlineOnlyWindow onlinePreview;
+                using (CloudFilesTests.RegisterSyncedFixture(cloudRoot, cloudFile))
+                {
+                    var importCloud = window.RecheckFolderAsync(fixture.Path);
+                    PumpUntil(() => importCloud.IsCompleted, TimeSpan.FromSeconds(10)); importCloud.GetAwaiter().GetResult();
+                    var cloudScan = Assert.IsType<ExplorerRows>(tree.ItemsSource).Scan;
+                    int cloudLink = cloudScan.FindEntry(cloudFile)!.Value;
+                    var goCloud = window.NavigateToEntryAsync(cloudLink);
+                    PumpUntil(() => goCloud.IsCompleted, TimeSpan.FromSeconds(10)); goCloud.GetAwaiter().GetResult();
+                    RightClick(window, tree, keyboard: true);
+                    PumpUntil(() => tree.ContextMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, "Make online-only")), TimeSpan.FromSeconds(10));
+                    Assert.True(tree.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "Make online-only")).IsEnabled);
+                    tree.ContextMenu.IsOpen = false;
+                    bool onlineConfirmed = false;
+                    Exception? onlineFailure = null;
+                    var keepTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+                    {
+                        var dialog = app.Windows.OfType<OnlineOnlyWindow>().FirstOrDefault();
+                        if (dialog is null) return;
+                        try
+                        {
+                            Assert.Equal(cloudFile, ((TextBox)dialog.FindName("TargetPath")).Text);
+                            Assert.True(Descendants(dialog.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Keep offline")).IsDefault);
+                            onlineConfirmed = true;
+                        }
+                        catch (Exception ex) { onlineFailure = ex; }
+                        finally { dialog.Close(); }
+                    }, Dispatcher.CurrentDispatcher);
+                    var onlineAction = window.MakeOnlineOnlyAsync(cloudScan, cloudLink);
+                    PumpUntil(() => onlineAction.IsCompleted, TimeSpan.FromSeconds(10)); onlineAction.GetAwaiter().GetResult();
+                    keepTimer.Stop(); if (onlineFailure is not null) throw onlineFailure;
+                    Assert.True(onlineConfirmed);
+                    Assert.Contains("No requests were sent", ((TextBlock)window.FindName("StatusText")).Text);
+                    Assert.NotEqual(2, CloudFiles.Inspect(cloudFile)!.PinState); // Cancellation sent no unpin request.
+                    onlinePreview = new OnlineOnlyWindow(CloudFiles.Prepare(cloudScan, cloudLink, default));
+                }
+
+                stage = "preserving grouped-selection deletion safeguards after an unrelated recheck";
+                string groupedRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "many-files")).FullName;
+                for (int i = 0; i < 70; i++) File.WriteAllBytes(Path.Join(groupedRoot, $"photo-{i}.jpg"), new byte[512]);
+                var importGroup = window.RecheckFolderAsync(fixture.Path);
+                PumpUntil(() => importGroup.IsCompleted, TimeSpan.FromSeconds(10)); importGroup.GetAwaiter().GetResult();
+                var groupScan = Assert.IsType<ExplorerRows>(tree.ItemsSource).Scan;
+                var goGroup = window.NavigateToEntryAsync(groupScan.FindEntry(groupedRoot)!.Value);
+                PumpUntil(() => goGroup.IsCompleted, TimeSpan.FromSeconds(10)); goGroup.GetAwaiter().GetResult();
+                var realGroup = map.Buttons.Single(button => ((SpaceContribution)button.DataContext).Link == -2);
+                realGroup.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+                var unrelatedRefresh = window.RecheckFolderAsync(project);
+                PumpUntil(() => unrelatedRefresh.IsCompleted, TimeSpan.FromSeconds(10)); unrelatedRefresh.GetAwaiter().GetResult();
+                Assert.True((bool)typeof(MainWindow).GetField("_selectionIsGroup", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!);
+                Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
+                Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
+                Assert.True(Directory.Exists(groupedRoot));
+
                 string artifactRoot = FindRepository();
-                var recyclePreview = new RecycleFolderWindow(FolderDeletionTarget.FromScan(scan, scan.PrimaryLink(row.Item.DirectoryIndex)));
+                var recyclePreview = new RecycleFolderWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
 #pragma warning disable WPF0001 // Exercise the same Fluent theme through its experimental C# API in this smoke test only.
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {
@@ -271,6 +363,7 @@ public sealed class DesktopTests
                     Render(review, Path.Join(artifactRoot, "artifacts", "ui", $"review-{theme}.png"), 860, 700);
                     Render(details, Path.Join(artifactRoot, "artifacts", "ui", $"details-{theme}.png"), 700, 680);
                     Render(recyclePreview, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-{theme}.png"), 590, 460);
+                    Render(onlinePreview, Path.Join(artifactRoot, "artifacts", "ui", $"online-only-{theme}.png"), 590, 550);
                 }
 #pragma warning restore WPF0001
                 Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 305);
@@ -392,7 +485,7 @@ public sealed class DesktopTests
                 Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100, "Scrolling realized the whole wide folder.");
                 var finalFile = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1));
                 RightClick(window, finalFile);
-                PumpUntil(() => true, TimeSpan.FromSeconds(1));
+                PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
                 Assert.False(tree.ContextMenu.IsOpen); // File rows do not expose folder operations.
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
                 picker.ItemsSource = new[] { new DriveChoice(Path.GetPathRoot(fixture.Path)!, "Another target", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };

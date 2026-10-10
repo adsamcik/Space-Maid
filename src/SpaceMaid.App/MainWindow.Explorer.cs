@@ -48,6 +48,7 @@ public partial class MainWindow
         ClearExplorer();
         _snapshot = scan;
         _scanStale = false;
+        _staleScopes.Clear();
         _explorer = new(scan);
         var kinds = new Dictionary<int, SpaceKind>();
         foreach (var opportunity in opportunities)
@@ -127,6 +128,7 @@ public partial class MainWindow
             {
                 ExplorePanel.IsEnabled = _work is null;
                 if (!failed && _work is null && _snapshot is not null) StatusText.Text = _scanStatus;
+                DrainExplorerRecheck();
             }
         }
     }
@@ -316,7 +318,7 @@ public partial class MainWindow
             ? FileTypeClassifier.Describe(contribution.Name) : "";
         var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" + (type.Length > 0 ? $"\n{type}" : "") };
         AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path} {type}");
-        if (contribution.Link >= 0 && scan.Entry(contribution.Link).IsDirectory && scan.EntryPath(contribution.Link) is not null)
+        if (contribution.Link >= 0 && scan.EntryPath(contribution.Link) is not null)
         {
             button.ContextMenu = new ContextMenu();
             button.ContextMenuOpening += (_, args) =>

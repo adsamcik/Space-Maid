@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Activated += Window_Activated;
         UpdateTreeSortHeaders();
         OpportunityGrid.ItemsSource = _rows;
         var drives = new List<DriveChoice>();
@@ -71,6 +72,9 @@ public partial class MainWindow : Window
         _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
         _snapshot = null;
         _scanStale = false;
+        _staleScopes.Clear();
+        _explorerRecheckPath = null;
+        _explorerReturnPending = false;
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
         _rows.Clear();
         DetailPanel.Visibility = Visibility.Collapsed;
@@ -213,6 +217,7 @@ public partial class MainWindow : Window
         OpportunityGrid.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
+        if (!busy) DrainExplorerRecheck();
     }
 
     private void ShowDriveSpace(long total, long free)
@@ -282,6 +287,7 @@ public partial class MainWindow : Window
             var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
             start.ArgumentList.Add(path);
             using var process = Process.Start(start);
+            _explorerRecheckPath = path;
         }
         catch (Win32Exception ex) { StatusText.Text = $"Could not open the folder: {ex.Message}"; }
     }

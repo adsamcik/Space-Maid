@@ -52,6 +52,7 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     }
     public int Find(int link) => _visible.FindIndex(position => position.Link == link);
     public bool IsExpanded(int link) => _expanded.Contains(link);
+    public string[] ExpandedPaths() => _expanded.Select(Scan.EntryPath).OfType<string>().ToArray();
 
     public void Expand(int link, int[] children)
     {

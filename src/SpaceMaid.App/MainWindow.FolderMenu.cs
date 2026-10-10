@@ -28,25 +28,53 @@ public partial class MainWindow
         if (!CanUseFolderMenu(scan)) return false;
         var entry = scan.Entry(link);
         string? path = scan.EntryPath(link);
-        if (!entry.IsDirectory || path is null) return false;
+        if (path is null || link < -1) return false;
         if (!SelectContextEntry(scan, link)) return false;
         menu.Items.Clear();
         menu.FontFamily = FontFamily; menu.FontSize = FontSize;
-        var open = new MenuItem { Header = "Open in File Explorer" };
-        open.Click += (_, _) =>
+        if (entry.IsDirectory)
         {
-            if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
-        };
-        string? blocked = _scanStale ? "Rescan before deleting another folder."
-            : FolderDeletionTarget.SelectionBlockReason(scan, link);
-        var recycle = new MenuItem { Header = "Move to Recycle Bin", IsEnabled = blocked is null, ToolTip = blocked };
-        ToolTipService.SetShowOnDisabled(recycle, true);
-        recycle.Click += async (_, _) =>
-        {
-            if (CanUseFolderMenu(scan)) await DeleteFolderAsync(scan, link);
-        };
-        menu.Items.Add(open); menu.Items.Add(recycle);
+            var open = new MenuItem { Header = "Open in File Explorer" };
+            open.Click += (_, _) =>
+            {
+                if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
+            };
+            string? blocked = _scanStale ? "Rescan before deleting another folder."
+                : FolderDeletionTarget.SelectionBlockReason(scan, link);
+            var recycle = new MenuItem { Header = "Move to Recycle Bin", IsEnabled = blocked is null, ToolTip = blocked };
+            ToolTipService.SetShowOnDisabled(recycle, true);
+            recycle.Click += async (_, _) =>
+            {
+                if (CanUseFolderMenu(scan)) await DeleteFolderAsync(scan, link);
+            };
+            menu.Items.Add(open); menu.Items.Add(recycle);
+            var recheck = new MenuItem { Header = "Recheck this folder" };
+            recheck.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await RecheckFolderAsync(path); };
+            menu.Items.Add(recheck);
+        }
+        var checking = new MenuItem { Header = "Checking cloud availability…", IsEnabled = false };
+        menu.Items.Add(checking);
+        var marker = new object(); menu.Tag = marker;
+        _ = AddCloudMenuAsync(menu, checking, marker, scan, link, path);
         return true;
+    }
+
+    private async Task AddCloudMenuAsync(ContextMenu menu, MenuItem checking, object marker, ScanSnapshot scan, int link, string path)
+    {
+        var state = await Task.Run(() => CloudFiles.Inspect(path));
+        if (!CanUseFolderMenu(scan) || !ReferenceEquals(menu.Tag, marker)) return;
+        menu.Items.Remove(checking);
+        if (state is not null)
+        {
+            bool enabled = !_scanStale && (state.IsDirectory || state.CanRequestOnlineOnly);
+            var online = new MenuItem { Header = "Make online-only", IsEnabled = enabled,
+                ToolTip = _scanStale ? "Recheck this folder or rescan first." : enabled ? $"Managed by {state.Provider}"
+                    : state.LocalBytes == 0 ? "This file is already online-only." : "This file is unsynced or excluded by the provider." };
+            ToolTipService.SetShowOnDisabled(online, true);
+            online.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await MakeOnlineOnlyAsync(scan, link); };
+            menu.Items.Add(online);
+        }
+        if (menu.Items.Count == 0) menu.IsOpen = false;
     }
 
     private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing && !_deleting

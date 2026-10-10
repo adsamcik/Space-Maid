@@ -1,0 +1,20 @@
+<Window x:Class="SpaceMaid.App.OnlineOnlyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Make online-only" Width="590" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
+    <StackPanel Margin="24">
+        <TextBlock Text="Make these files online-only?" FontSize="21" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBox x:Name="TargetPath" IsReadOnly="True" TextWrapping="Wrap" Margin="0,14,0,0" AutomationProperties.Name="Exact online-only location" />
+        <TextBlock x:Name="ProviderText" Margin="0,12,0,0" TextWrapping="Wrap" />
+        <TextBlock x:Name="PlanText" Margin="0,8,0,0" TextWrapping="Wrap" />
+        <TextBlock Text="This clears ‘Always keep on this device’ for the eligible files. Their cloud copies remain, but you will need your sync app and an internet connection to download them again. Unsynced and local-only files are skipped." Margin="0,12,0,0" TextWrapping="Wrap" />
+        <TextBlock Text="Your sync app processes the request. Local space may not be released immediately. Cancellation stops further requests; earlier requests remain active." Margin="0,10,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+        <TextBlock x:Name="WarningsText" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button Content="Keep offline" IsCancel="True" IsDefault="True" Margin="0,0,10,0" />
+            <Button x:Name="ConfirmButton" Content="Make online-only" Click="Confirm_Click" />
+        </StackPanel>
+    </StackPanel>
+</Window>

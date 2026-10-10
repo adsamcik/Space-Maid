@@ -13,6 +13,84 @@ public sealed class VolumeScanner
         CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null) =>
         Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic), cancellationToken);
 
+    // Parent rechecks read immediate names only, including at a drive root.
+    internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token, bool allStreams = false) => Task.Run(() =>
+    {
+        var timer = Stopwatch.StartNew();
+        long allocatedBefore = GC.GetTotalAllocatedBytes(false);
+        var builder = new ScanBuilder();
+        var reporter = new ScanReporter(null, null, timer, allocatedBefore, path);
+        AcquireDirectories(path, builder, reporter, token, recursive, validateIdentity: true);
+        var inventory = builder.Build(path, "Targeted Windows metadata", timer.Elapsed, allocatedBefore, token);
+        if (allStreams)
+        {
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                for (int i = 0; i < inventory.Records.Length; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string filePath = inventory.EntryPath(inventory.PrimaryLink(i)) ?? throw new IOException("A refreshed file path is unresolved.");
+                    builder.ReplaceMetadata(ReadStreamMetadata(filePath, inventory.Records[i], ref buffer));
+                }
+            }
+            finally { ArrayPool<byte>.Shared.Return(buffer); }
+            builder.AllStreams = true;
+            return builder.Build(path, "Targeted Windows stream metadata", timer.Elapsed, allocatedBefore, token);
+        }
+        return inventory;
+    }, token);
+
+    // Attribute-only handles enumerate all DATA stream sizes, including named
+    // and sparse streams. Hold the identity while querying; never read content.
+    private static unsafe FileRecord ReadStreamMetadata(string path, FileRecord record, ref byte[] buffer)
+    {
+        using var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x80, 3, 0, 3,
+            NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        byte[] identity = new byte[24];
+        fixed (byte* info = identity)
+            if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, info, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        if (new FileIdentity(LayoutParser.U64(identity, 8), LayoutParser.U64(identity, 16)) != record.Identity)
+            throw new IOException("A file changed during its metadata recheck. Recheck the folder again.");
+        while (true)
+        {
+            bool success;
+            fixed (byte* info = buffer)
+                success = NativeMethods.GetFileInformationByHandleEx(handle, 7, info, (uint)buffer.Length);
+            int error = Marshal.GetLastPInvokeError();
+            if (success) break;
+            if (error == NativeMethods.HandleEof) return record with { LogicalBytes = 0, AllocatedBytes = 0 };
+            if (error is 122 or 234 && buffer.Length < 16 * 1024 * 1024)
+            {
+                int size = buffer.Length * 2;
+                ArrayPool<byte>.Shared.Return(buffer); buffer = ArrayPool<byte>.Shared.Rent(size);
+                continue;
+            }
+            throw new Win32Exception(error);
+        }
+        int offset = 0; long logical = 0, allocated = 0;
+        while (true)
+        {
+            LayoutParser.Require(buffer, offset, 24);
+            uint next = LayoutParser.U32(buffer, offset), nameBytes = LayoutParser.U32(buffer, offset + 4);
+            int end = next == 0 ? buffer.Length : checked(offset + (int)next);
+            if (end > buffer.Length || next != 0 && (next < 24 || next % 8 != 0) || (nameBytes & 1) != 0)
+                throw new InvalidDataException("Invalid stream metadata.");
+            LayoutParser.Require(buffer.AsSpan(0, end), offset + 24, checked((int)nameBytes));
+            var name = MemoryMarshal.Cast<byte, char>(buffer.AsSpan(offset + 24, (int)nameBytes));
+            if (name.EndsWith(":$DATA", StringComparison.OrdinalIgnoreCase))
+            {
+                long length = LayoutParser.I64(buffer, offset + 8), allocation = LayoutParser.I64(buffer, offset + 16);
+                if (length < 0 || allocation < 0) throw new InvalidDataException("Invalid stream size.");
+                logical = checked(logical + length); allocated = checked(allocated + allocation);
+            }
+            if (next == 0) break;
+            offset = end;
+        }
+        return record with { LogicalBytes = logical, AllocatedBytes = allocated };
+    }
+
     private static ScanSnapshot Scan(string path, IProgress<ScanProgress>? progress,
         CancellationToken token, bool preferFast, Action<ScanDiagnostic>? diagnostic)
     {
@@ -134,7 +212,8 @@ public sealed class VolumeScanner
         finally { ArrayPool<byte>.Shared.Return(output); }
     }
 
-    private static unsafe void AcquireDirectories(string target, ScanBuilder builder, ScanReporter reporter, CancellationToken token)
+    private static unsafe void AcquireDirectories(string target, ScanBuilder builder, ScanReporter reporter, CancellationToken token,
+        bool recursive = true, bool validateIdentity = false)
     {
         using var rootHandle = OpenDirectory(target);
         if (rootHandle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
@@ -160,6 +239,13 @@ public sealed class VolumeScanner
                     int error = Marshal.GetLastPInvokeError();
                     builder.Warn($"Could not read {directory.Path}: Win32 {error}: {new Win32Exception(error).Message}", directory.Id);
                     continue;
+                }
+                if (validateIdentity)
+                {
+                    fixed (byte* pointer = idBuffer)
+                        if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+                    if (new FileIdentity(LayoutParser.U64(idBuffer, 8), LayoutParser.U64(idBuffer, 16)) != directory.Id)
+                        throw new IOException("A folder moved or was replaced during the recheck. Recheck its parents again.");
                 }
                 while (true)
                 {
@@ -203,7 +289,7 @@ public sealed class VolumeScanner
                             if (logical < 0 || allocation < 0) throw new InvalidDataException("Invalid directory size.");
                             int index = builder.AddFile(new(id, attributes, logical, allocation, LayoutParser.I64(buffer, offset + 24)));
                             builder.AddLink(index, directory.Id, name);
-                            if (isDirectory)
+                            if (isDirectory && recursive)
                             {
                                 uint tag = LayoutParser.U32(buffer, offset + 68);
                                 if ((tag & 0x20000000) != 0)
