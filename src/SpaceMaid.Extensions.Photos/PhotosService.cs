@@ -6,37 +6,65 @@ namespace SpaceMaid.Extensions.Photos;
 
 internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
 {
-    public async Task DiscoverAsync(PhotoCollection collection, IProgress<ExtensionJobProgress>? progress, CancellationToken token)
+    // Own the worker here so callers never perform synchronous native/catalog
+    // work on the dispatcher. Do not cancel scheduling: accepted refreshes must
+    // revoke old content authorization even with an already-cancelled token.
+    public Task DiscoverAsync(PhotoCollection collection, IProgress<ExtensionJobProgress>? progress, CancellationToken token) =>
+        Task.Run(() => DiscoverCoreAsync(collection, progress, token));
+
+    private async Task DiscoverCoreAsync(PhotoCollection collection, IProgress<ExtensionJobProgress>? progress, CancellationToken token)
     {
+        var watch = Stopwatch.StartNew();
+        var initializing = Stopwatch.GetTimestamp();
         var generation = Guid.NewGuid().ToString("N");
         // An accepted refresh always revokes prior content authorization, even
         // when cancellation arrives before the worker gets CPU time.
-        var job = await Task.Run(() => { catalog.BeginDiscovery(collection.Id, generation); return catalog.StartJob(collection.Id, "Discovery"); });
+        catalog.BeginDiscovery(collection.Id, generation);
+        var job = catalog.StartJob(collection.Id, "Discovery");
+        var initializationTicks = Stopwatch.GetTimestamp() - initializing;
         long count = 0, unresolved = 0; var complete = false; var resolvedAll = true; var observedCoverage = false;
         var warnings = new HashSet<string>(StringComparer.Ordinal);
-        var watch = Stopwatch.StartNew();
+        using var reader = new NativeMediaFile.DiscoveryReader();
+        var observations = new List<PhotoObservation>(512);
+        long inventoryTicks = 0, metadataTicks = 0, catalogTicks = initializationTicks, batches = 0, commits = 0, committed = 0;
+        long lastCommitMs = 0, lastReportMs = 0;
+        var state = "Failed";
+        void Flush()
+        {
+            if (observations.Count == 0) return;
+            token.ThrowIfCancellationRequested();
+            var started = Stopwatch.GetTimestamp();
+            try { catalog.Observe(collection.Id, generation, observations); }
+            finally { catalogTicks += Stopwatch.GetTimestamp() - started; }
+            committed += observations.Count; commits++; observations.Clear(); lastCommitMs = watch.ElapsedMilliseconds;
+        }
         try
         {
             token.ThrowIfCancellationRequested();
-            await foreach (var batch in host.Inventory.ReadAsync(collection.Root, token))
+            var root = Path.GetFullPath(collection.Root);
+            var data = Path.GetFullPath(host.DataDirectory);
+            var cache = Path.GetFullPath(host.CacheDirectory);
+            var waiting = Stopwatch.GetTimestamp();
+            await foreach (var batch in host.Inventory.ReadAsync(collection.Root, token).ConfigureAwait(false))
             {
+                inventoryTicks += Stopwatch.GetTimestamp() - waiting; batches++;
                 token.ThrowIfCancellationRequested();
                 // Streaming discovery publishes completeness only on its final batch.
                 observedCoverage = true; complete = batch.Coverage.Complete;
                 foreach (var warning in batch.Coverage.Warnings) if (warnings.Count < 8) warnings.Add(warning);
-                var observations = new List<PhotoObservation>(Math.Min(512, batch.Items.Count));
                 foreach (var item in batch.Items)
                 {
                     token.ThrowIfCancellationRequested();
                     if (item.IsDirectory || PhotoKinds.Role(item.Name) is not { } role) continue;
                     var path = host.Inventory.ResolveLocation(item.Reference);
                     if (path is null) { resolvedAll = false; unresolved++; continue; }
-                    if (!Within(collection.Root, path)) { resolvedAll = false; unresolved++; if (warnings.Count < 8) warnings.Add("An inventory location was outside the selected collection and was skipped."); continue; }
-                    if (Within(host.DataDirectory, path) || Within(host.CacheDirectory, path)) continue;
+                    path = Path.GetFullPath(path);
+                    if (!Within(root, path)) { resolvedAll = false; unresolved++; if (warnings.Count < 8) warnings.Add("An inventory location was outside the selected collection and was skipped."); continue; }
+                    if (Within(data, path) || Within(cache, path)) continue;
+                    var inspecting = Stopwatch.GetTimestamp();
                     try
                     {
-                        using var file = NativeMediaFile.Open(path, false);
-                        var revision = file.Revision;
+                        var revision = reader.Read(path);
                         observations.Add(new(path, revision.Identity, revision.Key, revision.Length, item.LogicalBytes,
                             batch.Coverage.HasAllocationData && item.IsPrimaryName ? item.AllocatedBytes : null, revision.Links, revision.ContentAvailable,
                             revision.ContentAvailable ? "Metadata observed · Analyze to verify content" : "Metadata only · Offline/reparse preview unavailable", role, PhotoKinds.Stem(path)));
@@ -48,39 +76,59 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                             item.LogicalBytes, batch.Coverage.HasAllocationData && item.IsPrimaryName ? item.AllocatedBytes : null, 0, false,
                             "Metadata only · Current identity could not be verified", role, PhotoKinds.Stem(path)));
                     }
+                    finally { metadataTicks += Stopwatch.GetTimestamp() - inspecting; }
                     count++;
-                    if (observations.Count == 512)
-                    {
-                        await Task.Run(() => catalog.Observe(collection.Id, generation, observations), token);
-                        observations = new(512);
-                    }
+                    if (observations.Count == 512) Flush();
+                    // Also publish bounded partial batches during long sparse
+                    // inventories, without one transaction per inventory batch.
+                    if (watch.ElapsedMilliseconds - lastCommitMs >= 1000) Flush();
                 }
-                if (observations.Count != 0) await Task.Run(() => catalog.Observe(collection.Id, generation, observations), token);
-                await Task.Run(() => catalog.JobState(job, "Running", count), token);
-                progress?.Report(new("Discovering photo metadata", count, Message: $"{unresolved:N0} unavailable identities"));
+                if (watch.ElapsedMilliseconds - lastCommitMs >= 1000) Flush();
+                if (watch.ElapsedMilliseconds - lastReportMs >= 1000)
+                {
+                    var started = Stopwatch.GetTimestamp();
+                    catalog.JobState(job, "Running", count); catalogTicks += Stopwatch.GetTimestamp() - started;
+                    progress?.Report(new("Discovering photo metadata", count, Message: $"{unresolved:N0} unavailable identities"));
+                    lastReportMs = watch.ElapsedMilliseconds;
+                }
+                waiting = Stopwatch.GetTimestamp();
             }
+            inventoryTicks += Stopwatch.GetTimestamp() - waiting;
+            Flush(); token.ThrowIfCancellationRequested();
             complete &= observedCoverage && resolvedAll;
-            await Task.Run(() =>
-            {
-                catalog.EndDiscovery(collection.Id, generation, complete, complete ? $"Discovered · {unresolved:N0} metadata-only files" : "Incomplete coverage · Older locations retained", warnings.Count == 0 ? null : string.Join("\n", warnings));
-                catalog.JobState(job, complete ? "Completed" : "NeedsAttention", count, complete ? null : "Discovery did not cover every location.");
-            });
-            host.Log("photos-discovery", new { collection.Id, Files = count, Unresolved = unresolved, Complete = complete, ElapsedMs = watch.ElapsedMilliseconds });
+            var finishing = Stopwatch.GetTimestamp();
+            catalog.EndDiscovery(collection.Id, generation, complete, complete ? $"Discovered · {unresolved:N0} metadata-only files" : "Incomplete coverage · Older locations retained", warnings.Count == 0 ? null : string.Join("\n", warnings));
+            state = complete ? "Completed" : "NeedsAttention";
+            catalog.JobState(job, state, count, complete ? null : "Discovery did not cover every location.");
+            catalogTicks += Stopwatch.GetTimestamp() - finishing;
+            progress?.Report(new("Photo discovery complete", count, Message: $"{unresolved:N0} unavailable identities", NeedsAttention: !complete));
         }
         catch (Exception error)
         {
-            await Task.Run(() =>
-            {
-                catalog.EndDiscovery(collection.Id, generation, false, error is OperationCanceledException ? "Interrupted discovery · Refresh to validate coverage" : "Discovery failed · Older locations retained");
-                catalog.JobState(job, error is OperationCanceledException ? "Interrupted" : "Failed", count, "Discovery did not complete.");
-            });
+            state = error is OperationCanceledException ? "Interrupted" : "Failed";
+            complete = false;
+            catalog.EndDiscovery(collection.Id, generation, false, error is OperationCanceledException ? "Interrupted discovery · Refresh to validate coverage" : "Discovery failed · Older locations retained");
+            catalog.JobState(job, state, count, "Discovery did not complete.");
             throw;
+        }
+        finally
+        {
+            watch.Stop();
+            host.Log("photos-discovery", new
+            {
+                collection.Id, Files = count, Committed = committed, Unresolved = unresolved, Complete = complete, State = state,
+                ElapsedMs = watch.Elapsed.TotalMilliseconds, FilesPerSecond = count / Math.Max(watch.Elapsed.TotalSeconds, 0.001),
+                InventoryWaitMs = inventoryTicks * 1000d / Stopwatch.Frequency, MetadataMs = metadataTicks * 1000d / Stopwatch.Frequency,
+                CatalogMs = catalogTicks * 1000d / Stopwatch.Frequency, CatalogInitializationMs = initializationTicks * 1000d / Stopwatch.Frequency,
+                InventoryBatches = batches, CatalogCommits = commits,
+                reader.ParentHandleOpens, reader.ParentChecks, reader.PeakParentHandles, reader.FilesInspected, reader.UncachedFiles
+            });
         }
     }
 
     private static bool Within(string directory, string path)
     {
-        var relative = Path.GetRelativePath(Path.GetFullPath(directory), Path.GetFullPath(path));
+        var relative = Path.GetRelativePath(directory, path);
         return relative == "." || !Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 

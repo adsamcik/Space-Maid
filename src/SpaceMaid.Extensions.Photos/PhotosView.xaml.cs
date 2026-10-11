@@ -140,7 +140,7 @@ public partial class PhotosView : UserControl
     private Task DiscoverCurrentAsync()
     {
         if (Collection is not { } collection || _busy) return Task.CompletedTask;
-        return RunAsync($"Discovering {collection.Name}", (progress, token) => Task.Run(() => _service.DiscoverAsync(collection, progress, token)), true);
+        return RunAsync($"Discovering {collection.Name}", (progress, token) => _service.DiscoverAsync(collection, progress, token), true);
     }
     private async void Analyze_Click(object sender, RoutedEventArgs e)
     {

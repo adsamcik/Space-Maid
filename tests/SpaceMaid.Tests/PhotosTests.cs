@@ -282,13 +282,17 @@ internal sealed class PhotoTestHost : IExtensionHost
     public IExtensionJobs Jobs => JobsStub;
     public IToolBroker Tools => ToolsStub;
     public void RevealLocation(string path) { }
-    public void Log(string eventName, object data) { }
+    public List<(string Event, System.Text.Json.JsonElement Data)> Logs { get; } = [];
+    public void Log(string eventName, object data) => Logs.Add((eventName, System.Text.Json.JsonSerializer.SerializeToElement(data)));
 }
 internal sealed class PhotoTestInventory(string root, IReadOnlyList<string> paths) : IInventoryReader
 {
     public IReadOnlyList<string> Paths { get; set; } = paths;
     public Dictionary<string, int> AdditionalLogical { get; } = new(StringComparer.Ordinal);
     public Func<CancellationToken, Task>? BeforeRead { get; set; }
+    public Func<int, Task>? BeforeBatch { get; set; }
+    public Action<string>? AfterResolve { get; set; }
+    public int BatchSize { get; set; } = int.MaxValue;
     public bool Complete { get; set; } = true;
     private readonly Guid _generation = Guid.NewGuid();
     public async IAsyncEnumerable<InventoryBatch> ReadAsync(string requested, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token, bool preferExistingInventory = false)
@@ -296,10 +300,19 @@ internal sealed class PhotoTestInventory(string root, IReadOnlyList<string> path
         Assert.Equal(root, requested); await Task.Yield(); token.ThrowIfCancellationRequested();
         if (BeforeRead is not null) await BeforeRead(token);
         token.ThrowIfCancellationRequested();
-        yield return new(new(root, DateTime.UtcNow, false, true, true, false, []), Paths.Select((path, i) => new InventoryItem(new(_generation, i), i, Path.GetFileName(path), false, new FileInfo(path).Length + AdditionalLogical.GetValueOrDefault(path), new FileInfo(path).Length, true, 0, File.GetLastWriteTimeUtc(path).ToFileTimeUtc(), null, null)).ToArray());
+        for (var offset = 0; offset < Paths.Count; offset += Math.Min(BatchSize, Paths.Count - offset))
+        {
+            if (BeforeBatch is not null) await BeforeBatch(offset);
+            token.ThrowIfCancellationRequested();
+            yield return new(new(root, DateTime.UtcNow, false, true, true, false, []), Paths.Skip(offset).Take(BatchSize).Select((path, i) => new InventoryItem(new(_generation, offset + i), offset + i, Path.GetFileName(path), false, new FileInfo(path).Length + AdditionalLogical.GetValueOrDefault(path), new FileInfo(path).Length, true, 0, File.GetLastWriteTimeUtc(path).ToFileTimeUtc(), null, null)).ToArray());
+        }
         yield return new(new(root, DateTime.UtcNow, Complete, true, true, false, Complete ? [] : ["An owned fixture scope was unavailable."]), []);
     }
-    public string? ResolveLocation(InventoryReference reference) => reference.Generation == _generation && reference.EntryIndex < Paths.Count ? Paths[reference.EntryIndex] : null;
+    public string? ResolveLocation(InventoryReference reference)
+    {
+        if (reference.Generation != _generation || reference.EntryIndex >= Paths.Count) return null;
+        var path = Paths[reference.EntryIndex]; AfterResolve?.Invoke(path); return path;
+    }
 }
 internal sealed class PhotoTestJobs : IExtensionJobs
 {

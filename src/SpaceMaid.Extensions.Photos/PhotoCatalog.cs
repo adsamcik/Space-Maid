@@ -151,29 +151,61 @@ internal sealed class PhotoCatalog : IDisposable
         {
             using var connection = Open(); using var transaction = connection.BeginTransaction();
             using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO objects(id,revision,default_bytes,logical_bytes,allocated_bytes,links,available,status,allocation_generation)
+                    VALUES($id,$revision,$default,$logical,$allocated,$links,$available,$status,$generation)
+                ON CONFLICT(id) DO UPDATE SET revision=$revision,default_bytes=$default,logical_bytes=$logical,
+                    allocated_bytes=CASE WHEN objects.allocation_generation=$generation THEN
+                        CASE WHEN objects.allocated_bytes IS NULL THEN $allocated WHEN $allocated IS NULL THEN objects.allocated_bytes ELSE MAX(objects.allocated_bytes,$allocated) END ELSE $allocated END,
+                    allocation_generation=$generation,links=$links,available=$available,status=$status,hash_revision=NULL,metadata_revision=NULL,content_revision=NULL;
+                INSERT INTO locations(collection_id,path,object_id,name,parent,role,stem,generation,missing)
+                    VALUES($collection,$path,$id,$name,$parent,$role,$stem,$generation,0)
+                ON CONFLICT(collection_id,path) DO UPDATE SET object_id=$id,name=$name,parent=$parent,
+                    role=$role,stem=$stem,generation=$generation,missing=0;
+                """;
+            // Reuse the compiled statements and typed parameter objects for this
+            // bounded transaction. Only observation values change between rows.
+            var id = Parameter("$id", SqliteType.Text);
+            var revision = Parameter("$revision", SqliteType.Text);
+            var defaultBytes = Parameter("$default", SqliteType.Integer);
+            var logical = Parameter("$logical", SqliteType.Integer);
+            var allocated = Parameter("$allocated", SqliteType.Integer);
+            var links = Parameter("$links", SqliteType.Integer);
+            var available = Parameter("$available", SqliteType.Integer);
+            var status = Parameter("$status", SqliteType.Text);
+            Parameter("$collection", SqliteType.Integer).Value = collection;
+            var path = Parameter("$path", SqliteType.Text);
+            var name = Parameter("$name", SqliteType.Text);
+            var parent = Parameter("$parent", SqliteType.Text);
+            var role = Parameter("$role", SqliteType.Text);
+            var stem = Parameter("$stem", SqliteType.Text);
+            Parameter("$generation", SqliteType.Text).Value = (object?)generation ?? DBNull.Value;
+            if (observations.Count > 0) command.Prepare();
             foreach (var observation in observations)
             {
-                command.Parameters.Clear();
-                command.CommandText = """
-                    INSERT INTO objects(id,revision,default_bytes,logical_bytes,allocated_bytes,links,available,status,allocation_generation)
-                        VALUES($id,$revision,$default,$logical,$allocated,$links,$available,$status,$generation)
-                    ON CONFLICT(id) DO UPDATE SET revision=$revision,default_bytes=$default,logical_bytes=$logical,
-                        allocated_bytes=CASE WHEN objects.allocation_generation=$generation THEN
-                            CASE WHEN objects.allocated_bytes IS NULL THEN $allocated WHEN $allocated IS NULL THEN objects.allocated_bytes ELSE MAX(objects.allocated_bytes,$allocated) END ELSE $allocated END,
-                        allocation_generation=$generation,links=$links,available=$available,status=$status,hash_revision=NULL,metadata_revision=NULL,content_revision=NULL;
-                    INSERT INTO locations(collection_id,path,object_id,name,parent,role,stem,generation,missing)
-                        VALUES($collection,$path,$id,$name,$parent,$role,$stem,$generation,0)
-                    ON CONFLICT(collection_id,path) DO UPDATE SET object_id=$id,name=$name,parent=$parent,
-                        role=$role,stem=$stem,generation=$generation,missing=0;
-                    """;
-                Add(command, "$id", observation.Identity); Add(command, "$revision", observation.Revision); Add(command, "$default", observation.DefaultBytes);
-                Add(command, "$logical", observation.LogicalBytes); Add(command, "$allocated", observation.AllocatedBytes); Add(command, "$links", observation.Links);
-                Add(command, "$available", observation.ContentAvailable ? 1 : 0); Add(command, "$status", observation.Status);
-                Add(command, "$collection", collection); Add(command, "$path", observation.Path); Add(command, "$name", Path.GetFileName(observation.Path));
-                Add(command, "$parent", Path.GetDirectoryName(observation.Path)!); Add(command, "$role", observation.Role); Add(command, "$stem", observation.Stem); Add(command, "$generation", generation);
+                id.Value = (object?)observation.Identity ?? DBNull.Value;
+                revision.Value = (object?)observation.Revision ?? DBNull.Value;
+                defaultBytes.Value = (object?)observation.DefaultBytes ?? DBNull.Value;
+                logical.Value = observation.LogicalBytes;
+                allocated.Value = (object?)observation.AllocatedBytes ?? DBNull.Value;
+                links.Value = (long)observation.Links;
+                available.Value = observation.ContentAvailable ? 1 : 0;
+                status.Value = (object?)observation.Status ?? DBNull.Value;
+                path.Value = (object?)observation.Path ?? DBNull.Value;
+                name.Value = (object?)Path.GetFileName(observation.Path) ?? DBNull.Value;
+                parent.Value = (object?)Path.GetDirectoryName(observation.Path) ?? DBNull.Value;
+                role.Value = (object?)observation.Role ?? DBNull.Value;
+                stem.Value = (object?)observation.Stem ?? DBNull.Value;
                 command.ExecuteNonQuery();
             }
             transaction.Commit();
+
+            SqliteParameter Parameter(string parameterName, SqliteType type)
+            {
+                var parameter = command.Parameters.Add(parameterName, type);
+                parameter.Value = DBNull.Value;
+                return parameter;
+            }
         }
     }
     public void EndDiscovery(long collection, string generation, bool complete, string status, string? coverage = null)
