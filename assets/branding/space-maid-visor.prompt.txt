@@ -1,0 +1,15 @@
+Generated with the built-in image_gen tool; transparent_background: false.
+Edit target: assets/branding/icon-directions/03-maid-visor.png.
+The maid-cap scallops form the outer top contour of the helmet; the separate upper arch is removed.
+
+Use case: precise-object-edit.
+Asset type: final minimalist Space Maid application icon.
+Input image is the chosen Maid visor design and is the edit target. Preserve its two-color palette, broad slightly tilted navy visor cutout, rounded white helmet sides and simple flat chin.
+Make ONE specific structural change: REMOVE the separate white arch above the scalloped maid headband. Move the three shallow white scallops onto the OUTERMOST TOP EDGE of the helmet. The scallops now form the top contour of the helmet shell itself. The cap and helmet are one continuous connected WHITE silhouette around ONE navy visor aperture.
+There must be NO second arc, no internal cap band, no stacked outlines and no navy gap between cap and helmet. The white helmet contour goes directly up into three modest broad rounded lobes and then directly back down its rounded sides. Keep the scallops low and compact, clearly a maid-cap crown integrated into the astronaut helmet, not a tall chef hat perched above it.
+Style: extremely simple clean geometric app-logo shape, substantial even white rim, generous negative-space visor, legible at 16, 24 and 32 pixels. Two completely flat design colors: navy #082140 and white #FFFFFF. Uniform navy fills the whole square canvas. No textures, mottling, grain, shadows, gradients, sheen or 3D effects.
+Keep the composition centered with the emblem occupying roughly 78 percent of the canvas width. No face, eyes, hair, nose, text, ear connectors, sparkles or additional details. One single finished square icon, not a comparison sheet.
+
+Rebuild the Windows icon: powershell.exe -NoProfile -File tools/Build-AppIcon.ps1
+This generates 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px PNG frames in assets/branding/visor-icon-frames and packages space-maid-visor.ico.
+The icon uses a solid navy tile with a white symbol, including antialiased edge pixels. The executable and WPF window use the same ICO.
