@@ -1,0 +1,27 @@
+Generated with the built-in image_gen tool, using space-maid-astronaut-icon.png as the edit target and preserving transparency.
+
+16–24 px: space-maid-small-portrait.png; simpler detail, larger face, same character.
+32–64 px: space-maid-medium-portrait.png; head and collar, expressive eyes and smile.
+96–256 px: original space-maid-astronaut-icon.png, preserved unchanged.
+
+Small-size generation prompt:
+Use case: precise-object-edit.
+Asset type: optical size variant of the existing Space Maid Windows taskbar icon.
+Input image is the EDIT TARGET. Preserve this exact character and the existing polished illustrated style: her warm round peach face, expressive large navy eyes with white eye shapes, swept dark brown hair, friendly curved smile, the white three-lobed maid cap, circular white astronaut helmet, navy visor and cyan accents. Keep her recognizable as the same girl; do not substitute a generic dot-eyed face or blank visor.
+Primary request: carefully optimize this existing illustration for small display while retaining its personality. Favor the face, maid cap and recognizable circular helmet. Keep the face large and the white cap silhouette prominent. Preserve the existing colors and expression. Thicken the essential helmet rim and cap separation slightly.
+Remove only secondary visual noise: tiny hair highlights, fine visor rings, tiny seams and forehead/skin shading. Use fewer broad color shapes, but retain the existing character style and identity. Keep the big eye whites, pupils and one simple eye glint, swept fringe and a friendly smile. Gently reduce blush and tiny mouth details.
+Composition: a single front-facing head icon, cropped just beneath the helmet collar, no shoulders or apron below it, square canvas with genuine alpha transparency outside the silhouette. No text, logo label, mockup, sheet, scenery or extra icons. Do not enlarge the cap into a chef's hat.
+Version: native 16–24 pixel optical variant. Give the girl's face the largest practical share of the visor, with two bold expressive eyes and a single smile. Hair must be one simple swept brown shape, not thin strands. Retain exactly the three white maid-cap lobes above the helmet, separated by a substantial navy band. Omit the visor star, all glass glints, eyebrows, nose, ears, eyelash tips and narrow trim lines. Omit the bottom collar panel. Simplify essential shapes enough for tiny rendering, but keep the girl's cheerful personality. The round helmet and the maid cap remain unmistakable.
+
+Medium-size generation prompt:
+Use case: precise-object-edit.
+Asset type: optical size variant of the existing Space Maid Windows taskbar icon.
+Input image is the EDIT TARGET. Preserve this exact character and the existing polished illustrated style: her warm round peach face, expressive large navy eyes with white eye shapes, swept dark brown hair, friendly curved smile, the white three-lobed maid cap, circular white astronaut helmet, navy visor and cyan accents. Keep her recognizable as the same girl; do not substitute a generic dot-eyed face or blank visor.
+Primary request: carefully optimize this existing illustration for small display while retaining its personality. Favor the face, maid cap and recognizable circular helmet. Keep the face large and the white cap silhouette prominent. Preserve the existing colors and expression. Thicken the essential helmet rim and cap separation slightly.
+Remove only secondary visual noise: tiny hair highlights, fine visor rings, tiny seams and forehead/skin shading. Use fewer broad color shapes, but retain the existing character style and identity. Keep the big eye whites, pupils and one simple eye glint, swept fringe and a friendly smile. Gently reduce blush and tiny mouth details.
+Composition: a single front-facing head icon, cropped just beneath the helmet collar, no shoulders or apron below it, square canvas with genuine alpha transparency outside the silhouette. No text, logo label, mockup, sheet, scenery or extra icons. Do not enlarge the cap into a chef's hat.
+Version: native 32–64 pixel optical variant. Preserve the expressive face almost exactly, including one restrained eye glint, her brown side-swept fringe, warm cheeks and smile. Keep one small broad white visor sparkle if it fits cleanly; remove the thin glass highlight lines. The helmet rim and maid cap are a little bolder; her face must remain the main visual content. Keep a plain compact collar at the bottom, no body. This is a careful small-size refinement, not a new logo design.
+
+Rebuild: powershell.exe -NoProfile -File tools/Build-AppIcon.ps1
+The script defines the content footprint, sampling filter and RGB edge treatment independently for each of the 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px frames.
+Editable PNG frames are in assets/branding/taskbar-icon-frames. The resulting ICO is used by the executable and embedded WPF window resource.
