@@ -1,0 +1,49 @@
+Generated with the built-in image_gen tool.
+Five independent minimalist icon proposals using navy and white as their two design colors.
+Initial generation: transparent_background=true. Final cleanup edit: transparent_background=false, with solid navy prototype canvases.
+
+1 · Orbit S
+Final source: 01-orbit-s.png
+
+Use case: logo-brand. Asset type: original minimalist Windows taskbar icon concept for Space Maid, a space-cleanup application.
+A professional, visually distinctive geometric logo, extremely simple in silhouette, legible at 16, 24 and 32 pixels. One single finished square icon, not a sheet.
+Use exactly two FLAT design colors: deep navy #082140 for a rounded-square tile and pure white #FFFFFF for the symbol. Genuinely transparent alpha outside the rounded tile corners. NO gradients, subtle color variations, lighting, material, texture, shading, highlights or shadows. Clean solid fills, bold curves and generous negative space. Symbol occupies about 75–80 percent of the tile width. Same weight and polish as a recognisable app logo. No hair, face, eyes, detailed illustration or character portrait. No text other than an explicitly requested monogram. Do not copy ChatGPT's knot.
+Design a single broad white S-shaped orbital sweep: a simple flowing S constructed from two bold curved lobes, compact and balanced, suggesting both Space and Sweeping. Its upper and lower ends taper slightly but remain thick enough for tiny sizes. Large open navy cutouts make the S immediately readable. No separate stars, ring, spaceship or other objects. The whole symbol is just ONE elegant white sweep, not an interwoven knot and not multiple thin strokes.
+
+2 · Broom rocket
+Final source: 02-broom-rocket.png
+
+Use case: logo-brand. Asset type: original minimalist Windows taskbar icon concept for Space Maid, a space-cleanup application.
+A professional, visually distinctive geometric logo, extremely simple in silhouette, legible at 16, 24 and 32 pixels. One single finished square icon, not a sheet.
+Use exactly two FLAT design colors: deep navy #082140 for a rounded-square tile and pure white #FFFFFF for the symbol. Genuinely transparent alpha outside the rounded tile corners. NO gradients, subtle color variations, lighting, material, texture, shading, highlights or shadows. Clean solid fills, bold curves and generous negative space. Symbol occupies about 75–80 percent of the tile width. Same weight and polish as a recognisable app logo. No hair, face, eyes, detailed illustration or character portrait. No text other than an explicitly requested monogram. Do not copy ChatGPT's knot.
+Design a clever merged broom-and-rocket symbol, pointing diagonally up-right. A short bold rocket with a rounded pointed nose and one broad oval window cutout, whose flared lower tail is a simple broom head with only two broad separated bristle blocks. One integrated compact silhouette: the broom head also suggests rocket exhaust. No handle sticking out, no flame, stars or orbit rings. Crisp, friendly geometric proportions, not a cartoon spaceship illustration.
+
+3 · Maid visor
+Final source: 03-maid-visor.png
+
+Use case: logo-brand. Asset type: original minimalist Windows taskbar icon concept for Space Maid, a space-cleanup application.
+A professional, visually distinctive geometric logo, extremely simple in silhouette, legible at 16, 24 and 32 pixels. One single finished square icon, not a sheet.
+Use exactly two FLAT design colors: deep navy #082140 for a rounded-square tile and pure white #FFFFFF for the symbol. Genuinely transparent alpha outside the rounded tile corners. NO gradients, subtle color variations, lighting, material, texture, shading, highlights or shadows. Clean solid fills, bold curves and generous negative space. Symbol occupies about 75–80 percent of the tile width. Same weight and polish as a recognisable app logo. No hair, face, eyes, detailed illustration or character portrait. No text other than an explicitly requested monogram. Do not copy ChatGPT's knot.
+Design a clean circular astronaut-visor emblem that subtly suggests a maid. Use one bold almost-circular WHITE helmet outline, with a broad slanted rounded visor cutout and a modest scalloped WHITE headband INSIDE the top arc. The cap/headband is low and compact, just three shallow scallops; no puffed external chef hat. Keep the helmet round with a simple flat chin. No ear connectors, face, hair, reflection or extra parts. Use negative space cleverly, so the silhouette has a distinctive asymmetric friendly tilt.
+
+4 · Spark sweep
+Final source: 04-spark-sweep.png
+
+Use case: logo-brand. Asset type: original minimalist Windows taskbar icon concept for Space Maid, a space-cleanup application.
+A professional, visually distinctive geometric logo, extremely simple in silhouette, legible at 16, 24 and 32 pixels. One single finished square icon, not a sheet.
+Use exactly two FLAT design colors: deep navy #082140 for a rounded-square tile and pure white #FFFFFF for the symbol. Genuinely transparent alpha outside the rounded tile corners. NO gradients, subtle color variations, lighting, material, texture, shading, highlights or shadows. Clean solid fills, bold curves and generous negative space. Symbol occupies about 75–80 percent of the tile width. Same weight and polish as a recognisable app logo. No hair, face, eyes, detailed illustration or character portrait. No text other than an explicitly requested monogram. Do not copy ChatGPT's knot.
+Design a single white four-point sparkle with a bold crescent-shaped sweeping tail attached to its lower-left point. It should read as one compact integrated symbol: a clean star being swept into space. The sparkle has four wide sturdy points and the sweeping tail is one broad simple curve, never a thin hairline. The star and tail form a dynamic balanced almost-round mark. No orbit ring, broom, face or secondary small sparkles. Bold simple geometric cutouts, graceful and instantly recognisable.
+
+5 · Folded M
+Final source: 05-folded-m.png
+
+Use case: logo-brand. Asset type: original minimalist Windows taskbar icon concept for Space Maid, a space-cleanup application.
+A professional, visually distinctive geometric logo, extremely simple in silhouette, legible at 16, 24 and 32 pixels. One single finished square icon, not a sheet.
+Use exactly two FLAT design colors: deep navy #082140 for a rounded-square tile and pure white #FFFFFF for the symbol. Genuinely transparent alpha outside the rounded tile corners. NO gradients, subtle color variations, lighting, material, texture, shading, highlights or shadows. Clean solid fills, bold curves and generous negative space. Symbol occupies about 75–80 percent of the tile width. Same weight and polish as a recognisable app logo. No hair, face, eyes, detailed illustration or character portrait. No text other than an explicitly requested monogram. Do not copy ChatGPT's knot.
+Design a distinctive chunky white capital M monogram, formed from two broad folded strokes with softly rounded outside corners. The two upper peaks and deep central notch give it a lively forward stance. Let a single small, sturdy four-point negative-space cutout in the lower center subtly suggest a space sparkle; keep the M dominant. No other letters, rings, stars, helmet, cap, decorative border or extra objects. Very compact, clean, bold, high contrast; more a memorable symbol than ordinary typeset text.
+
+Final cleanup prompt applied to each concept:
+Use case: precise-object-edit. Input image is the edit target: preserve the exact white symbol contour, proportions and placement without redesigning it. This is an icon-color cleanup.
+Remove ALL background artifacts, transparent spots inside the tile, grain, stains, gradients, lighting, glows and shadows. The final design has exactly TWO FLAT colors: a perfectly uniform navy #082140 background and a pure white #FFFFFF symbol. White regions are perfectly uniform as well. Keep only clean antialiased edges around the white shape. Replace the entire background, all the way to the square canvas edges, with one perfectly flat uninterrupted navy fill; no rounded tile, outside transparency or border. No texture, material, sheen, gradient or subtle shading. This must look like a pristine digital vector logo exported to PNG, not photographed artwork. One single square icon. Keep the symbol precisely as it is.
+
+comparison.png shows the proposals at 128 px, 32 px and 16 px. These previews are design comparisons, not captured taskbar screenshots.
