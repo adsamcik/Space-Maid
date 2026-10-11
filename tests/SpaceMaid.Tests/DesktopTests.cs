@@ -779,9 +779,9 @@ public sealed class DesktopTests
                 Assert.InRange(map.Buttons.Count(), 1, 64);
                 ((TextBlock)window.FindName("ScannedSizeLabel")).Text = "Scanned";
                 ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(layoutScan.AllocatedBytes);
-                ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "Allocated · Shared files counted once";
+                ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "On disk";
                 ((TextBlock)window.FindName("CandidateText")).Text = "—";
-                ((TextBlock)window.FindName("CandidateCaption")).Text = "Not analyzed in this layout fixture";
+                ((TextBlock)window.FindName("CandidateCaption")).Text = "Not analyzed";
                 ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · Layout validation";
                 Assert.InRange(((ProgressBar)window.FindName("DriveCapacityBar")).Value, 3, 4);
 #pragma warning disable WPF0001
@@ -938,9 +938,9 @@ public sealed class DesktopTests
         Assert.Equal("1 group selected · 1,000 folders", selection.Text);
         ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
-        ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "Illustrative inventory · Shared files counted once";
+        ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "On disk";
         ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(CleanupPlanner.Create(scan, locations).EstimatedBytes);
-        ((TextBlock)window.FindName("CandidateCaption")).Text = "4 cleanup groups · Illustrative inventory";
+        ((TextBlock)window.FindName("CandidateCaption")).Text = "Estimate · 4 groups";
         ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · 200 projects, 4,000 locations";
 #pragma warning disable WPF0001
         foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
@@ -1213,9 +1213,9 @@ public sealed class DesktopTests
         }
         ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · Additional cleanup categories";
         ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
-        ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "Illustrative inventory · Shared files counted once";
+        ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "On disk";
         ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(CleanupPlanner.Create(scan, locations).EstimatedBytes);
-        ((TextBlock)window.FindName("CandidateCaption")).Text = "6 cleanup groups · Review required";
+        ((TextBlock)window.FindName("CandidateCaption")).Text = "Estimate · 6 groups";
         // Every breakdown starts collapsed so the top-level checklist remains short.
         var build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
         Assert.Equal(5, build.Children.Count);

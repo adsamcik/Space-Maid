@@ -29,8 +29,8 @@ public partial class MainWindow
             if (photos?.View is { } view)
             { PhotosContent.Content = view; PhotosPlaceholder.Visibility = Visibility.Collapsed; }
             else ExtensionsStatusText.Text = Elevation.IsAdministrator
-                ? "Photos and extensions need a normal Windows session. Close Space Maid and reopen it without Run as administrator. Fast scanning uses its own helper."
-                : photos is null ? "Photos is unavailable. Open Extensions to check the bundled extension."
+                ? "Reopen Space Maid without administrator access to use Photos and extensions."
+                : photos is null ? "Photos unavailable · Check Extensions"
                 : $"Photos · {photos.Status}\n{photos.Error}";
             ExtensionsReady = true;
         }

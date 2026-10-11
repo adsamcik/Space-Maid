@@ -112,7 +112,7 @@ public partial class PhotosView : UserControl
         if (_displayedCollection != collection.Id)
         {
             _rows.Clear();
-            SetEmpty("Loading photos…", "Loading this collection's saved results.", EmptyAction.Retry, "Try again");
+            SetEmpty("Loading photos…", "", EmptyAction.Retry, "Try again");
             EmptyActionButton.Visibility = Visibility.Collapsed;
             FileList.Visibility = Visibility.Collapsed; EmptyPanel.Visibility = Visibility.Visible;
             UpdateCoverageNotice(collection, null);
@@ -255,23 +255,24 @@ public partial class PhotosView : UserControl
         EmptyPanel.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         if (!empty) return;
         if (collection is null)
-            SetEmpty("Add your first photo folder", "Browse photos, find duplicates and review related files. Your originals stay untouched.", EmptyAction.Add, "Add folder");
+            SetEmpty("Add your first photo folder", "", EmptyAction.Add, "Add folder");
         else if (_discovering)
-            SetEmpty("Finding photos…", "Files will appear as their metadata is discovered.", EmptyAction.Browse, "Browse photos");
+            SetEmpty("Finding photos…", "", EmptyAction.Browse, "Browse photos");
         else if (_mode == PhotoMode.Families)
-            SetEmpty("No related files found", "RAW, image and sidecar files with matching names appear together here.", EmptyAction.Browse, "Browse photos");
+            SetEmpty("No related files found", "Matching RAW, image and sidecar filenames.", EmptyAction.Browse, "Browse photos");
         else if (_mode == PhotoMode.Duplicates && collection.Count > 0)
         {
             var analyzed = lastJob?.StartsWith("Analysis", StringComparison.Ordinal) == true && lastJob.Contains("Completed", StringComparison.Ordinal);
-            SetEmpty("No verified duplicates", analyzed ? "No exact duplicates were verified in this collection." : "Analyze this collection to compare file contents. Your originals stay untouched.",
+            SetEmpty("No verified duplicates", analyzed ? "" : "Analyze photos to compare file contents.",
                 analyzed ? EmptyAction.Browse : EmptyAction.Analyze, analyzed ? "Browse photos" : "Analyze photos");
         }
-        else SetEmpty("No photos found", "This folder has no supported photo filenames. Refresh to check for new files, or add another folder.", EmptyAction.Refresh, "Refresh folder");
+        else SetEmpty("No photos found", "No supported photo filenames in this folder.", EmptyAction.Refresh, "Refresh folder");
         EmptyActionButton.Visibility = _discovering ? Visibility.Collapsed : Visibility.Visible;
     }
     private void SetEmpty(string title, string message, EmptyAction action, string label)
     {
-        EmptyTitle.Text = title; EmptyText.Text = message; _emptyAction = action; EmptyActionButton.Content = label;
+        EmptyTitle.Text = title; EmptyText.Text = message; EmptyText.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _emptyAction = action; EmptyActionButton.Content = label;
         EmptyActionButton.Visibility = Visibility.Visible;
     }
     private void UpdateCoverageNotice(PhotoCollection collection, string? lastJob)
@@ -328,7 +329,8 @@ public partial class PhotosView : UserControl
         var progress = new Progress<ExtensionJobProgress>(value =>
         {
             if (_shuttingDown || !_busy || !acceptProgress || operationGeneration != _operationGeneration) return;
-            StatusText.Text = $"{operationName} · {value.Phase} · {value.Completed:N0}" + (value.BytesRead > 0 ? $" · {PhotoFormatting.Bytes(value.BytesRead)} read" : "") + (value.Message is null ? "" : $" · {value.Message}");
+            StatusText.Text = $"{operationName} · {value.Phase} · {value.Completed:N0}" + (value.BytesRead > 0 ? $" · {PhotoFormatting.Bytes(value.BytesRead)} read" : "");
+            StatusText.ToolTip = StatusText.Text + (value.Message is null ? "" : $" · {value.Message}");
             if (_discovering && !_liveRefresh && refreshClock.ElapsedMilliseconds >= 1000)
             { refreshClock.Restart(); _liveRefresh = true; _ = Track(RefreshCommittedPageAsync()); }
         });
@@ -337,9 +339,11 @@ public partial class PhotosView : UserControl
             await work(progress, _operation.Token);
             acceptProgress = false;
             var completedJob = operationCollection is long id ? await Task.Run(() => _catalog.LastJob(id), _lifetime) : null;
-            SetNotice((discovering ? "Discovery finished" : completedJob?.Contains("Completed", StringComparison.Ordinal) == true ? "Analysis complete" : "Analysis finished") + (completedJob is null ? "" : " · " + completedJob), completedJob?.Contains("NeedsAttention", StringComparison.Ordinal) == true);
+            var needsAttention = completedJob?.Contains("NeedsAttention", StringComparison.Ordinal) == true;
+            SetNotice((discovering ? "Discovery finished" : completedJob?.Contains("Completed", StringComparison.Ordinal) == true ? "Analysis complete" : "Analysis finished") + (needsAttention ? " · Needs attention" : ""), needsAttention);
+            StatusText.ToolTip = completedJob ?? StatusText.Text;
         }
-        catch (OperationCanceledException) { SetNotice("Interrupted · Saved results retained. Refresh or Analyze to check them again."); }
+        catch (OperationCanceledException) { SetNotice("Interrupted · Saved results kept"); }
         catch (Exception error) { ShowFailure(error); }
         finally
         {
@@ -452,7 +456,7 @@ public partial class PhotosView : UserControl
         if (FileList.SelectedItem is not PhotoDisplayRow row || _mode != PhotoMode.Duplicates) return;
         SelectionText.Text = "Review preference: retain this physical copy and all its hard-link aliases.\n" + row.Row.Path + "\n\nOther locations remain untouched. Dependencies, alternate streams and links outside this collection still require review. Recovery is unknown.\n\n" + SelectionText.Text;
         FileDetails.IsExpanded = true;
-        SetNotice("Keep preference noted · No files changed");
+        SetNotice("Marked to keep · No files changed");
     }
     private void Reveal_Click(object sender, RoutedEventArgs e)
     { if (FileList.SelectedItem is PhotoDisplayRow row) { try { _host.RevealLocation(row.Row.Path); } catch (Exception error) { ShowFailure(error); } } }
@@ -487,12 +491,12 @@ public partial class PhotosView : UserControl
         if (_shuttingDown) return;
         SetNotice("Photos could not finish: " + error.Message);
         if (FileList.Items.Count == 0 && Collection is not null)
-            SetEmpty("Couldn't load this view", "Try loading the saved results again. Your originals are unchanged.", EmptyAction.Retry, "Try again");
+            SetEmpty("Couldn't load this view", "", EmptyAction.Retry, "Try again");
         _host.Log("photos-workflow-failure", new { Error = error.GetType().Name });
     }
     private void SetNotice(string message, bool visible = true)
     {
-        StatusText.Text = message; _noticeVisible = visible;
+        StatusText.Text = message; StatusText.ToolTip = message; _noticeVisible = visible;
         StatusBand.Visibility = _busy || visible ? Visibility.Visible : Collection is not null ? Visibility.Hidden : Visibility.Collapsed;
     }
     private Task Track(Task task)

@@ -18,19 +18,19 @@ internal sealed class ExtensionsWindow : Window
         SetResourceReference(BackgroundProperty, "WindowBackground"); SetResourceReference(ForegroundProperty, "WindowForeground");
         var panel = new DockPanel { Margin = new(24) };
         var heading = new StackPanel();
-        heading.Children.Add(new TextBlock { Text = "Trusted local extensions", FontSize = 23, FontWeight = FontWeights.SemiBold });
-        heading.Children.Add(new TextBlock { Text = "Extensions run local code with your account's permissions. Only add directories you trust. Changes apply after restarting Space Maid; catalogs are retained.", TextWrapping = TextWrapping.Wrap, Margin = new(0, 10, 0, 0), Opacity = .75 });
+        heading.Children.Add(new TextBlock { Text = "Extensions", FontSize = 23, FontWeight = FontWeights.SemiBold });
+        heading.Children.Add(new TextBlock { Text = "Only add extensions you trust: they run with your account's permissions. Changes need a restart.", TextWrapping = TextWrapping.Wrap, Margin = new(0, 10, 0, 0), Opacity = .75 });
         DockPanel.SetDock(heading, Dock.Top); panel.Children.Add(heading);
         var footer = new StackPanel();
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var add = new Button { Content = "Add trusted directory", Margin = new(0, 0, 10, 0), Padding = new(12, 6, 12, 6), IsEnabled = !runtime.IsAdministrator };
+        var add = new Button { Content = "Add extension", Margin = new(0, 0, 10, 0), Padding = new(12, 6, 12, 6), IsEnabled = !runtime.IsAdministrator };
         add.Click += Add_Click; buttons.Children.Add(add);
         var close = new Button { Content = "Close", IsCancel = true, Padding = new(20, 6, 20, 6) }; close.Click += (_, _) => Close(); buttons.Children.Add(close);
         footer.Children.Add(buttons); footer.Children.Add(_status); DockPanel.SetDock(footer, Dock.Bottom); panel.Children.Add(footer);
         panel.Children.Add(new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         Content = panel;
         foreach (var entry in runtime.Entries) AddRow(entry);
-        if (runtime.Entries.Count == 0) _list.Children.Add(new TextBlock { Text = "No extension packages were found." });
+        if (runtime.Entries.Count == 0) _list.Children.Add(new TextBlock { Text = "No extensions found." });
         _status.Text = runtime.IsAdministrator ? "Reopen Space Maid without administrator access to use extensions." : runtime.SettingsError ?? "";
     }
     private void AddRow(LoadedExtension entry)
@@ -39,12 +39,12 @@ internal sealed class ExtensionsWindow : Window
         var enabled = new CheckBox { Content = entry.Name, IsChecked = _runtime.IsEnabled(entry), FontWeight = FontWeights.SemiBold, IsEnabled = !_runtime.IsAdministrator };
         enabled.Click += (_, _) =>
         {
-            try { _runtime.SetEnabled(entry, enabled.IsChecked == true); _status.Text = "Saved. Restart Space Maid to apply changes."; }
+            try { _runtime.SetEnabled(entry, enabled.IsChecked == true); _status.Text = "Saved · Restart to apply"; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { enabled.IsChecked = _runtime.IsEnabled(entry); _status.Text = "Settings were not saved: " + ex.Message; }
         };
         panel.Children.Add(enabled);
         panel.Children.Add(new TextBlock { Text = entry.Status + (entry.Error is null ? "" : " · " + entry.Error), TextWrapping = TextWrapping.Wrap, Margin = new(24, 4, 0, 0), Opacity = .75 });
-        panel.Children.Add(new TextBox { Text = entry.Directory, IsReadOnly = true, BorderThickness = new(0), Background = System.Windows.Media.Brushes.Transparent, Margin = new(22, 2, 0, 0), FontSize = 12 });
+        panel.Children.Add(new Expander { Header = "Location", Margin = new(24, 6, 0, 0), Content = new TextBox { Text = entry.Directory, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new(0), Background = System.Windows.Media.Brushes.Transparent, Margin = new(0, 6, 0, 0), FontSize = 12 } });
         if (entry.View is { } view && entry.Id != "space-maid.photos")
         {
             var open = new Button { Content = "Open workflow", HorizontalAlignment = HorizontalAlignment.Left, Margin = new(24, 6, 0, 0), Padding = new(12, 6, 12, 6) };
@@ -68,13 +68,13 @@ internal sealed class ExtensionsWindow : Window
     }
     private void Add_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new OpenFolderDialog { Title = "Select a trusted extension directory containing extension.json", Multiselect = false };
+        var picker = new OpenFolderDialog { Title = "Choose extension folder", Multiselect = false };
         if (picker.ShowDialog(this) != true) return;
         if (_runtime.TryAddTrustedDirectory(picker.FolderName, out var manifest, out var error))
         {
             var added = manifest!;
             AddRow(new(added.Id, added.Name, picker.FolderName, "Enabled · available after restart"));
-            _status.Text = "Saved. Restart Space Maid to load this trusted extension.";
+            _status.Text = "Added · Restart to load";
         }
         else _status.Text = "The directory was not added: " + error;
     }

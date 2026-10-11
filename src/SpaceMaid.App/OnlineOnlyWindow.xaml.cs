@@ -9,8 +9,8 @@ public partial class OnlineOnlyWindow : Window
     {
         InitializeComponent();
         TargetPath.Text = plan.Path;
-        ProviderText.Text = $"Sync provider: {plan.Provider}";
-        PlanText.Text = $"{plan.EligibleCount:N0} eligible files · {SizeText.Format(plan.LocalBytes)} of local data · {plan.SkippedCount:N0} locations skipped";
+        ProviderText.Text = plan.Provider;
+        PlanText.Text = $"{plan.EligibleCount:N0} files · {SizeText.Format(plan.LocalBytes)} local · {plan.SkippedCount:N0} skipped";
         WarningsText.Text = string.Join("\n", plan.Warnings);
         ConfirmButton.IsEnabled = plan.EligibleCount > 0;
     }

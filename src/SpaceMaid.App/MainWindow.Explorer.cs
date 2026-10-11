@@ -54,7 +54,7 @@ public partial class MainWindow
         _kinds = OpportunityKinds(opportunities);
         SpaceTree.ItemsSource = _explorer;
         TreeHint.Visibility = Visibility.Collapsed;
-        TreeNote.Text = scan.HasAllocationData ? "Observed totals · Shared file allocation counted once"
+        TreeNote.Text = scan.HasAllocationData ? "Shared files counted once"
             : "Logical sizes only · Physical allocation is unavailable";
         MapBasis.Text = scan.HasAllocationData ? "Area = allocated size" : "Area = logical size";
         _treeSortColumn = scan.HasAllocationData ? ScanSortColumn.Allocated : ScanSortColumn.Logical;

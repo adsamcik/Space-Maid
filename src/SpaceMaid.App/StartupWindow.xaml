@@ -6,8 +6,8 @@
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
     <StackPanel Margin="28">
         <TextBlock Text="Enable faster drive scanning?" FontSize="23" FontWeight="SemiBold" TextWrapping="Wrap" />
-        <TextBlock Text="Windows will ask permission for a read-only scan helper to read NTFS metadata in bulk. Space Maid and its extensions keep running without administrator access." TextWrapping="Wrap" Margin="0,18,0,0" />
-        <TextBlock Text="You can continue with standard scanning. Cancelling the Windows prompt keeps this app open. Cleanup asks for confirmation and moves eligible folders to the Recycle Bin." TextWrapping="Wrap" Margin="0,12,0,22" Opacity="0.7" />
+        <TextBlock Text="Windows will ask for administrator permission for the read-only scanner." TextWrapping="Wrap" Margin="0,14,0,0" />
+        <TextBlock Text="The app stays open if you decline." TextWrapping="Wrap" Margin="0,8,0,22" Opacity="0.7" ToolTip="Space Maid and its extensions stay unelevated. Without permission, you can use standard scanning." />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Continue without admin" IsDefault="True" IsCancel="True" Click="Continue_Click" Margin="0,0,10,0" />
             <Button Content="Enable fast scanning" Click="Enable_Click" Style="{DynamicResource AccentButtonStyle}" Padding="16,9" />

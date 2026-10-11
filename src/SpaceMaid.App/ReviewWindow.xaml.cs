@@ -17,17 +17,17 @@ public partial class ReviewWindow : Window
     {
         InitializeComponent();
         ValidationText.Text = validationNote;
-        ValidationText.Visibility = string.IsNullOrEmpty(validationNote) ? Visibility.Collapsed : Visibility.Visible;
+        ValidationDetails.Visibility = string.IsNullOrEmpty(validationNote) ? Visibility.Collapsed : Visibility.Visible;
         EstimateText.Text = SizeText.Format(preview.EstimatedBytes);
-        EstimateCaption.Text = $"{(preview.UsesLogicalSize ? "Logical size; physical saving unknown" : "Estimated candidate allocation")}" +
-            $" · {preview.Locations.Count:N0} {(preview.Locations.Count == 1 ? "location" : "locations")}"
-            + $" · {preview.FileCount:N0} file {(preview.FileCount == 1 ? "object" : "objects")}";
+        EstimateCaption.Text = $"{(preview.UsesLogicalSize ? "Logical size; physical saving unknown" : "Estimated space")}" +
+            $" · {preview.Locations.Count:N0} {(preview.Locations.Count == 1 ? "folder" : "folders")}";
+        EstimateCaption.ToolTip = $"{preview.FileCount:N0} file objects";
         if (preview.ExcludedSharedBytes > 0)
             EstimateCaption.Text += $" · {SizeText.Format(preview.ExcludedSharedBytes)} shared allocation excluded";
         CautionText.Text = string.Join("\n\n", preview.Cautions);
         _locations = preview.Locations.Select(location => new CleanupReviewRow(location)).ToList();
         LocationList.ItemsSource = _locations;
-        ResultText.Text = "Preview only: open Review selection in Opportunities to check live folders and enable cleanup.";
+        ResultText.Text = "Preview only · Review cleanup in Opportunities to check these folders.";
     }
 
     internal ReviewWindow(CleanupPlan plan, string validationNote,
@@ -37,8 +37,9 @@ public partial class ReviewWindow : Window
         _locations.AddRange(plan.BlockedLocations.Select(item => new CleanupReviewRow(item.Opportunity) { Status = "Blocked: " + item.Reason }));
         LocationList.Items.Refresh();
         CleanupButton.IsEnabled = plan.CanExecute;
-        ResultText.Text = $"{plan.Targets.Count:N0} folders ready · {plan.BlockedLocations.Count:N0} blocked. "
-            + "Includes current contents, including source or custom files. Recycled data keeps occupying space until the bin is emptied.";
+        ResultText.Text = $"{plan.Targets.Count:N0} {(plan.Targets.Count == 1 ? "folder" : "folders")} ready"
+            + (plan.BlockedLocations.Count == 0 ? ". " : $" · {plan.BlockedLocations.Count:N0} blocked. ")
+            + "Empty the Recycle Bin to free space.";
     }
 
     private async void Cleanup_Click(object sender, RoutedEventArgs e)
@@ -71,14 +72,14 @@ public partial class ReviewWindow : Window
         finally
         {
             _cleanup = null; CleanupProgressBar.Visibility = Visibility.Collapsed;
-            CloseButton.Content = "Close results";
+            CloseButton.Content = "Close";
             if (_closeWhenFinished) Close();
         }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)
     {
-        if (_cleanup is not null) { _cleanup.Cancel(); ResultText.Text = "Cancelling… Waiting for the current Windows operation to stop."; }
+        if (_cleanup is not null) { _cleanup.Cancel(); ResultText.Text = "Cancelling…"; }
         else Close();
     }
     private void Window_Closing(object? sender, CancelEventArgs e)
@@ -101,7 +102,7 @@ internal sealed class CleanupReviewRow(Opportunity location) : INotifyPropertyCh
     public string Reason => Location.Reason;
     public string Caution => Location.Caution;
     public string SuggestedAction => Location.SuggestedAction;
-    private string _status = "Ready for confirmation";
+    private string _status = "Ready";
     public string Status { get => _status; set { _status = value; PropertyChanged?.Invoke(this, new(nameof(Status))); } }
     public event PropertyChangedEventHandler? PropertyChanged;
 }

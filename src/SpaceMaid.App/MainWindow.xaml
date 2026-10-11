@@ -34,12 +34,12 @@
                         <StackPanel Margin="0,0,16,0">
                             <WrapPanel><TextBlock x:Name="ScannedSizeLabel" Text="Scanned" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <TextBlock x:Name="ScannedSizeText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
-                            <TextBlock x:Name="ScannedSizeCaption" Text="Allocated · Shared files counted once" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBlock x:Name="ScannedSizeCaption" Text="On disk" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         </StackPanel>
                         <StackPanel>
                             <WrapPanel><TextBlock Text="Candidates" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <TextBlock x:Name="CandidateText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
-                            <TextBlock x:Name="CandidateCaption" Text="Estimate · Subject to review" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBlock x:Name="CandidateCaption" Text="Estimate" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="Overlapping folders are counted once. Review cleanup checks current contents." />
                         </StackPanel>
                     </UniformGrid>
                 </Border>
@@ -95,8 +95,8 @@
                               </DataTemplate>
                           </ListBox.ItemTemplate>
                       </ListBox>
-                      <TextBlock x:Name="TreeHint" Text="Scan a drive to explore its files." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
-                      <TextBlock x:Name="TreeNote" Text="Observed totals · Shared file allocation counted once" Grid.Row="2" Margin="12,8" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
+                      <TextBlock x:Name="TreeHint" Text="Scan a drive to explore." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
+                      <TextBlock x:Name="TreeNote" Text="Shared files counted once" Grid.Row="2" Margin="12,8" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
                   </Grid>
               </Border>
               <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">
@@ -104,7 +104,7 @@
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                       <DockPanel Margin="0,0,0,8"><TextBlock x:Name="MapTotal" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="12" Opacity="0.7" Margin="8,0,0,0" /><WrapPanel x:Name="Breadcrumbs" VerticalAlignment="Center" /></DockPanel>
                       <local:TreemapPanel x:Name="SpaceMap" Grid.Row="1" MinHeight="120" ClipToBounds="True" AutomationProperties.Name="Framed folder treemap with one nested child level. Choose a contributor to see its files." />
-                      <TextBlock x:Name="MapHint" Grid.Row="1" Text="Choose a folder to see its largest contributors." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
+                      <TextBlock x:Name="MapHint" Grid.Row="1" Text="Select a folder." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
                       <WrapPanel Grid.Row="2" Margin="0,8,0,0" Opacity="0.75">
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="ProjectSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Projects &amp; data" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="CacheSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Build &amp; cache" FontSize="11" /></StackPanel>
@@ -126,8 +126,8 @@
               <Grid>
                   <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                   <StackPanel Margin="18,16">
-                      <TextBlock Text="Preliminary · Largest files so far" FontSize="18" FontWeight="SemiBold" />
-                      <TextBlock x:Name="PreliminaryCaption" Text="Scanning… Folder totals and cleanup estimates will appear when ready." TextWrapping="Wrap" Opacity="0.65" FontSize="12" Margin="0,6,0,0" />
+                      <TextBlock Text="Largest files · Preliminary" FontSize="18" FontWeight="SemiBold" />
+                      <TextBlock x:Name="PreliminaryCaption" Text="Scanning…" TextWrapping="Wrap" Opacity="0.65" FontSize="12" Margin="0,6,0,0" />
                   </StackPanel>
                   <Grid Grid.Row="1" Margin="22,0,24,8">
                       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
@@ -155,7 +155,7 @@
                       </ListBox.ItemTemplate>
                   </ListBox>
                   <TextBlock x:Name="PreliminaryHint" Grid.Row="2" Text="Waiting for file metadata…" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.65" Margin="24" TextWrapping="Wrap" />
-                  <TextBlock x:Name="PreliminaryNote" Grid.Row="3" Text="Up to 100 files · Shared file allocation counted once · Unresolved paths are marked pending" FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="18,14" />
+                  <TextBlock x:Name="PreliminaryNote" Grid.Row="3" Text="Largest 100 files · Shared files counted once" FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="18,14" />
               </Grid>
           </Border>
           <Grid x:Name="OpportunitiesPanel" Grid.Row="1" Visibility="Collapsed">
@@ -180,7 +180,7 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel Margin="0,0,0,12">
                         <TextBlock Text="Choose what to clean up" FontSize="20" FontWeight="SemiBold" />
-                        <TextBlock Text="Select a group, then review cleanup. Nothing moves until you confirm." FontSize="12" Opacity="0.7" Margin="0,5,0,0" />
+                        <TextBlock Text="Select groups to review." FontSize="12" Opacity="0.7" Margin="0,5,0,0" />
                         <Border x:Name="WorktreeCleanupControls" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,12,0,0" Visibility="Collapsed">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -191,7 +191,7 @@
                                 <Label x:Name="WorktreeAgeLabel" Grid.Column="2" Content="_Inactive for at least" Target="{Binding ElementName=WorktreeAgeSlider}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" />
                                 <Slider x:Name="WorktreeAgeSlider" Grid.Column="3" Minimum="1" Maximum="365" Value="30" TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="7" ValueChanged="WorktreeAge_Changed" VerticalAlignment="Center" AutomationProperties.Name="Worktree inactivity threshold in days" ToolTip="Latest observed file change or Git reflog activity; actual file access is not tracked." />
                                 <TextBlock x:Name="WorktreeAgeText" Grid.Column="4" Text="30 days" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                                <TextBlock x:Name="WorktreeRuleHint" Grid.Row="1" Grid.ColumnSpan="5" Text="Age uses file changes and Git activity, not access. Local changes are protected; branches are kept." FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,7,0,0" />
+                                <TextBlock x:Name="WorktreeRuleHint" Grid.Row="1" Grid.ColumnSpan="5" Text="Local changes protected · Branches kept" FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,7,0,0" />
                                 <TextBlock x:Name="WorktreeCheckSummary" Grid.Row="2" Grid.ColumnSpan="3" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,7,12,0" AutomationProperties.LiveSetting="Polite" />
                                 <Button x:Name="SelectWorktreeMatchesButton" Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Content="Select matching worktrees" Click="SelectWorktreeMatches_Click" IsEnabled="False" HorizontalAlignment="Right" Margin="0,7,0,0" Padding="9,5" />
                             </Grid>
@@ -298,27 +298,28 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                     <StackPanel x:Name="EmptyState" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
-                        <TextBlock x:Name="EmptyTitle" Text="Find room for your next project." FontSize="18" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
-                        <TextBlock x:Name="EmptyCaption" Text="Scan a drive to review build output, caches,&#10;environments, and files left by coding agents." Margin="0,12,0,0" TextAlignment="Center" TextWrapping="Wrap" Opacity="0.65" />
+                        <TextBlock x:Name="EmptyTitle" Text="Find cleanup opportunities" FontSize="18" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+                        <TextBlock x:Name="EmptyCaption" Text="Scan a drive to start." Margin="0,12,0,0" TextAlignment="Center" TextWrapping="Wrap" Opacity="0.65" />
                     </StackPanel>
                 </Grid>
             </Border>
             <Border x:Name="OpportunityDetails" Grid.Row="1" Grid.Column="4" Style="{StaticResource Card}" Padding="14" Visibility="Collapsed">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
-                        <TextBlock Text="A closer look" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,20" />
-                        <TextBlock x:Name="DetailHint" Text="Choose a result to see why it was found and what to check before cleanup." TextWrapping="Wrap" Opacity="0.65" />
+                        <TextBlock x:Name="DetailHint" Text="Select a folder for details." TextWrapping="Wrap" Opacity="0.65" />
                         <StackPanel x:Name="DetailPanel" Visibility="Collapsed">
                             <TextBlock Text="{Binding Title}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding Category}" Opacity="0.65" FontSize="12" Margin="0,6,0,12" />
                             <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="12" />
-                            <TextBlock Text="WHY IT WAS FOUND" Style="{StaticResource SectionLabel}" Margin="0,22,0,8" />
-                            <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />
-                            <TextBlock Text="BEFORE CLEANUP" Style="{StaticResource SectionLabel}" Margin="0,22,0,8" />
+                            <TextBlock Text="BEFORE CLEANUP" Style="{StaticResource SectionLabel}" Margin="0,16,0,8" />
                             <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" />
-                            <TextBlock Text="NEXT STEP" Style="{StaticResource SectionLabel}" Margin="0,22,0,8" />
-                            <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" />
-                            <TextBlock x:Name="WorktreeDetailText" TextWrapping="Wrap" FontSize="12" Margin="0,14,0,0" Visibility="Collapsed" />
+                            <Expander Header="Details" Margin="0,14,0,0">
+                                <StackPanel Margin="0,8,0,0">
+                                    <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                    <TextBlock x:Name="WorktreeDetailText" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" Visibility="Collapsed" />
+                                </StackPanel>
+                            </Expander>
                             <Button Content="Open folder" Click="OpenFolder_Click" HorizontalAlignment="Left" Margin="0,22,0,0" />
                             <Button Content="Show in tree" Click="ShowInTree_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
                         </StackPanel>
@@ -342,7 +343,7 @@
             <DockPanel>
                 <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" />
                 <Button x:Name="OpenLogButton" Content="Open log" Click="OpenLog_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" Margin="0,0,10,0" />
-                <TextBlock x:Name="StatusText" Text="Ready · Scan a drive to explore space" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" Opacity="0.7" AutomationProperties.LiveSetting="Polite" />
+                <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" Opacity="0.7" AutomationProperties.LiveSetting="Polite" />
             </DockPanel>
             <TextBlock x:Name="BackendStatusText" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>

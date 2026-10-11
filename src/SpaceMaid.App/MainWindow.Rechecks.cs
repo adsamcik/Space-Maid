@@ -81,10 +81,10 @@ public partial class MainWindow
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
-        CandidateCaption.Text = $"Estimate · {_rows.Count:N0} locations · overlapping paths counted once";
+        CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
         ScannedSizeLabel.Text = "Scanned";
         ScannedSizeText.Text = SizeText.Format(updated.AllocatedBytes);
-        ScannedSizeCaption.Text = "Partial refresh · Other folders retain earlier scan data";
+        ScannedSizeCaption.Text = "Partially refreshed";
         TreeNote.Text = $"Rechecked at {updated.LastRecheckUtc!.Value.ToLocalTime():HH:mm:ss} · Other folders retain earlier scan data";
         MapBasis.Text = "Area = allocated size · Partial refresh";
         try { var drive = new DriveInfo(updated.RootPath); ShowDriveSpace(drive.TotalSize, drive.AvailableFreeSpace); }

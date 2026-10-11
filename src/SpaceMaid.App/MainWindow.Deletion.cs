@@ -113,11 +113,11 @@ public partial class MainWindow
         _scanStale = true;
         _scanStatus = message;
         StatusText.Text = message;
-        TreeNote.Text = "OUT OF DATE · Recheck affected folders or rescan to refresh.";
+        TreeNote.Text = "OUT OF DATE · Recheck or rescan";
         MapBasis.Text = _snapshot!.HasAllocationData ? "Previous scan · allocated size" : "Previous scan · logical size";
         ScannedSizeLabel.Text = "PREVIOUS SCAN";
-        ScannedSizeCaption.Text = "Out of date · Recheck or rescan to refresh";
-        CandidateCaption.Text = "Out of date · Recheck or rescan to recalculate";
+        ScannedSizeCaption.Text = "Out of date";
+        CandidateCaption.Text = "Out of date";
         CandidateText.Text = "—";
         OpportunitiesTab.Content = "Opportunities · Out of date";
         UpdateSelection();

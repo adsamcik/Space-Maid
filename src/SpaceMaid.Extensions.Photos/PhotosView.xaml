@@ -93,8 +93,8 @@
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420">
                                 <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="36" Opacity="0.35" HorizontalAlignment="Center" Margin="0,0,0,18" />
                                 <TextBlock x:Name="EmptyTitle" Text="Add your first photo folder" FontSize="22" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
-                                <TextBlock x:Name="EmptyText" Text="Browse photos, find duplicates and review related files. Your originals stay untouched." TextWrapping="Wrap" TextAlignment="Center" Opacity="0.65" Margin="0,10,0,18" />
-                                <Button x:Name="EmptyActionButton" Content="Add folder" Click="EmptyAction_Click" HorizontalAlignment="Center" Padding="18,6" Style="{DynamicResource AccentButtonStyle}" />
+                                <TextBlock x:Name="EmptyText" TextWrapping="Wrap" TextAlignment="Center" Opacity="0.65" Margin="0,10,0,0" Visibility="Collapsed" />
+                                <Button x:Name="EmptyActionButton" Content="Add folder" Click="EmptyAction_Click" HorizontalAlignment="Center" Padding="18,6" Margin="0,18,0,0" Style="{DynamicResource AccentButtonStyle}" />
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -139,7 +139,7 @@
                     </ScrollViewer>
                     <StackPanel Grid.Row="2" Margin="0,14,0,0">
                         <Button x:Name="RevealButton" Content="Open in File Explorer" Click="Reveal_Click" IsEnabled="False" />
-                        <Button x:Name="RetainButton" Content="Preview keeping this copy" Click="Retain_Click" Visibility="Collapsed" Margin="0,8,0,0" ToolTip="Review preference only. Does not delete or modify any file." />
+                        <Button x:Name="RetainButton" Content="Mark to keep" Click="Retain_Click" Visibility="Collapsed" Margin="0,8,0,0" ToolTip="Review preference only. Does not delete or modify any file." />
                     </StackPanel>
                 </Grid>
             </Border>

@@ -69,16 +69,19 @@ public partial class MainWindow
         bool ageApplies = policy.Mode != WorktreeCleanupMode.Integrated;
         WorktreeAgeSlider.IsEnabled = WorktreeAgeLabel.IsEnabled = ageApplies;
         WorktreeAgeText.Text = ageApplies ? $"{policy.InactiveDays} {(policy.InactiveDays == 1 ? "day" : "days")}" : "Any age";
-        WorktreeRuleHint.Text = policy.Mode switch
+        WorktreeRuleHint.ToolTip = policy.Mode switch
         {
             WorktreeCleanupMode.Old => "Age uses file changes and Git activity, not access. Unmerged commits stay in their branches. Local changes are protected.",
             WorktreeCleanupMode.Integrated => "Age is ignored. Uses locally cached upstream/default refs; no fetch. Local changes are protected; branches are kept.",
             _ => "Age uses file changes and Git activity, not access. Uses cached upstream refs. Local changes are protected; branches are kept."
         };
+        WorktreeRuleHint.Text = policy.Mode == WorktreeCleanupMode.Old
+            ? "Local changes protected · Branches kept"
+            : "Cached upstream refs · Local changes protected · Branches kept";
         var group = _cleanupGroups.FirstOrDefault(item => item.Key == "cleanup:old-worktrees");
         SelectWorktreeMatchesButton.IsEnabled = group is { Locations.Count: > 0 };
         WorktreeCheckSummary.Text = _worktreeAssessments.Count == 0
-            ? $"{total:N0} worktrees found · Check worktrees to see which match."
+            ? $"{total:N0} worktrees · Not checked"
             : $"{matching.Count:N0} {(matching.Count == 1 ? "worktree matches" : "worktrees match")} · {SizeText.Format(group?.ObservedBytes ?? 0)} observed · {_worktreeAssessments.Count:N0} of {total:N0} checked";
     }
 

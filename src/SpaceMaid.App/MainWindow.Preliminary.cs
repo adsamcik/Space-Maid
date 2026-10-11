@@ -11,18 +11,18 @@ public partial class MainWindow
     {
         _preliminary = preliminary;
         if (!_preliminaryUserSorted) _preliminarySortColumn = preliminary.HasAllocationData ? ScanSortColumn.Allocated : ScanSortColumn.Logical;
-        PreliminaryCaption.Text = "Scanning… Folder totals and cleanup estimates will appear when ready.";
+        PreliminaryCaption.Text = "Scanning…";
         PreliminaryHint.Text = "Waiting for file metadata…";
         RefreshPreliminaryRows();
         PreliminaryHint.Visibility = preliminary.LargestFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ScannedSizeLabel.Text = preliminary.HasAllocationData ? "PRELIMINARY" : "PRELIMINARY LOGICAL";
         ScannedSizeText.Text = SizeText.Format(preliminary.HasAllocationData ? preliminary.AllocatedBytes : preliminary.LogicalBytes);
         ScannedSizeCaption.Text = preliminary.HasAllocationData
-            ? $"{SizeText.Format(preliminary.LogicalBytes)} logical · Files counted once"
+            ? $"{SizeText.Format(preliminary.LogicalBytes)} logical"
             : "Logical sizes only · Hard links may repeat";
         PreliminaryNote.Text = preliminary.HasAllocationData
-            ? "Up to 100 files · Shared file allocation counted once · Unresolved paths are marked pending"
-            : "Up to 100 files · Hard links may repeat without file identities · Unresolved paths are marked pending";
+            ? "Largest 100 files · Shared files counted once"
+            : "Largest 100 files · Hard links may repeat";
         View_Changed(this, new RoutedEventArgs());
     }
 
@@ -33,7 +33,7 @@ public partial class MainWindow
         _preliminaryDescending = true;
         _preliminaryUserSorted = false;
         PreliminaryFiles.ItemsSource = null;
-        PreliminaryCaption.Text = "Scanning… Folder totals and cleanup estimates will appear when ready.";
+        PreliminaryCaption.Text = "Scanning…";
         PreliminaryHint.Text = "Waiting for file metadata…";
         View_Changed(this, new RoutedEventArgs());
     }
@@ -51,9 +51,9 @@ public partial class MainWindow
         _preliminaryDescending = descending;
         _preliminaryUserSorted = userSorted;
         ShowPreliminary(preliminary);
-        PreliminaryCaption.Text = "Scan cancelled · These partial results cover only metadata read before cancellation.";
+        PreliminaryCaption.Text = "Scan cancelled · Partial results";
         PreliminaryHint.Text = "No file metadata was read before cancellation.";
-        CandidateCaption.Text = "Unavailable for a cancelled scan";
+        CandidateCaption.Text = "Unavailable · Cancelled";
     }
 }
 

@@ -53,19 +53,35 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public string Size => Matches.Any(row => row.IsUnmeasured)
         ? Group.ObservedBytes == 0 ? "Not checked" : SizeText.Format(Group.ObservedBytes) + " +"
         : SizeText.Format(Group.ObservedBytes);
-    public string Summary => Group.Summary;
+    public string Summary => Group.Key switch
+    {
+        "cleanup:build" => "Build output · Stop builds first",
+        "cleanup:cache" => "Package downloads · Keep what you need offline",
+        "cleanup:tools" => "Build, test and analysis caches · Stop tools first",
+        "cleanup:tests" => "Reports and recordings · Keep useful evidence",
+        "cleanup:downloads" => "Build and test tools · Downloads may be needed again",
+        "cleanup:editor" => "Close Visual Studio · Local settings may be lost",
+        "cleanup:dependencies" => "Installed packages · Keep local changes",
+        "cleanup:old-worktrees" => "Clean checkouts · Includes ignored files · Branches kept",
+        "cleanup:environments" => "Keep interpreter and dependency records",
+        "cleanup:agent" => "Sessions and logs · Keep recovery information",
+        "cleanup:worktrees" => "Check activity and upstream status before cleanup",
+        "cleanup:other" => "Inspect contents before cleanup",
+        _ => Group.Summary
+    };
     public string Kind => Group.Kind;
     public IReadOnlyList<OpportunityGroupRow> Children { get; } = showChildren ? CreateChildren(group, matches) : [];
     public bool HasChildren => Children.Count > 0;
     public string BreakdownHeading => Group.Key == "cleanup:build" ? "By language and project" : "By tool and project";
     public string ProjectCount => $"{Group.Children?.Count ?? 0:N0} {(Group.Children?.Count == 1 ? "project" : "projects")}";
     public bool CanSelectGroup => Group.Key != "cleanup:worktrees";
-    public string SelectionHint => CanSelectGroup ? "Select this group for fresh validation and cleanup review."
-        : "Use Check worktrees and adjust the worktree cleanup rule to find matching clean checkouts. View folders to inspect the other checkouts.";
+    public string SelectionHint => CanSelectGroup ? "Check and review this group."
+        : "Check worktrees to find clean matches, or view folders to inspect them.";
     public bool? Checked => _selected == 0 ? false : _selected == Matches.Count ? true : null;
-    public string Count => (Matches.Count == Group.Locations.Count ? $"{Matches.Count:N0} locations" : $"{Matches.Count:N0} of {Group.Locations.Count:N0} locations")
+    public string Count => $"{Matches.Count:N0}" + (Matches.Count == Group.Locations.Count ? "" : $" of {Group.Locations.Count:N0}")
+        + $" {(Group.Locations.Count == 1 ? "location" : "locations")}"
         + (_selected > 0 ? $" · {_selected:N0} selected" : "");
-    public string Description => $"{Name}, {Path}, {Size} observed candidate size. {Count}. {Group.Kind}.";
+    public string Description => $"{Name}, {Path}, {Size} observed candidate size. {Count}. {Group.Kind}. {Group.Summary}";
     public void SetSelectedCount(int count)
     {
         foreach (var child in Children) child.SetSelectedCount(child.Matches.Count(row => row.Selected));

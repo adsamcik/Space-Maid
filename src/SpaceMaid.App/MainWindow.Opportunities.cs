@@ -137,16 +137,19 @@ public partial class MainWindow
             OpportunityGroupList.SelectedItem = _opportunityGroupRows.FirstOrDefault(group => group.Group.Key == _activeOpportunityGroup);
         }
         finally { _syncOpportunityBrowser = false; }
-        GroupNavigationSummary.Text = $"{_opportunityGroupRows.Count:N0} of {definitions.Count:N0} {(detailScope ? "projects" : "groups")}";
-        GroupSizeNote.Text = "Observed group totals. " + (byType ? "Sizes may overlap across types. " : "Overlapping folders counted once per group. ")
-            + (_snapshot?.HasAllocationData == false ? "Logical size; physical savings unknown." : "Observed allocation; savings need review.");
+        GroupNavigationSummary.Text = $"{_opportunityGroupRows.Count:N0}"
+            + (_opportunityGroupRows.Count == definitions.Count ? "" : $" of {definitions.Count:N0}")
+            + " " + (detailScope ? definitions.Count == 1 ? "project" : "projects" : definitions.Count == 1 ? "group" : "groups");
+        GroupSizeNote.Text = _snapshot?.HasAllocationData == false ? "Logical size · Physical savings unknown" : "Estimates · Review before cleanup";
+        GroupSizeNote.ToolTip = byType ? "Sizes may overlap across types." : "Overlapping folders are counted once per group.";
         AllOpportunitiesButton.Content = $"All locations · {_matchingOpportunityRows.Count:N0}";
         CleanupScopeText.Visibility = detailScope ? Visibility.Visible : Visibility.Collapsed;
         CleanupScopeText.Text = detailScope ? _cleanupDetailParentName + " › " + _cleanupDetailName : "";
         CleanupOverviewNote.Text = _snapshot is null ? "Scan a drive to find cleanup groups."
             : _cleanupGroups.Count == 0 ? "No matching development folders found."
             : (_snapshot.HasAllocationData ? "Observed allocation" : "Logical size · Physical savings unknown")
-                + " · Groups can overlap; review counts nested folders once. Recycled files occupy space until the bin is emptied.";
+                + " · Groups may overlap";
+        CleanupOverviewNote.ToolTip = "Review counts nested folders once. Empty the Recycle Bin to free space.";
         DisplayOpportunityRows(detailPath);
     }
     private void OpportunityGroup_Changed(object sender, SelectionChangedEventArgs e)
@@ -184,16 +187,16 @@ public partial class MainWindow
             ?? _visibleOpportunityRows.FirstOrDefault();
         OpportunityHeading.Text = active?.Name ?? (missingProject ? _cleanupProjectScope!.Name : _cleanupDetailKey is not null ? _cleanupDetailName : "All locations");
         OpportunityScopeText.Text = active?.Path ?? (missingProject ? _cleanupProjectScope!.Path : _snapshot?.RootPath) ?? "";
-        OpportunityResultSummary.Text = missingProject ? "No matching folders remain in this project. Choose another project or All locations."
-            : active is null ? _cleanupDetailKey is not null
-            ? $"{rows.Count:N0} of {(_cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey)?.Locations.Count ?? 0):N0} locations · All projects"
-            : $"{rows.Count:N0} of {_rows.Count:N0} locations · All groups"
-            : $"{rows.Count:N0} of {active.Group.Locations.Count:N0} locations · {active.Group.Kind}";
+        int total = active?.Group.Locations.Count ?? (_cleanupDetailKey is not null
+            ? _cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey)?.Locations.Count ?? 0 : _rows.Count);
+        OpportunityResultSummary.Text = missingProject ? "No matching folders remain in this project."
+            : $"{rows.Count:N0}" + (rows.Count == total ? "" : $" of {total:N0}")
+                + $" {(total == 1 ? "folder" : "folders")}" + (active is null ? "" : $" · {active.Group.Kind}");
         EmptyState.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyTitle.Text = _snapshot is null ? "Find room for your next project." : _rows.Count == 0 ? "No matching development clutter." : "No matching locations.";
-        EmptyCaption.Text = missingProject ? "Return to Cleanup groups, choose another project, or use All locations."
-            : _snapshot is null ? "Scan a drive to review build output, caches,\nenvironments, and files left by coding agents."
-            : _rows.Count == 0 ? "No matching development clutter was found in the accessible files." : "Clear the search or change the type filter to see more locations.";
+        EmptyTitle.Text = _snapshot is null ? "Find cleanup opportunities" : _rows.Count == 0 ? "No cleanup opportunities found" : "No matching folders";
+        EmptyCaption.Text = missingProject ? "Choose another project or All locations."
+            : _snapshot is null ? "Scan a drive to start."
+            : _rows.Count == 0 ? "In the accessible files." : "Clear search or change filters.";
         UpdateSelection();
     }
     private void CleanupGroupSelection_Click(object sender, RoutedEventArgs e)
@@ -260,12 +263,12 @@ public partial class MainWindow
         int hidden = selected - _visibleOpportunityRows.Count(row => row.Selected);
         bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown;
         SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected"
-            + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "Select locations to review cleanup";
+            + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "Select folders to review";
         if (overview)
         {
             int groups = _opportunityGroupRows.Count(group => group.Matches.Any(row => row.Selected));
-            SelectionText.Text = selected > 0 ? $"{groups:N0} {(groups == 1 ? "group" : "groups")} selected · {selected:N0} folders"
-                : "Choose the groups you want to review";
+            SelectionText.Text = selected > 0 ? $"{groups:N0} {(groups == 1 ? "group" : "groups")} selected · {selected:N0} {(selected == 1 ? "folder" : "folders")}"
+                : "Select groups to review";
         }
         ReviewButton.IsEnabled = selected > 0 && _work is null;
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null;
@@ -276,10 +279,10 @@ public partial class MainWindow
             : _worktreeAssessments.Count < worktrees ? "Check remaining worktrees" : "Recheck worktrees";
         foreach (var group in _opportunityGroupRows) group.SetSelectedCount(group.Matches.Count(row => row.Selected));
         OpportunityFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
-        OpportunityFreshnessText.Text = "Some results are out of date. Review rechecks the selected locations.";
+        OpportunityFreshnessText.Text = "Out of date · Review rechecks your selection";
         CleanupFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
         CleanupFreshnessText.Text = OpportunityFreshnessText.Text;
         OpportunitiesTab.Content = _scanStale ? "Opportunities · Out of date" : _snapshot is null ? "Opportunities"
-            : OpportunityGroupingPicker.SelectedIndex == 0 ? $"Opportunities · {_cleanupGroups.Count:N0} groups" : $"Opportunities · {_rows.Count:N0}";
+            : OpportunityGroupingPicker.SelectedIndex == 0 ? $"Opportunities · {_cleanupGroups.Count:N0} {(_cleanupGroups.Count == 1 ? "group" : "groups")}" : $"Opportunities · {_rows.Count:N0}";
     }
 }

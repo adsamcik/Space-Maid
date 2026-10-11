@@ -8,14 +8,16 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,18">
             <TextBlock Text="Review cleanup" FontSize="27" FontWeight="SemiBold" />
-            <TextBlock Text="Review the exact folders and cautions before moving their current contents to the Recycle Bin. Stop active tools first; synced-folder deletions can also affect cloud copies and other devices." TextWrapping="Wrap" Opacity="0.7" Margin="0,6,0,0" />
-            <TextBlock x:Name="ValidationText" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock Text="Includes all current contents. Stop active tools. Synced deletions can affect cloud copies and other devices." TextWrapping="Wrap" Opacity="0.7" Margin="0,6,0,0" />
+            <Expander x:Name="ValidationDetails" Header="Check details" Margin="0,8,0,0" Visibility="Collapsed">
+                <TextBlock x:Name="ValidationText" TextWrapping="Wrap" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
+            </Expander>
         </StackPanel>
         <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,18">
             <StackPanel>
                 <TextBlock x:Name="EstimateText" FontSize="28" FontWeight="SemiBold" />
                 <TextBlock x:Name="EstimateCaption" Opacity="0.7" TextWrapping="Wrap" Margin="0,6,0,0" />
-                <Expander Header="How to read this estimate" Margin="0,12,0,0">
+                <Expander Header="Estimate details" Margin="0,12,0,0">
                     <TextBlock x:Name="CautionText" TextWrapping="Wrap" Margin="0,10,0,0" FontSize="12" />
                 </Expander>
             </StackPanel>
@@ -30,10 +32,14 @@
                         <StackPanel>
                             <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" />
                             <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" Margin="0,8,0,10" FontSize="12" AutomationProperties.Name="Exact path" />
-                            <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,8,0,0" Opacity="0.75" />
+                            <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite" />
+                            <Expander Header="Details" Margin="0,8,0,0">
+                                <StackPanel Margin="0,8,0,0">
+                                    <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,8,0,0" Opacity="0.75" />
+                                </StackPanel>
+                            </Expander>
                         </StackPanel>
                     </Border>
                 </DataTemplate>
@@ -41,10 +47,10 @@
         </ListBox>
         <StackPanel Grid.Row="3" Margin="0,14,0,0">
             <ProgressBar x:Name="CleanupProgressBar" Height="4" Visibility="Collapsed" Margin="0,0,0,8" />
-            <TextBlock x:Name="ResultText" Text="No changes until you confirm. Recycled data keeps occupying space until the bin is emptied." TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock x:Name="ResultText" Text="Empty the Recycle Bin to free space." TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10" AutomationProperties.LiveSetting="Polite" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="CleanupButton" Content="Move to Recycle Bin" IsEnabled="False" Click="Cleanup_Click" Margin="0,0,12,0" />
-                <Button x:Name="CloseButton" Content="Keep folders" Click="Close_Click" IsDefault="True" />
+                <Button x:Name="CloseButton" Content="Cancel" Click="Close_Click" IsDefault="True" />
             </StackPanel>
         </StackPanel>
     </Grid>

@@ -88,13 +88,13 @@ public partial class MainWindow : Window
         DetailPanel.Visibility = Visibility.Collapsed;
         DetailHint.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Visible;
-        EmptyCaption.Text = "Scan a drive to review build output, caches,\nenvironments, and files left by coding agents.";
+        EmptyCaption.Text = "Scan a drive to start.";
         ScannedSizeText.Text = CandidateText.Text = "—";
         ScannedSizeLabel.Text = "Scanned";
-        ScannedSizeCaption.Text = "Allocated · Shared files counted once";
+        ScannedSizeCaption.Text = "On disk";
         OpportunityHeading.Text = "Opportunities";
         OpportunitiesTab.Content = "Opportunities";
-        CandidateCaption.Text = "Estimate · Subject to review";
+        CandidateCaption.Text = "Estimate";
         DetailsButton.Visibility = Visibility.Collapsed;
         UpdateSelection();
     }
@@ -116,14 +116,14 @@ public partial class MainWindow : Window
             Build = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
             Runtime = Environment.Version.ToString(), OperatingSystem = Environment.OSVersion.ToString(), ProcessId = Environment.ProcessId });
         SetBusy(true);
-        EmptyCaption.Text = "Reading file metadata. You can cancel at any time.";
-        CandidateCaption.Text = "Available when the scan finishes";
+        EmptyCaption.Text = "Scanning…";
+        CandidateCaption.Text = "Scanning…";
         bool acquiring = true;
         var progress = new ScanUiProgress(p =>
         {
             if (!_closing && acquiring && ReferenceEquals(_work, work))
             {
-                StatusText.Text = $"{p.Phase} · {p.Files:N0} file objects · {p.Elapsed.TotalSeconds:0.0}s";
+                StatusText.Text = $"{p.Phase} · {p.Files:N0} files · {p.Elapsed.TotalSeconds:0.0}s";
                 BackendStatusText.Text = p.Backend + (p.FallbackReason is null ? "" : $" · {p.FallbackReason}")
                     + (log.Error is null ? "" : $" · Logging unavailable: {log.Error}");
                 if (p.Preliminary is { } preliminary) ShowPreliminary(preliminary);
@@ -150,7 +150,7 @@ public partial class MainWindow : Window
             _scanHelper?.Dispose(); _scanHelper = null;
             if (_closing) return;
             if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
-            PreliminaryCaption.Text = "Preparing folder totals and cleanup estimates… These results are preliminary.";
+            PreliminaryCaption.Text = "Preparing results…";
             BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : $" · {scan.FallbackReason}");
             StatusText.Text = "Finding development clutter…";
             log.Record("detection-start", new { scan.FileCount, scan.DirectoryCount });
@@ -172,11 +172,11 @@ public partial class MainWindow : Window
             ScannedSizeLabel.Text = "Scanned";
             ScannedSizeText.Text = SizeText.Format(scan.HasAllocationData ? scan.AllocatedBytes : scan.LogicalBytes);
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
-            CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "location" : "locations")} · overlapping paths counted once";
+            CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
-            ScannedSizeCaption.Text = scan.HasAllocationData ? "Allocated · Shared files counted once"
-                : "Logical · Physical allocation unavailable";
+            ScannedSizeCaption.Text = scan.HasAllocationData ? "On disk"
+                : "Logical · Size on disk unavailable";
             _presentationElapsed = presentation.Elapsed;
             using var diagnosticProcess = Process.GetCurrentProcess();
             log.Record("app-scan-complete", new { scan.Backend, scan.FallbackReason, scan.FileCount, scan.NameCount,
@@ -405,7 +405,7 @@ public partial class MainWindow : Window
         try
         {
             _scanHelper?.Dispose(); _scanHelper = await HelperLayoutSource.CreateAsync(true, work.Token);
-            _fastEnabled = true; StatusText.Text = "Fast scanning enabled. Standard scanning remains available for other drives.";
+            _fastEnabled = true; StatusText.Text = "Fast scanning enabled";
         }
         catch (Exception ex) when (ex is IOException or Win32Exception or InvalidDataException or OperationCanceledException)
         {
