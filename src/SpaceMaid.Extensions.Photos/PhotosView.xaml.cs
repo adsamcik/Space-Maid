@@ -1,29 +1,14 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media.Imaging;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.Extensions.Photos;
-
-internal sealed class PhotoDisplayRow(PhotoRow row, string root) : INotifyPropertyChanged
-{
-    public PhotoRow Row { get; } = row;
-    public string Folder { get; } = Path.GetRelativePath(root, Path.GetDirectoryName(row.Path)!) is { } parent && parent != "." ? parent : "";
-    public string LocationHint => Row.Path + "\n" + Row.Status;
-    public BitmapSource? Preview { get; private set; }
-    public string PreviewStatus { get; private set; } = row.ContentAvailable ? row.AnalysisCurrent ? "Waiting for preview" : "Analyze to enable previews" : "Offline/reparse preview unavailable";
-    public string PreviewHint => Preview is not null ? "" : !Row.ContentAvailable ? "Offline" : !Row.AnalysisCurrent ? "Analyze" : PreviewStatus == "Waiting for preview" ? "Loading…" : "Unavailable";
-    public bool Requested { get; set; }
-    public void SetPreview(PhotoThumbnail result)
-    {
-        Preview = result.Image; PreviewStatus = result.Status;
-        PropertyChanged?.Invoke(this, new(nameof(Preview))); PropertyChanged?.Invoke(this, new(nameof(PreviewStatus))); PropertyChanged?.Invoke(this, new(nameof(PreviewHint)));
-    }
-    public event PropertyChangedEventHandler? PropertyChanged;
-}
 
 public partial class PhotosView : UserControl
 {
@@ -32,12 +17,18 @@ public partial class PhotosView : UserControl
     private readonly PhotosService _service;
     private readonly ThumbnailCache _thumbnails;
     private readonly CancellationToken _lifetime;
-    private CancellationTokenSource? _operation, _pageRequests;
+    private CancellationTokenSource? _operation, _pageRequests, _pageQuery;
     private PhotoMode _mode;
     private PhotoSort _sort = PhotoSort.Name;
     private bool _descending, _busy, _started, _suppressCollection;
     private int _page;
-    private long _total, _pageGeneration;
+    private long _total, _pageGeneration, _collectionGeneration, _selectionGeneration;
+    private readonly ObservableCollection<PhotoDisplayCollection> _collections = [];
+    private readonly ObservableCollection<PhotoDisplayRow> _rows = [];
+    private bool _applyingPage;
+    private long _viewportInteraction;
+    private long? _displayedCollection;
+    private PhotoMode _displayedMode;
     private readonly HashSet<Task> _tasks = [];
     private readonly object _taskGate = new();
     private bool _shuttingDown;
@@ -46,15 +37,21 @@ public partial class PhotosView : UserControl
     private enum EmptyAction { Add, Browse, Analyze, Refresh, Retry }
     private EmptyAction _emptyAction;
     private long _operationGeneration;
-    private PhotoCollection? Collection => CollectionList.SelectedItem as PhotoCollection;
+    private PhotoCollection? Collection => (CollectionList.SelectedItem as PhotoDisplayCollection)?.Value;
     internal PhotosView(IExtensionHost host, PhotoCatalog catalog, CancellationToken lifetime)
     {
         _host = host; _catalog = catalog; _lifetime = lifetime;
         _service = new(host, catalog); _thumbnails = new(host);
         InitializeComponent();
+        CollectionList.ItemsSource = _collections;
+        FileList.ItemsSource = _rows;
+        FileList.PreviewMouseWheel += (_, _) => _viewportInteraction++;
+        FileList.PreviewMouseDown += (_, _) => _viewportInteraction++;
+        FileList.PreviewKeyDown += (_, _) => _viewportInteraction++;
+        FileList.PreviewTouchDown += (_, _) => _viewportInteraction++;
         FileList.Columns.First(column => column.SortMemberPath == "Name").SortDirection = ListSortDirection.Ascending;
         Loaded += View_Loaded;
-        Unloaded += (_, _) => { if (!_shuttingDown) _pageRequests?.Cancel(); };
+        Unloaded += (_, _) => { if (!_shuttingDown) { _pageRequests?.Cancel(); _pageQuery?.Cancel(); } };
     }
     private async void View_Loaded(object sender, RoutedEventArgs e)
     { await Track(InitializeViewAsync()); }
@@ -74,13 +71,25 @@ public partial class PhotosView : UserControl
     private Task LoadCollectionsAsync(long? select = null) => Track(LoadCollectionsCoreAsync(select));
     private async Task LoadCollectionsCoreAsync(long? select)
     {
-        var wanted = select ?? Collection?.Id;
+        var generation = ++_collectionGeneration;
         var collections = await Task.Run(_catalog.Collections, _lifetime);
+        if (_shuttingDown || generation != _collectionGeneration) return;
+        var wanted = select ?? Collection?.Id;
         _suppressCollection = true;
         try
         {
-            CollectionList.ItemsSource = collections;
-            CollectionList.SelectedItem = collections.FirstOrDefault(x => x.Id == wanted) ?? collections.FirstOrDefault();
+            var ids = collections.Select(x => x.Id).ToHashSet();
+            for (var index = _collections.Count - 1; index >= 0; index--)
+                if (!ids.Contains(_collections[index].Id)) _collections.RemoveAt(index);
+            for (var index = 0; index < collections.Count; index++)
+            {
+                var value = collections[index];
+                var item = _collections.FirstOrDefault(x => x.Id == value.Id);
+                if (item is null) _collections.Insert(index, item = new(value));
+                else { item.Update(value); if (_collections.IndexOf(item) != index) _collections.Move(_collections.IndexOf(item), index); }
+            }
+            var selected = _collections.FirstOrDefault(x => x.Id == wanted) ?? _collections.FirstOrDefault();
+            if (!ReferenceEquals(CollectionList.SelectedItem, selected)) CollectionList.SelectedItem = selected;
         }
         finally { _suppressCollection = false; }
         UpdateControls();
@@ -92,32 +101,37 @@ public partial class PhotosView : UserControl
         if (_shuttingDown || !IsInitialized) return;
         if (Collection is not { } collection)
         {
-            _pageGeneration++; _pageRequests?.Cancel(); FileList.ItemsSource = null; _total = 0;
+            _pageGeneration++; _pageQuery?.Cancel(); _pageRequests?.Cancel(); _rows.Clear(); _total = 0; _displayedCollection = null;
             UpdateEmptyState(null, null); UpdateControls(); return;
         }
         var generation = ++_pageGeneration;
-        var selectedPath = (FileList.SelectedItem as PhotoDisplayRow)?.Row.Path;
-        _pageRequests?.Cancel(); _pageRequests?.Dispose(); _pageRequests = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
-        var token = _pageRequests.Token; var watch = Stopwatch.StartNew();
-        if (FileList.Items.Count == 0)
+        var mode = _mode; var sort = _sort; var descending = _descending; var requestedPage = _page;
+        if (_pageRequests is null || _pageRequests.IsCancellationRequested) ResetPreviewRequests();
+        _pageQuery?.Cancel(); _pageQuery?.Dispose(); _pageQuery = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
+        var token = _pageQuery.Token; var watch = Stopwatch.StartNew();
+        if (_displayedCollection != collection.Id)
         {
-            FileList.Visibility = Visibility.Collapsed; EmptyPanel.Visibility = Visibility.Visible;
+            _rows.Clear();
             SetEmpty("Loading photos…", "Loading this collection's saved results.", EmptyAction.Retry, "Try again");
             EmptyActionButton.Visibility = Visibility.Collapsed;
+            FileList.Visibility = Visibility.Collapsed; EmptyPanel.Visibility = Visibility.Visible;
             UpdateCoverageNotice(collection, null);
         }
         try
         {
-            var result = await Task.Run(() => _catalog.Page(collection.Id, _mode, _sort, _descending, _page), token);
+            var result = await Task.Run(() => _catalog.Page(collection.Id, mode, sort, descending, requestedPage), token);
+            token.ThrowIfCancellationRequested();
             var lastJob = await Task.Run(() => _catalog.LastJob(collection.Id), token);
-            if (generation != _pageGeneration || token.IsCancellationRequested) return;
+            if (generation != _pageGeneration || token.IsCancellationRequested || Collection?.Id != collection.Id) return;
+            // A newly requested page can win the race to the catalog before
+            // BeginDiscovery runs. Refresh has already revoked the UI's trust.
+            if (_discovering) result = mode == PhotoMode.Duplicates ? new([], 0, 0) :
+                result with { Rows = result.Rows.Select(row => WithoutAnalysis(row, mode)).ToArray() };
             _page = result.Page; _total = result.Total;
-            GroupColumn.Visibility = _mode == PhotoMode.Browse ? Visibility.Collapsed : Visibility.Visible;
-            FileList.ItemsSource = result.Rows.Select(x => new PhotoDisplayRow(x, collection.Root)).ToArray();
-            // Replacing ItemsSource clears WPF's sort arrows even when our
-            // catalog supplied the ordering. Restore them with the new page.
+            GroupColumn.Visibility = mode == PhotoMode.Browse ? Visibility.Collapsed : Visibility.Visible;
+            ApplyPage(result, collection, mode, generation);
             foreach (var column in FileList.Columns)
-                column.SortDirection = column.SortMemberPath == _sort.ToString() ? _descending ? ListSortDirection.Descending : ListSortDirection.Ascending : null;
+                column.SortDirection = column.SortMemberPath == sort.ToString() ? descending ? ListSortDirection.Descending : ListSortDirection.Ascending : null;
             UpdateEmptyState(collection, lastJob);
             UpdateCoverageNotice(collection, lastJob);
             CoverageText.Text = $"{collection.Status} · Observed {DisplayDate(collection.Observed)}\n" + (_mode switch
@@ -129,12 +143,91 @@ public partial class PhotosView : UserControl
             if (_discovering) CoverageText.Text = "Preliminary metadata · Unvisited locations retain earlier observations.\n" + CoverageText.Text;
             PageText.Text = $"{_page * 100 + 1:N0}–{_page * 100 + result.Rows.Count:N0} of {_total:N0} files";
             PageText.ToolTip = $"Sorted by {_sort} ({(_descending ? "descending" : "ascending")}) · 100 rows per page";
-            FileList.SelectedItem = ((PhotoDisplayRow[])FileList.ItemsSource).FirstOrDefault(x => x.Row.Path == selectedPath);
             UpdateControls();
+            foreach (var row in _rows)
+                if (FileList.ItemContainerGenerator.ContainerFromItem(row) is DataGridRow) _ = PreviewAsync(row);
             _host.Log("photos-page", new { collection.Id, Mode = _mode.ToString(), Page = _page, Rows = result.Rows.Count, Total = result.Total, ElapsedMs = watch.ElapsedMilliseconds });
         }
         catch (OperationCanceledException) { }
         catch (Exception error) { ShowFailure(error); }
+    }
+
+    private void ApplyPage(PhotoPage page, PhotoCollection collection, PhotoMode mode, long generation)
+    {
+        var selected = FileList.SelectedItem as PhotoDisplayRow;
+        var selectedChanged = _displayedMode != mode;
+        var structureChanged = false;
+        // Capture at publication, so scrolling or selection while the database
+        // query runs is respected. Only this bounded page is reconciled.
+        var scroll = FindVisualChild<ScrollViewer>(FileList);
+        var vertical = scroll?.VerticalOffset ?? 0; var horizontal = scroll?.HorizontalOffset ?? 0;
+        var anchor = scroll?.CanContentScroll == true && VirtualizingPanel.GetScrollUnit(FileList) == ScrollUnit.Item && _rows.Count > 0
+            ? _rows[Math.Min((int)vertical, _rows.Count - 1)] : null;
+        _applyingPage = true;
+        try
+        {
+            var paths = page.Rows.Select(x => x.Path).ToHashSet(StringComparer.Ordinal);
+            for (var index = _rows.Count - 1; index >= 0; index--)
+                if (!paths.Contains(_rows[index].Row.Path)) { _rows.RemoveAt(index); structureChanged = true; }
+            var existing = _rows.ToDictionary(x => x.Row.Path, StringComparer.Ordinal);
+            for (var index = 0; index < page.Rows.Count; index++)
+            {
+                var value = page.Rows[index];
+                if (!existing.TryGetValue(value.Path, out var display)) { _rows.Insert(index, new(value, collection.Root)); structureChanged = true; }
+                else
+                {
+                    if (display.Update(value) && ReferenceEquals(display, selected)) selectedChanged = true;
+                    var before = _rows.IndexOf(display);
+                    if (before != index) { _rows.Move(before, index); structureChanged = true; }
+                }
+            }
+            var retained = selected is not null && _rows.Contains(selected) ? selected : null;
+            if (!ReferenceEquals(FileList.SelectedItem, retained)) FileList.SelectedItem = retained;
+            selectedChanged |= !ReferenceEquals(selected, retained);
+        }
+        finally { _applyingPage = false; }
+        _displayedCollection = collection.Id; _displayedMode = mode;
+        // Stop queued work for an old page/order, retaining decoded images for
+        // surviving rows. An unchanged page keeps its in-flight requests too.
+        if (structureChanged) ResetPreviewRequests();
+        if (selectedChanged) _ = Track(SelectionAsync());
+        if (scroll is not null && structureChanged)
+        {
+            if (anchor is not null && _rows.Contains(anchor)) vertical = _rows.IndexOf(anchor) + vertical - Math.Floor(vertical);
+            // Let WPF process the small collection delta before restoring its
+            // viewport. A later query/user scroll wins over this restoration.
+            var interaction = _viewportInteraction;
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                if (generation != _pageGeneration || interaction != _viewportInteraction) return;
+                scroll.ScrollToVerticalOffset(vertical); scroll.ScrollToHorizontalOffset(horizontal);
+            }, DispatcherPriority.Loaded);
+        }
+    }
+
+    private void ResetPreviewRequests()
+    {
+        _pageRequests?.Cancel(); _pageRequests?.Dispose();
+        _pageRequests = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
+        foreach (var row in _rows) row.CancelPreviewRequest();
+    }
+    private static PhotoRow WithoutAnalysis(PhotoRow row, PhotoMode mode) => row with
+    {
+        AnalysisCurrent = false, Hash = null, Verified = null, Format = null,
+        Width = null, Height = null, Orientation = null, Captured = null,
+        Status = row.AnalysisCurrent ? "Earlier observation · Refreshing metadata" : row.Status,
+        GroupLabel = mode == PhotoMode.Families ? row.GroupLabel : null,
+        GroupCount = mode == PhotoMode.Families ? row.GroupCount : 0
+    };
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T found) return found;
+            if (FindVisualChild<T>(child) is { } nested) return nested;
+        }
+        return null;
     }
     private async void Add_Click(object sender, RoutedEventArgs e)
     {
@@ -215,15 +308,26 @@ public partial class PhotosView : UserControl
     private async Task RunCoreAsync(string phase, Func<IProgress<ExtensionJobProgress>, CancellationToken, Task> work, bool discovering)
     {
         if (_busy) return;
-        _busy = true; _discovering = discovering; _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime); _pageRequests?.Cancel(); UpdateControls();
+        _busy = true; _discovering = discovering; _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
+        _pageGeneration++; _pageQuery?.Cancel(); ResetPreviewRequests();
+        if (discovering)
+        {
+            // Discovery revokes content authorization for the whole collection,
+            // including locations not yet visited. Keep row/selection identity,
+            // but never present the previous analysis as current evidence.
+            foreach (var row in _rows) row.Update(WithoutAnalysis(row.Row, _mode) with { Status = "Earlier observation · Refreshing metadata" });
+            _ = Track(SelectionAsync());
+        }
+        UpdateControls();
         SetNotice(phase); JobProgress.Visibility = Visibility.Visible;
         var refreshClock = Stopwatch.StartNew();
+        var acceptProgress = true;
         var operationGeneration = ++_operationGeneration;
         var operationCollection = Collection?.Id;
         var operationName = Collection?.Name ?? "Photos";
         var progress = new Progress<ExtensionJobProgress>(value =>
         {
-            if (_shuttingDown || !_busy || operationGeneration != _operationGeneration) return;
+            if (_shuttingDown || !_busy || !acceptProgress || operationGeneration != _operationGeneration) return;
             StatusText.Text = $"{operationName} · {value.Phase} · {value.Completed:N0}" + (value.BytesRead > 0 ? $" · {PhotoFormatting.Bytes(value.BytesRead)} read" : "") + (value.Message is null ? "" : $" · {value.Message}");
             if (_discovering && !_liveRefresh && refreshClock.ElapsedMilliseconds >= 1000)
             { refreshClock.Restart(); _liveRefresh = true; _ = Track(RefreshCommittedPageAsync()); }
@@ -231,6 +335,7 @@ public partial class PhotosView : UserControl
         try
         {
             await work(progress, _operation.Token);
+            acceptProgress = false;
             var completedJob = operationCollection is long id ? await Task.Run(() => _catalog.LastJob(id), _lifetime) : null;
             SetNotice((discovering ? "Discovery finished" : completedJob?.Contains("Completed", StringComparison.Ordinal) == true ? "Analysis complete" : "Analysis finished") + (completedJob is null ? "" : " · " + completedJob), completedJob?.Contains("NeedsAttention", StringComparison.Ordinal) == true);
         }
@@ -238,8 +343,14 @@ public partial class PhotosView : UserControl
         catch (Exception error) { ShowFailure(error); }
         finally
         {
-            _busy = false; _discovering = false; _operation.Dispose(); _operation = null; JobProgress.Visibility = Visibility.Collapsed; UpdateControls();
-            if (!_lifetime.IsCancellationRequested) await LoadCollectionsAsync();
+            acceptProgress = false; _discovering = false;
+            try { if (!_lifetime.IsCancellationRequested) await LoadCollectionsAsync(); }
+            catch (OperationCanceledException) { }
+            catch (Exception error) { ShowFailure(error); }
+            finally
+            {
+                _busy = false; _operation.Dispose(); _operation = null; JobProgress.Visibility = Visibility.Hidden; UpdateControls();
+            }
         }
     }
     private async Task RefreshCommittedPageAsync()
@@ -254,14 +365,14 @@ public partial class PhotosView : UserControl
     {
         if (_suppressCollection || !IsInitialized || _discovering) return;
         if (!_busy) SetNotice("", false);
-        _page = 0; _total = 0; FileList.ItemsSource = null; UpdateControls();
+        _page = 0; _total = 0; _rows.Clear(); _displayedCollection = null; ResetPreviewRequests(); UpdateControls();
         await LoadPageAsync();
     }
     private async void Mode_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized || FileList is null) return;
         _mode = sender == DuplicatesTab ? PhotoMode.Duplicates : sender == FamiliesTab ? PhotoMode.Families : PhotoMode.Browse;
-        _page = 0; await LoadPageAsync();
+        _page = 0; ResetPreviewRequests(); await LoadPageAsync();
     }
     private async void Files_Sorting(object sender, DataGridSortingEventArgs e)
     {
@@ -281,30 +392,37 @@ public partial class PhotosView : UserControl
     {
         if (display.Requested || _pageRequests is null || _discovering) return;
         display.Requested = true; var token = _pageRequests.Token;
+        var row = display.Row; var version = display.PreviewVersion;
         try
         {
-            var result = await _thumbnails.GetAsync(display.Row, token);
-            if (token.IsCancellationRequested) return;
-            display.SetPreview(result);
+            var result = await _thumbnails.GetAsync(row, token);
+            if (token.IsCancellationRequested || version != display.PreviewVersion || !_rows.Contains(display)) return;
+            display.TrySetPreview(result, version);
             if (result.Image is null && display.Row.AnalysisCurrent && display.Row.ContentAvailable) display.Requested = false;
             if (ReferenceEquals(FileList.SelectedItem, display)) UpdateSelectedPreview(display);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception error) { display.SetPreview(new(null, "Preview unavailable")); _host.Log("photos-preview-failure", new { Error = error.GetType().Name }); }
+        catch (OperationCanceledException) { if (version == display.PreviewVersion) display.Requested = false; }
+        catch (Exception error)
+        {
+            if (!token.IsCancellationRequested && _rows.Contains(display)) display.TrySetPreview(new(null, "Preview unavailable"), version);
+            _host.Log("photos-preview-failure", new { Error = error.GetType().Name });
+        }
     }
     private async void File_Changed(object sender, SelectionChangedEventArgs e)
-    { await Track(SelectionAsync()); }
+    { if (!_applyingPage) await Track(SelectionAsync()); }
     private async Task SelectionAsync()
     {
         try
         {
         if (_shuttingDown) return;
+        var generation = ++_selectionGeneration;
         if (FileList.SelectedItem is not PhotoDisplayRow row)
         {
             SelectionPanel.Visibility = Visibility.Collapsed; SelectedPreview.Source = null; SelectedPreview.Visibility = Visibility.Collapsed;
             SelectionText.Text = SelectedPathText.Text = SelectedNameText.Text = SelectedSummaryText.Text = PreviewStatusText.Text = "";
             RevealButton.IsEnabled = false; RetainButton.Visibility = Visibility.Collapsed; return;
         }
+        var snapshot = row.Row; var mode = _mode; var collectionId = Collection?.Id;
         SelectionPanel.Visibility = Visibility.Visible;
         SelectedNameText.Text = row.Row.Name; SelectedNameText.ToolTip = row.Row.Name;
         SelectedPathText.Text = row.Row.Path;
@@ -313,11 +431,10 @@ public partial class PhotosView : UserControl
         SelectionText.Text = row.Row.Detail + (row.Row.Hash is null ? "" : $"\nSHA-256 (default stream): {row.Row.Hash}") + (row.Row.GroupCount > 1 ? $"\n{row.Row.GroupCount:N0} distinct physical files in this group." : "");
         UpdateSelectedPreview(row); RevealButton.IsEnabled = true;
         await PreviewAsync(row);
-        if (Collection is { } collection)
+        if (collectionId is long id && generation == _selectionGeneration && ReferenceEquals(FileList.SelectedItem, row) && ReferenceEquals(snapshot, row.Row))
         {
-            var mode = _mode;
-            var related = await Task.Run(() => _catalog.ReviewLocations(collection.Id, row.Row, mode), _lifetime);
-            if (ReferenceEquals(FileList.SelectedItem, row)) SelectionText.Text += related;
+            var related = await Task.Run(() => _catalog.ReviewLocations(id, snapshot, mode), _lifetime);
+            if (generation == _selectionGeneration && Collection?.Id == id && _mode == mode && ReferenceEquals(FileList.SelectedItem, row) && ReferenceEquals(snapshot, row.Row)) SelectionText.Text += related;
         }
         }
         catch (OperationCanceledException) { }
@@ -325,7 +442,8 @@ public partial class PhotosView : UserControl
     }
     private void UpdateSelectedPreview(PhotoDisplayRow row)
     {
-        SelectedPreview.Source = row.Preview; SelectedPreview.Visibility = row.Preview is null ? Visibility.Collapsed : Visibility.Visible;
+        SelectedPreview.Source = row.Preview; SelectedPreview.Visibility = row.Preview is null ? Visibility.Hidden : Visibility.Visible;
+        SelectedPreviewPlaceholder.Visibility = row.Preview is null ? Visibility.Visible : Visibility.Hidden;
         PreviewStatusText.Text = row.Preview is null ? row.PreviewStatus : row.Row.Role == "RAW source" ? "RAW preview · May differ from current edits" : "Preview";
         PreviewStatusText.ToolTip = row.PreviewStatus;
     }
@@ -353,7 +471,7 @@ public partial class PhotosView : UserControl
         var hasCollection = Collection is not null;
         CollectionHeader.Visibility = ModeBar.Visibility = CollectionDetails.Visibility = hasCollection ? Visibility.Visible : Visibility.Collapsed;
         CollectionPathText.Text = Collection?.Root ?? "";
-        StatusBand.Visibility = _busy || _noticeVisible ? Visibility.Visible : Visibility.Collapsed;
+        StatusBand.Visibility = _busy || _noticeVisible ? Visibility.Visible : hasCollection ? Visibility.Hidden : Visibility.Collapsed;
         PageFooter.Visibility = FileList.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         PageButtons.Visibility = _total > 100 ? Visibility.Visible : Visibility.Collapsed;
         EmptyActionButton.IsEnabled = !_busy;
@@ -373,7 +491,10 @@ public partial class PhotosView : UserControl
         _host.Log("photos-workflow-failure", new { Error = error.GetType().Name });
     }
     private void SetNotice(string message, bool visible = true)
-    { StatusText.Text = message; _noticeVisible = visible; StatusBand.Visibility = _busy || visible ? Visibility.Visible : Visibility.Collapsed; }
+    {
+        StatusText.Text = message; _noticeVisible = visible;
+        StatusBand.Visibility = _busy || visible ? Visibility.Visible : Collection is not null ? Visibility.Hidden : Visibility.Collapsed;
+    }
     private Task Track(Task task)
     {
         lock (_taskGate) _tasks.Add(task);
@@ -382,10 +503,11 @@ public partial class PhotosView : UserControl
     }
     internal async Task ShutdownAsync()
     {
-        _shuttingDown = true; _operation?.Cancel(); _pageRequests?.Cancel();
+        _shuttingDown = true; _operation?.Cancel(); _pageRequests?.Cancel(); _pageQuery?.Cancel();
         Task[] tasks; lock (_taskGate) tasks = _tasks.ToArray();
         try { await Task.WhenAll(tasks); } catch (OperationCanceledException) { } catch (Exception) { /* Each view operation reports its own failure. */ }
         _pageRequests?.Dispose(); _pageRequests = null;
+        _pageQuery?.Dispose(); _pageQuery = null;
     }
     private static string DisplayDate(string? date) => DateTime.TryParse(date, out var value) ? value.ToLocalTime().ToString("g") : "never";
 }

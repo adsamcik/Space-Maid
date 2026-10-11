@@ -295,9 +295,30 @@ public sealed class DesktopTests
                     Assert.True(scanButton.IsEnabled); // Captured old-scan actions cannot operate on the refreshed inventory.
                 }
                 finally { DeletionTests.RestoreFixture(Assert.IsType<string>(recycled.RecycledPath), bin); }
+                // A small viewport exercises scrolling with the existing owned
+                // rows, without expanding every later native recheck fixture.
+                tree.Height = 40; window.UpdateLayout();
+                var treeScroll = Descendants(tree).OfType<ScrollViewer>().First();
+                treeScroll.ScrollToBottom(); window.UpdateLayout();
+                PumpUntil(() => treeScroll.VerticalOffset > 0, TimeSpan.FromSeconds(2));
+                var topTreePath = Assert.IsType<ExplorerRows>(tree.ItemsSource).Row((int)treeScroll.VerticalOffset).Path;
+                var sourceDescriptor = DependencyPropertyDescriptor.FromProperty(ItemsControl.ItemsSourceProperty, typeof(ListBox));
+                var publishedBlankTree = false; var publishedCollapsedBranch = false;
+                EventHandler observeTreePublication = (_, _) =>
+                {
+                    if (tree.ItemsSource is not ExplorerRows rows) { publishedBlankTree = true; return; }
+                    if (rows.Scan.FindEntry(project) is { } projectLink && !rows.IsExpanded(projectLink)) publishedCollapsedBranch = true;
+                };
+                sourceDescriptor.AddValueChanged(tree, observeTreePublication);
                 var refreshedExplorer = window.RecheckFolderAsync(project);
                 PumpUntil(() => refreshedExplorer.IsCompleted, TimeSpan.FromSeconds(10));
                 refreshedExplorer.GetAwaiter().GetResult();
+                sourceDescriptor.RemoveValueChanged(tree, observeTreePublication);
+                Assert.False(publishedBlankTree); Assert.False(publishedCollapsedBranch);
+                Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                window.UpdateLayout();
+                Assert.Equal(topTreePath, Assert.IsType<ExplorerRows>(tree.ItemsSource).Row((int)treeScroll.VerticalOffset).Path);
+                tree.Height = double.NaN; window.UpdateLayout();
                 window.SetBusy(false);
                 Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>())).Selected = true;
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
@@ -606,7 +627,7 @@ public sealed class DesktopTests
                 Assert.Equal("Try again", ((Button)photosView.FindName("EmptyActionButton")).Content);
                 ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((TextBlock)photosView.FindName("EmptyTitle")).Text == "No related files found", TimeSpan.FromSeconds(3));
-                Assert.Equal(Visibility.Collapsed, ((Grid)photosView.FindName("StatusBand")).Visibility);
+                Assert.Equal(Visibility.Hidden, ((Grid)photosView.FindName("StatusBand")).Visibility);
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-related-empty.png"), 1220, 940);
                 ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => photoFiles.Items.Count == 2, TimeSpan.FromSeconds(3));
@@ -629,7 +650,7 @@ public sealed class DesktopTests
                 photoFiles.SelectedIndex = 0; window.UpdateLayout();
                 Assert.Equal(Visibility.Visible, ((Border)photosView.FindName("SelectionPanel")).Visibility);
                 Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
-                Assert.Equal(Visibility.Collapsed, ((Image)photosView.FindName("SelectedPreview")).Visibility);
+                Assert.Equal(Visibility.Hidden, ((Image)photosView.FindName("SelectedPreview")).Visibility);
                 Assert.Contains("Analyze", ((TextBlock)photosView.FindName("PreviewStatusText")).Text);
                 ((Button)photosView.FindName("CloseSelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Assert.Null(photoFiles.SelectedItem); Assert.Equal(Visibility.Collapsed, ((Border)photosView.FindName("SelectionPanel")).Visibility);
@@ -645,6 +666,47 @@ public sealed class DesktopTests
                 var photoPreview = Assert.IsAssignableFrom<BitmapSource>(((Image)photosView.FindName("SelectedPreview")).Source);
                 Assert.InRange(photoPreview.PixelWidth, 1, 160); Assert.InRange(photoPreview.PixelHeight, 1, 160);
                 Assert.Contains("PNG", ((TextBox)photosView.FindName("SelectionText")).Text);
+                stage = "refreshing the saved photo page without rebuilding selection or previews";
+                var photoPicker = (ComboBox)photosView.FindName("CollectionList");
+                var pickerSource = photoPicker.ItemsSource; var pickerSelection = photoPicker.SelectedItem;
+                var photoSource = photoFiles.ItemsSource; var photoSelection = photoFiles.SelectedItem;
+                var rowContainer = photoFiles.ItemContainerGenerator.ContainerFromItem(photoSelection);
+                var changedSelection = 0; photoFiles.SelectionChanged += (_, _) => changedSelection++;
+                var collectionChanges = 0;
+                ((System.Collections.Specialized.INotifyCollectionChanged)photoSource).CollectionChanged += (_, _) => collectionChanges++;
+                var reloadPhotos = photosView.GetType().GetMethod("LoadCollectionsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var reload = (Task)reloadPhotos.Invoke(photosView, [null])!;
+                PumpUntil(() => reload.IsCompleted, TimeSpan.FromSeconds(3)); reload.GetAwaiter().GetResult(); window.UpdateLayout();
+                Assert.Same(pickerSource, photoPicker.ItemsSource); Assert.Same(pickerSelection, photoPicker.SelectedItem);
+                Assert.Same(photoSource, photoFiles.ItemsSource); Assert.Same(photoSelection, photoFiles.SelectedItem);
+                Assert.Same(rowContainer, photoFiles.ItemContainerGenerator.ContainerFromItem(photoSelection));
+                Assert.Same(photoPreview, ((Image)photosView.FindName("SelectedPreview")).Source);
+                Assert.Equal(0, changedSelection); Assert.Equal(0, collectionChanges);
+                onSorting.Invoke(photoFiles, [new DataGridSortingEventArgs(nameColumn)]);
+                PumpUntil(() => PhotoName(photoFiles.Items[0]) == "original.png", TimeSpan.FromSeconds(3));
+                Assert.Same(photoSelection, photoFiles.SelectedItem);
+                Assert.Same(photoPreview, ((Image)photosView.FindName("SelectedPreview")).Source);
+                onSorting.Invoke(photoFiles, [new DataGridSortingEventArgs(nameColumn)]);
+                PumpUntil(() => PhotoName(photoFiles.Items[0]) == "copy.png", TimeSpan.FromSeconds(3));
+                // Simulate a page query beating the discovery worker's catalog
+                // revocation. Discovery must never republish old analysis.
+                ((RadioButton)photosView.FindName("BrowseTab")).IsChecked = true;
+                PumpUntil(() => photoFiles.Columns[0].Visibility == Visibility.Collapsed && photoFiles.Items.Count == 2, TimeSpan.FromSeconds(3));
+                var discoveringField = photosView.GetType().GetField("_discovering", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                discoveringField.SetValue(photosView, true);
+                try
+                {
+                    reload = (Task)reloadPhotos.Invoke(photosView, [null])!;
+                    PumpUntil(() => reload.IsCompleted, TimeSpan.FromSeconds(3)); reload.GetAwaiter().GetResult();
+                    Assert.Same(photoSelection, photoFiles.SelectedItem);
+                    Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
+                    Assert.DoesNotContain("SHA-256", ((TextBox)photosView.FindName("SelectionText")).Text);
+                    Assert.DoesNotContain("Default stream verified", ((TextBox)photosView.FindName("SelectionText")).Text);
+                    Assert.Contains("Preliminary", ((TextBlock)photosView.FindName("FreshnessText")).Text);
+                }
+                finally { discoveringField.SetValue(photosView, false); }
+                ((RadioButton)photosView.FindName("DuplicatesTab")).IsChecked = true;
+                PumpUntil(() => photoFiles.Items.Count == 2 && ((Image)photosView.FindName("SelectedPreview")).Source is not null, TimeSpan.FromSeconds(3));
                 ((Button)photosView.FindName("RetainButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Assert.Contains("Review preference", ((TextBox)photosView.FindName("SelectionText")).Text);
                 Assert.True(((Expander)photosView.FindName("FileDetails")).IsExpanded);
@@ -659,6 +721,40 @@ public sealed class DesktopTests
                 photoFiles.SelectedIndex = 0;
                 Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
                 Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto));
+
+                stage = "preserving the photo viewport across metadata refresh and a removed earlier row";
+                // Metadata-only fixtures expand one bounded page without adding
+                // image decoding or ExifTool work to the existing Application.
+                for (var i = 0; i < 104; i++) File.WriteAllBytes(Path.Join(photoFolder, $"z-{i:D3}.jpg"), [1]);
+                var photosRefresh = (Button)photosView.FindName("RefreshButton");
+                var listTop = photoFiles.TranslatePoint(new Point(), photosView).Y;
+                photosRefresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
+                Assert.Equal(listTop, photoFiles.TranslatePoint(new Point(), photosView).Y, 2);
+                PumpUntil(() => photosRefresh.IsEnabled && photoFiles.Items.Count == 100, TimeSpan.FromSeconds(3)); window.UpdateLayout();
+                Assert.Same(photoSource, photoFiles.ItemsSource); Assert.Same(pickerSelection, photoPicker.SelectedItem);
+                Assert.Equal(listTop, photoFiles.TranslatePoint(new Point(), photosView).Y, 2);
+                photoFiles.SelectedIndex = 70; photoSelection = photoFiles.SelectedItem;
+                photoFiles.Columns.Single(column => column.SortMemberPath == "Status").Visibility = Visibility.Visible;
+                photoFiles.Columns.Single(column => column.SortMemberPath == "Type").Visibility = Visibility.Visible;
+                nameColumn.Width = 400; // Ensure a real horizontal viewport to preserve.
+                photoFiles.ScrollIntoView(photoSelection); window.UpdateLayout();
+                var photoScroll = Descendants(photoFiles).OfType<ScrollViewer>().First();
+                photoScroll.ScrollToHorizontalOffset(60); window.UpdateLayout();
+                PumpUntil(() => photoScroll.VerticalOffset > 0 && photoScroll.HorizontalOffset > 0, TimeSpan.FromSeconds(2));
+                var topName = PhotoName(photoFiles.Items[(int)photoScroll.VerticalOffset]);
+                var vertical = photoScroll.VerticalOffset; var horizontal = photoScroll.HorizontalOffset;
+                reload = (Task)reloadPhotos.Invoke(photosView, [null])!;
+                PumpUntil(() => reload.IsCompleted, TimeSpan.FromSeconds(3)); reload.GetAwaiter().GetResult(); window.UpdateLayout();
+                Assert.Same(photoSelection, photoFiles.SelectedItem);
+                Assert.Equal(vertical, photoScroll.VerticalOffset, 2); Assert.Equal(horizontal, photoScroll.HorizontalOffset, 2);
+                File.Delete(Path.Join(photoFolder, "z-000.jpg"));
+                photosRefresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => photosRefresh.IsEnabled, TimeSpan.FromSeconds(3)); window.UpdateLayout();
+                PumpUntil(() => PhotoName(photoFiles.Items[(int)photoScroll.VerticalOffset]) == topName, TimeSpan.FromSeconds(2));
+                Assert.Same(photoSelection, photoFiles.SelectedItem);
+                Assert.Same(photoSource, photoFiles.ItemsSource); Assert.Equal(horizontal, photoScroll.HorizontalOffset, 2);
+                Assert.Equal(ListSortDirection.Ascending, nameColumn.SortDirection);
+                Assert.Equal(listTop, photoFiles.TranslatePoint(new Point(), photosView).Y, 2);
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
                 static string PhotoName(object display)

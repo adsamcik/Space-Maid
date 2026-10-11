@@ -18,7 +18,7 @@
     </UserControl.Resources>
     <Grid Margin="0,4,0,0">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-        <Grid x:Name="CollectionHeader" Visibility="Collapsed" Margin="0,0,0,12">
+        <Grid x:Name="CollectionHeader" Visibility="Collapsed" Margin="0,0,0,4">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <ComboBox x:Name="CollectionList" Width="240" SelectionChanged="Collection_Changed" AutomationProperties.Name="Photo collection" ToolTip="Choose a photo collection">
                 <ComboBox.ItemTemplate><DataTemplate>
@@ -35,12 +35,12 @@
                 <Button x:Name="AnalyzeButton" Content="Analyze photos" Click="Analyze_Click" Padding="14,5" Margin="8,0,0,0" Style="{DynamicResource AccentButtonStyle}" ToolTip="Read this collection's files to inspect metadata, find exact duplicates and enable previews. Originals stay untouched." IsEnabled="False" />
             </StackPanel>
         </Grid>
-        <Grid x:Name="StatusBand" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,10">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <Grid x:Name="StatusBand" Grid.Row="1" Height="32" Visibility="Collapsed" Margin="0,0,0,6">
+            <Grid.RowDefinitions><RowDefinition Height="28" /><RowDefinition Height="4" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <TextBlock x:Name="StatusText" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" AutomationProperties.LiveSetting="Polite" />
-            <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed" Padding="10,4" />
-            <ProgressBar x:Name="JobProgress" Grid.Row="1" Grid.ColumnSpan="2" Height="3" Margin="0,8,0,0" Visibility="Collapsed" IsIndeterminate="True" />
+            <TextBlock x:Name="StatusText" FontSize="12" Opacity="0.7" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
+            <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="Cancel_Click" Visibility="Hidden" MinHeight="24" Padding="10,1" />
+            <ProgressBar x:Name="JobProgress" Grid.Row="1" Grid.ColumnSpan="2" Height="2" Visibility="Hidden" IsIndeterminate="True" />
         </Grid>
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -125,7 +125,10 @@
                     </DockPanel>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
-                            <Image x:Name="SelectedPreview" MaxWidth="160" Height="160" Stretch="Uniform" HorizontalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="Selected photo preview" />
+                            <Grid Height="160" Margin="0,0,0,8">
+                                <Image x:Name="SelectedPreview" MaxWidth="160" Height="160" Stretch="Uniform" HorizontalAlignment="Center" Visibility="Hidden" AutomationProperties.Name="Selected photo preview" />
+                                <TextBlock x:Name="SelectedPreviewPlaceholder" Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="36" Opacity="0.25" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
                             <TextBlock x:Name="PreviewStatusText" FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="0,0,0,12" />
                             <TextBlock x:Name="SelectedSummaryText" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBox x:Name="SelectedPathText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="12" Margin="0,10,0,14" AutomationProperties.Name="Selected photo exact path" />

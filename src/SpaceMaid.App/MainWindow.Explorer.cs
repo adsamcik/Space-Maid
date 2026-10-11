@@ -51,19 +51,7 @@ public partial class MainWindow
         _scanStale = false;
         _staleScopes.Clear();
         _explorer = new(scan);
-        var kinds = new Dictionary<int, SpaceKind>();
-        foreach (var opportunity in opportunities)
-        {
-            var kind = opportunity.Category switch
-            {
-                "Agent files" => SpaceKind.Agent,
-                "Git worktrees" => SpaceKind.Project,
-                "Test artifacts" or "Editor workspace data" => SpaceKind.Other,
-                _ => SpaceKind.Cache
-            };
-            kinds[opportunity.DirectoryIndex] = kind;
-        }
-        _kinds = kinds;
+        _kinds = OpportunityKinds(opportunities);
         SpaceTree.ItemsSource = _explorer;
         TreeHint.Visibility = Visibility.Collapsed;
         TreeNote.Text = scan.HasAllocationData ? "Observed totals · Shared file allocation counted once"
@@ -80,6 +68,133 @@ public partial class MainWindow
         ClearPreliminary();
     }
 
+    private static Dictionary<int, SpaceKind> OpportunityKinds(IReadOnlyList<Opportunity> opportunities)
+    {
+        var kinds = new Dictionary<int, SpaceKind>();
+        foreach (var opportunity in opportunities)
+        {
+            var kind = opportunity.Category switch
+            {
+                "Agent files" => SpaceKind.Agent,
+                "Git worktrees" => SpaceKind.Project,
+                "Test artifacts" or "Editor workspace data" => SpaceKind.Other,
+                _ => SpaceKind.Cache
+            };
+            kinds[opportunity.DirectoryIndex] = kind;
+        }
+        return kinds;
+    }
+
+    private sealed record PreparedExplorer(ExplorerRows Rows, Dictionary<int, SpaceKind> Kinds,
+        Dictionary<int, int[]> ChildOrders, Dictionary<int, int[]> MapOrders, ExplorerPresentation Entry);
+
+    private async Task<PreparedExplorer> PrepareExplorerRefreshAsync(ScanSnapshot scan,
+        IReadOnlyList<Opportunity> opportunities, string[] expanded, string selected,
+        ScanSortColumn column, bool descending, CancellationToken token)
+    {
+        await _classificationReady.WaitAsync(token);
+        return await Task.Run(() =>
+        {
+            var rows = new ExplorerRows(scan);
+            var kinds = OpportunityKinds(opportunities);
+            var childOrders = new Dictionary<int, int[]>();
+            var mapOrders = new Dictionary<int, int[]>();
+            // Build the compact visible index before attaching it to WPF. None
+            // of these expansion notifications can reset the current list.
+            foreach (string path in expanded.OrderBy(path => path.Length))
+            {
+                token.ThrowIfCancellationRequested();
+                if (scan.FindEntry(path) is not { } link || scan.Entry(link) is not { IsDirectory: true, IsPrimaryName: true } entry
+                    || scan.IsUnmeasuredDirectory(entry.FileIndex)) continue;
+                rows.Expand(link, PreparedChildOrder(scan, entry.FileIndex, childOrders, column, descending, token));
+            }
+            while (scan.FindEntry(selected) is null
+                && Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(selected)) is { } parent) selected = parent;
+            int selection = scan.FindEntry(selected) ?? -1;
+            var presentation = PrepareEntry(scan, rows, selection, kinds, childOrders, mapOrders, column, descending, token);
+            token.ThrowIfCancellationRequested();
+            return new PreparedExplorer(rows, kinds, childOrders, mapOrders, presentation);
+        }, token);
+    }
+
+    private void PublishExplorerRefresh(PreparedExplorer prepared, ScanSortColumn column, bool descending, bool grouped)
+    {
+        SpaceTree.ContextMenu.IsOpen = false;
+        SpaceTree.ContextMenu.Items.Clear();
+        ContextMenuService.SetPlacementTarget(SpaceTree, null);
+        _snapshot = prepared.Rows.Scan;
+        _explorer = prepared.Rows;
+        _kinds = prepared.Kinds;
+        PublishExplorerOrders(prepared.ChildOrders, prepared.MapOrders);
+        _treeSortColumn = column; _treeDescending = descending;
+        _selectedLink = prepared.Entry.Selected.LinkIndex;
+        _selectionIsGroup = grouped;
+        _syncTree = true;
+        try
+        {
+            SpaceTree.ItemsSource = prepared.Rows;
+            // Restore selection without scrolling it into view. The user's
+            // viewport can be elsewhere in a large expanded branch.
+            SpaceTree.SelectedIndex = prepared.Rows.Find(_selectedLink);
+            TreeHint.Visibility = Visibility.Collapsed;
+            PublishEntry(prepared.Entry);
+        }
+        finally { _syncTree = false; }
+        UpdateTreeSortHeaders();
+        ClearPreliminary();
+    }
+
+    private void PublishExplorerOrders(Dictionary<int, int[]> childOrders, Dictionary<int, int[]> mapOrders)
+    {
+        _childOrders.Clear(); _mapOrders.Clear();
+        foreach (var order in childOrders) _childOrders.Add(order.Key, order.Value);
+        foreach (var order in mapOrders) _mapOrders.Add(order.Key, order.Value);
+    }
+
+    private sealed record TreeViewport(double Horizontal, double Vertical, string? TopPath, double Fraction);
+
+    private TreeViewport? CaptureTreeViewport()
+    {
+        if (TreeScrollViewer(SpaceTree) is not { } scroll) return null;
+        string? topPath = null;
+        double fraction = 0;
+        if (_explorer is { Count: > 0 } rows && scroll.CanContentScroll
+            && VirtualizingPanel.GetScrollUnit(SpaceTree) == ScrollUnit.Item)
+        {
+            int top = Math.Clamp((int)scroll.VerticalOffset, 0, rows.Count - 1);
+            topPath = rows.Scan.EntryPath(rows.Row(top).Entry.LinkIndex);
+            fraction = scroll.VerticalOffset - Math.Floor(scroll.VerticalOffset);
+        }
+        return new(scroll.HorizontalOffset, scroll.VerticalOffset, topPath, fraction);
+    }
+
+    private void RestoreTreeViewport(TreeViewport? viewport)
+    {
+        if (viewport is null) return;
+        // Realize only the new viewport, then apply offsets before returning to
+        // the dispatcher; no blank or root-only frame is rendered in between.
+        SpaceTree.UpdateLayout();
+        if (TreeScrollViewer(SpaceTree) is not { } scroll) return;
+        double vertical = viewport.Vertical;
+        if (viewport.TopPath is { } path && _explorer is { } rows
+            && rows.Scan.FindEntry(path) is { } link && rows.Find(link) is var index && index >= 0)
+            vertical = index + viewport.Fraction;
+        scroll.ScrollToHorizontalOffset(viewport.Horizontal);
+        scroll.ScrollToVerticalOffset(vertical);
+        SpaceTree.UpdateLayout();
+    }
+
+    private static ScrollViewer? TreeScrollViewer(DependencyObject parent)
+    {
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is ScrollViewer scroll) return scroll;
+            if (TreeScrollViewer(child) is { } descendant) return descendant;
+        }
+        return null;
+    }
+
     private async Task<int[]> ChildOrderAsync(int directory, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -90,24 +205,6 @@ public partial class MainWindow
         var children = await Task.Run(() => scan.SortedChildren(directory, column, descending, token), token);
         token.ThrowIfCancellationRequested();
         _childOrders[directory] = children;
-        return children;
-    }
-
-    private async Task<int[]> MapOrderAsync(int directory, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        if (_mapOrders.TryGetValue(directory, out var cached)) return cached;
-        var scan = _snapshot!;
-        if (_treeDescending && (_treeSortColumn == ScanSortColumn.Share
-            || (_treeSortColumn == ScanSortColumn.Allocated && scan.HasAllocationData))
-            && _childOrders.TryGetValue(directory, out var treeOrder))
-        {
-            _mapOrders[directory] = treeOrder;
-            return treeOrder;
-        }
-        var children = await Task.Run(() => scan.SortedChildren(directory, token), token);
-        token.ThrowIfCancellationRequested();
-        _mapOrders[directory] = children;
         return children;
     }
 
@@ -239,30 +336,70 @@ public partial class MainWindow
     private async Task DisplayEntryAsync(int link, CancellationToken token)
     {
         var scan = _snapshot!;
-        var selected = scan.Entry(link);
-        var row = new ExplorerRow(scan, selected, 0, _explorer!.IsExpanded(link));
-        EntryDetail.DataContext = row; EntryDetail.Visibility = Visibility.Visible;
-        var folder = selected.IsDirectory && selected.IsPrimaryName ? selected : scan.Entry(scan.PrimaryLink(selected.ParentIndex));
-        await ChildOrderAsync(folder.FileIndex, token); // Also makes context-menu ancestor expansion available.
-        var children = await MapOrderAsync(folder.FileIndex, token);
-        token.ThrowIfCancellationRequested();
+        var explorer = _explorer!;
         var kinds = _kinds;
+        var column = _treeSortColumn; bool descending = _treeDescending;
+        var childOrders = new Dictionary<int, int[]>(_childOrders);
+        var mapOrders = new Dictionary<int, int[]>(_mapOrders);
+        var presentation = await Task.Run(() => PrepareEntry(scan, explorer, link, kinds,
+            childOrders, mapOrders, column, descending, token), token);
+        token.ThrowIfCancellationRequested();
+        if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+        PublishExplorerOrders(childOrders, mapOrders);
+        PublishEntry(presentation);
+    }
+
+    private sealed record ExplorerPresentation(ScanSnapshot Scan, ScanEntry Selected, bool Expanded,
+        ScanEntry Folder, int ChildCount, IReadOnlyList<SpaceContribution> Contributions);
+
+    private static int[] PreparedChildOrder(ScanSnapshot scan, int directory, Dictionary<int, int[]> orders,
+        ScanSortColumn column, bool descending, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (orders.TryGetValue(directory, out var cached)) return cached;
+        return orders[directory] = scan.SortedChildren(directory, column, descending, token);
+    }
+
+    private static ExplorerPresentation PrepareEntry(ScanSnapshot scan, ExplorerRows explorer, int link,
+        IReadOnlyDictionary<int, SpaceKind> kinds, Dictionary<int, int[]> childOrders, Dictionary<int, int[]> mapOrders,
+        ScanSortColumn column, bool descending, CancellationToken token)
+    {
+        var selected = scan.Entry(link);
+        var folder = selected.IsDirectory && selected.IsPrimaryName ? selected : scan.Entry(scan.PrimaryLink(selected.ParentIndex));
+        PreparedChildOrder(scan, folder.FileIndex, childOrders, column, descending, token);
+        var children = MapOrder(folder.FileIndex);
         long total = folder.AttributedBytes(scan.HasAllocationData);
-        var contributions = await Task.Run(() =>
-        {
-            var parts = TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds);
-            return parts.Count > 32 && parts.Any(part => TreemapLayout.CanNest(scan, part, total))
-                ? TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds, maximum: 32) : parts;
-        }, token);
+        var contributions = TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds);
+        if (contributions.Count > 32 && contributions.Any(part => TreemapLayout.CanNest(scan, part, total)))
+            contributions = TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds, maximum: 32);
         var nestedOrders = new Dictionary<int, int[]>();
         foreach (var part in contributions.Where(part => TreemapLayout.CanNest(scan, part, total)))
         {
             int directory = scan.Entry(part.Link).FileIndex;
-            await ChildOrderAsync(directory, token);
-            nestedOrders[directory] = await MapOrderAsync(directory, token);
+            PreparedChildOrder(scan, directory, childOrders, column, descending, token);
+            nestedOrders[directory] = MapOrder(directory);
         }
-        contributions = await Task.Run(() => TreemapLayout.Nest(scan, contributions, nestedOrders, kinds), token);
+        contributions = TreemapLayout.Nest(scan, contributions, nestedOrders, kinds);
         token.ThrowIfCancellationRequested();
+        return new(scan, selected, explorer.IsExpanded(link), folder, children.Length, contributions);
+
+        int[] MapOrder(int directory)
+        {
+            token.ThrowIfCancellationRequested();
+            if (mapOrders.TryGetValue(directory, out var cached)) return cached;
+            return mapOrders[directory] = descending && (column == ScanSortColumn.Share
+                || column == ScanSortColumn.Allocated && scan.HasAllocationData)
+                && childOrders.TryGetValue(directory, out var treeOrder)
+                ? treeOrder : scan.SortedChildren(directory, token);
+        }
+    }
+
+    private void PublishEntry(ExplorerPresentation presentation)
+    {
+        var (scan, selected, expanded, folder, childCount, contributions) = presentation;
+        long total = folder.AttributedBytes(scan.HasAllocationData);
+        EntryDetail.DataContext = new ExplorerRow(scan, selected, 0, expanded);
+        EntryDetail.Visibility = Visibility.Visible;
         Breadcrumbs.Children.Clear();
         var crumbs = new Stack<ScanEntry>(); var visited = new HashSet<int>();
         for (var current = folder; visited.Add(current.FileIndex); current = scan.Entry(scan.PrimaryLink(current.ParentIndex)))
@@ -277,7 +414,7 @@ public partial class MainWindow
             button.Click += async (_, _) => await NavigateToEntryAsync(destination);
             Breadcrumbs.Children.Add(button);
         }
-        Breadcrumbs.ToolTip = $"{children.Length:N0} immediate entries";
+        Breadcrumbs.ToolTip = $"{childCount:N0} immediate entries";
         bool unmeasured = scan.IsUnmeasuredDirectory(folder.FileIndex);
         MapTotal.Text = unmeasured ? "Size not checked" : SizeText.Format(folder.AttributedBytes(scan.HasAllocationData)) + (scan.HasAllocationData ? " allocated" : " logical");
         ClearMap();

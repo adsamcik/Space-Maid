@@ -52,10 +52,6 @@ public partial class MainWindow
         string note, CancellationToken token, ScanLog log, ScanSnapshot? prechecked = null,
         IReadOnlyList<Opportunity>? findings = null)
     {
-        string[] expanded = _explorer?.ExpandedPaths() ?? [];
-        string selected = scan.EntryPath(_selectedLink) ?? scan.RootPath;
-        bool grouped = _selectionIsGroup;
-        var column = _treeSortColumn; bool descending = _treeDescending;
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
         string? detailPath = (OpportunityGrid.SelectedItem as OpportunityRow)?.Path;
         StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
@@ -70,22 +66,18 @@ public partial class MainWindow
         }, token);
         token.ThrowIfCancellationRequested();
         if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+        string[] expanded = _explorer?.ExpandedPaths() ?? [];
+        string selected = scan.EntryPath(_selectedLink) ?? scan.RootPath;
+        bool grouped = _selectionIsGroup;
+        var column = _treeSortColumn; bool descending = _treeDescending;
         // Publish a coherent inventory; finish the bounded UI restore even if
         // cancellation arrives after the metadata/analysis has completed.
-        await InitializeExplorerAsync(updated, analysis.Opportunities, CancellationToken.None);
-        _explorer!.Collapse(-1);
+        var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
+            expanded, selected, column, descending, CancellationToken.None);
+        if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+        var viewport = CaptureTreeViewport();
+        PublishExplorerRefresh(explorer, column, descending, grouped);
         _staleScopes.UnionWith(dirty);
-        _treeSortColumn = column; _treeDescending = descending; _childOrders.Clear(); _mapOrders.Clear();
-        foreach (string path in expanded.OrderBy(path => path.Length))
-            if (updated.FindEntry(path) is { } link && updated.Entry(link).IsDirectory)
-                _explorer!.Expand(link, await ChildOrderAsync(updated.Entry(link).FileIndex, CancellationToken.None));
-        _explorer!.Reorder(_childOrders);
-        while (updated.FindEntry(selected) is null && Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(selected)) is { } parent) selected = parent;
-        int selection = updated.FindEntry(selected) ?? -1;
-        SelectTree(selection);
-        await DisplayEntryAsync(selection, CancellationToken.None);
-        _selectionIsGroup = grouped;
-        UpdateTreeSortHeaders();
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
@@ -107,6 +99,7 @@ public partial class MainWindow
         log.Record("recheck-published", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, updated.RecheckedPaths, updated.AllocatedBytes, updated.LogicalBytes, Opportunities = _rows.Count });
         if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
         UpdateSelection();
+        RestoreTreeViewport(viewport);
     }
 
     private void Window_Activated(object? sender, EventArgs e)
