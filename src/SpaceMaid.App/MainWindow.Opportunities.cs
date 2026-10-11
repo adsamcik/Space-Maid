@@ -174,6 +174,8 @@ public partial class MainWindow
         CleanupOverview.Visibility = overview ? Visibility.Visible : Visibility.Collapsed;
         OpportunityNavigation.Visibility = OpportunityLocations.Visibility = OpportunityDetails.Visibility = overview ? Visibility.Collapsed : Visibility.Visible;
         BackToCleanupButton.Visibility = !overview && OpportunityGroupingPicker.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        OpportunityPanelTitle.Visibility = BackToCleanupButton.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        OpportunityPanelTitle.Text = OpportunityGroupingPicker.SelectedIndex switch { 1 => "Projects", 2 => "Clutter types", _ => "Cleanup groups" };
         SelectListedButton.Visibility = overview ? Visibility.Collapsed : Visibility.Visible;
         var active = _opportunityGroupRows.FirstOrDefault(group => group.Group.Key == _activeOpportunityGroup);
         if (active is not null && _cleanupDetailKey is not null) _cleanupProjectScope = active.Group;
@@ -279,11 +281,15 @@ public partial class MainWindow
         CheckWorktreesButton.Content = _worktreeAssessments.Count == 0 ? "Check worktrees"
             : _worktreeAssessments.Count < worktrees ? "Check remaining worktrees" : "Recheck worktrees";
         foreach (var group in _opportunityGroupRows) group.SetSelectedCount(group.Matches.Count(row => row.Selected));
-        OpportunityFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
-        OpportunityFreshnessText.Text = "Out of date · Review rechecks your selection";
         CleanupFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
-        CleanupFreshnessText.Text = OpportunityFreshnessText.Text;
-        OpportunitiesTab.Content = _scanStale ? "Opportunities · Out of date" : _snapshot is null ? "Opportunities"
+        CleanupFreshnessText.Text = "Out of date · Review rechecks your selection";
+        OpportunitiesTab.Content = _snapshot is null ? "Opportunities"
             : OpportunityGroupingPicker.SelectedIndex == 0 ? $"Opportunities · {_cleanupGroups.Count:N0} {(_cleanupGroups.Count == 1 ? "group" : "groups")}" : $"Opportunities · {_rows.Count:N0}";
+    }
+
+    private void OpportunityOptions_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender == ViewOptionsToggle && ViewOptionsToggle.IsChecked == true) WorktreeOptionsToggle.IsChecked = false;
+        else if (sender == WorktreeOptionsToggle && WorktreeOptionsToggle.IsChecked == true) ViewOptionsToggle.IsChecked = false;
     }
 }

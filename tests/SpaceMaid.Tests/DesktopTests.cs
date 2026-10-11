@@ -105,6 +105,14 @@ public sealed class DesktopTests
                 var grid = (ListBox)window.FindName("OpportunityGrid");
                 Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
                 Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
+                ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+                var viewOptions = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ViewOptionsToggle");
+                var viewPanel = (Border)window.FindName("ViewOptionsPanel");
+                Assert.Equal(Visibility.Collapsed, viewPanel.Visibility);
+                viewOptions.IsChecked = true; viewOptions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
+                Assert.Equal(Visibility.Visible, viewPanel.Visibility);
+                Assert.True(((ComboBox)window.FindName("OpportunitySortPicker")).IsVisible);
+                viewOptions.IsChecked = false;
                 var initialCards = (ItemsControl)window.FindName("CleanupGroupCards");
                 var initialGroup = Assert.IsType<OpportunityGroupRow>(Assert.Single(initialCards.Items.Cast<object>()));
                 Assert.Equal("Build files", initialGroup.Name);
@@ -1031,9 +1039,25 @@ public sealed class DesktopTests
 #pragma warning restore WPF0001
         window.MarkScanStale("Illustrative out-of-date results; recheck or rescan.");
         Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("CleanupFreshnessText")).Visibility);
         Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
         Assert.True(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        window.UpdateLayout();
+        double listHeight = list.ActualHeight;
+        string fullWarning = "Could not recycle the folder: The recheck was incomplete. "
+            + string.Join(" ", Enumerable.Repeat(@"Junction target not followed: G:\$RECYCLE.BIN\fixture\.cache.", 25))
+            + " Results may be out of date.";
+        window.MarkScanStale(fullWarning); window.UpdateLayout();
+        Assert.Equal(listHeight, list.ActualHeight, 2); // Full diagnostics cannot squeeze the default list.
+        Assert.InRange(((TextBlock)window.FindName("StatusText")).ActualHeight, 1, 20);
+        var diagnosticsToggle = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("DiagnosticsToggle");
+        Assert.Equal(Visibility.Collapsed, ((Border)window.FindName("DiagnosticsPanel")).Visibility);
+        diagnosticsToggle.IsChecked = true; window.UpdateLayout();
+        var fullMessage = (TextBox)window.FindName("DiagnosticMessage");
+        Assert.True(fullMessage.IsVisible); Assert.True(fullMessage.IsReadOnly); Assert.Equal(fullWarning, fullMessage.Text);
+        Assert.InRange(fullMessage.ActualHeight, 1, 160);
+        diagnosticsToggle.IsChecked = false; window.UpdateLayout();
+        Assert.Equal(listHeight, list.ActualHeight, 2);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-stale-dark.png"), 1220, 910);
         ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.DoesNotContain("selected", selection.Text);
@@ -1119,6 +1143,14 @@ public sealed class DesktopTests
             var rebuild = typeof(MainWindow).GetMethod("RebuildWorktreeGroups", BindingFlags.Instance | BindingFlags.NonPublic)!;
             rebuild.Invoke(window, null);
             typeof(MainWindow).GetMethod("ApplyOpportunityFilters", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [null]);
+            var worktreeOptions = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("WorktreeOptionsToggle");
+            var viewOptions = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ViewOptionsToggle");
+            Assert.True(worktreeOptions.IsVisible);
+            viewOptions.IsChecked = true; viewOptions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            worktreeOptions.IsChecked = true; worktreeOptions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
+            Assert.Equal(Visibility.Visible, ((Border)window.FindName("WorktreeCleanupControls")).Visibility);
+            Assert.False(viewOptions.IsChecked);
+            Assert.Equal(Visibility.Collapsed, ((Border)window.FindName("ViewOptionsPanel")).Visibility);
             var rule = (ComboBox)window.FindName("WorktreeRulePicker");
             var slider = (Slider)window.FindName("WorktreeAgeSlider");
             var threshold = (TextBlock)window.FindName("WorktreeAgeText");
@@ -1164,6 +1196,7 @@ public sealed class DesktopTests
             Assert.DoesNotContain(MatchingGroup().Matches, row => row.Selected);
             selectMatches.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal("1 group selected · 2 folders", selection.Text);
+            worktreeOptions.IsChecked = false;
             Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
             ((TextBlock)window.FindName("StatusText")).Text = "Illustrative worktree checks · No Git commands or cleanup run";
 #pragma warning disable WPF0001
@@ -1329,7 +1362,7 @@ public sealed class DesktopTests
         var refreshed = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan;
         Assert.Null(refreshed.FindEntry(obj));
         Assert.Equal(512, refreshed.Entry(refreshed.FindEntry(other)!.Value).LogicalBytes);
-        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("CleanupFreshnessText")).Visibility);
         Assert.Contains("review-validation-complete", File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip)));
 
         // Logical-only scans also get fresh review estimates, without replacing
@@ -1346,7 +1379,7 @@ public sealed class DesktopTests
         window.MarkScanStale("Logical-only fixture data is out of date.");
         ReviewAndAssert(32768, "Other folders retain", "review-validated-logical.png", logical: true);
         Assert.Same(basic, Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan);
-        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("OpportunityFreshnessText")).Visibility);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("CleanupFreshnessText")).Visibility);
         Assert.Equal(32768, new FileInfo(output).Length);
         Assert.True(File.Exists(Path.Join(fixture.Path, "sample.csproj")));
 

@@ -65,7 +65,9 @@ public partial class MainWindow
         _cleanupGroups = _cleanupGroups.Select(group => group with { Children = group.Key == "cleanup:build"
             ? _opportunityGroups.BuildLanguages : _opportunityGroups.CleanupBreakdowns?.GetValueOrDefault(group.Key) }).ToArray();
         int total = _rows.Count(row => row.Category == "Git worktrees");
-        WorktreeCleanupControls.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
+        WorktreeOptionsToggle.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
+        WorktreeOptionsToggle.Content = $"Worktrees · {total:N0}";
+        if (total == 0) WorktreeOptionsToggle.IsChecked = false;
         bool ageApplies = policy.Mode != WorktreeCleanupMode.Integrated;
         WorktreeAgeSlider.IsEnabled = WorktreeAgeLabel.IsEnabled = ageApplies;
         WorktreeAgeText.Text = ageApplies ? $"{policy.InactiveDays} {(policy.InactiveDays == 1 ? "day" : "days")}" : "Any age";

@@ -166,56 +166,65 @@
           <Grid x:Name="OpportunitiesPanel" Grid.Row="1" Visibility="Collapsed">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="270" /></Grid.ColumnDefinitions>
-            <DockPanel Grid.ColumnSpan="5" Margin="0,0,0,10" x:Name="OpportunityToolbar">
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button x:Name="BackToCleanupButton" Content="← Cleanup groups" Click="BackToCleanup_Click" Margin="0,0,8,0" Visibility="Collapsed" />
-                    <Button x:Name="CheckWorktreesButton" Content="Check worktrees" Click="CheckWorktrees_Click" ToolTip="Check local Git status, integration and observed activity. May read local files; does not fetch remote data." IsEnabled="False" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <ComboBox x:Name="OpportunityGroupingPicker" Width="185" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Opportunity view">
-                        <ComboBoxItem Content="Cleanup groups" /><ComboBoxItem Content="Project / folder" /><ComboBoxItem Content="Clutter type" />
-                    </ComboBox>
-                    <ComboBox x:Name="OpportunitySortPicker" Width="150" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" Margin="8,0,0,0" AutomationProperties.Name="Sort opportunity groups and locations">
-                        <ComboBoxItem Content="Largest first" /><ComboBoxItem Content="Name A–Z" /><ComboBoxItem Content="Most locations" />
-                    </ComboBox>
-                </StackPanel>
-            </DockPanel>
-            <Border x:Name="CleanupOverview" Grid.Row="1" Grid.ColumnSpan="5" Style="{StaticResource Card}" Padding="18,14">
-                <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <StackPanel Margin="0,0,0,12">
-                        <TextBlock Text="Choose what to clean up" FontSize="20" FontWeight="SemiBold" />
-                        <TextBlock Text="Select groups to review." FontSize="12" Opacity="0.7" Margin="0,5,0,0" />
-                        <Border x:Name="WorktreeCleanupControls" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,12,0,0" Visibility="Collapsed">
-                            <Grid>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="250" /><ColumnDefinition Width="14" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="80" /></Grid.ColumnDefinitions>
-                                <ComboBox x:Name="WorktreeRulePicker" SelectedIndex="0" SelectionChanged="WorktreeRule_Changed" AutomationProperties.Name="Worktree cleanup rule">
-                                    <ComboBoxItem Content="Old and already in upstream" /><ComboBoxItem Content="Old worktrees" /><ComboBoxItem Content="Already in upstream · any age" />
-                                </ComboBox>
-                                <Label x:Name="WorktreeAgeLabel" Grid.Column="2" Content="_Inactive for at least" Target="{Binding ElementName=WorktreeAgeSlider}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                <Slider x:Name="WorktreeAgeSlider" Grid.Column="3" Minimum="1" Maximum="365" Value="30" TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="7" ValueChanged="WorktreeAge_Changed" VerticalAlignment="Center" AutomationProperties.Name="Worktree inactivity threshold in days" ToolTip="Latest observed file change or Git reflog activity; actual file access is not tracked." />
-                                <TextBlock x:Name="WorktreeAgeText" Grid.Column="4" Text="30 days" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                                <TextBlock x:Name="WorktreeRuleHint" Grid.Row="1" Grid.ColumnSpan="5" Text="Local changes protected · Branches kept" FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,7,0,0" />
-                                <TextBlock x:Name="WorktreeCheckSummary" Grid.Row="2" Grid.ColumnSpan="3" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,7,12,0" AutomationProperties.LiveSetting="Polite" />
-                                <Button x:Name="SelectWorktreeMatchesButton" Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Content="Select matching worktrees" Click="SelectWorktreeMatches_Click" IsEnabled="False" HorizontalAlignment="Right" Margin="0,7,0,0" Padding="9,5" />
-                            </Grid>
-                        </Border>
+            <Grid Grid.ColumnSpan="5" Margin="0,0,0,14" x:Name="OpportunityToolbar">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <ToggleButton x:Name="WorktreeOptionsToggle" Content="Worktrees" Click="OpportunityOptions_Click" Visibility="Collapsed" Padding="12,6" Margin="0,0,8,0" AutomationProperties.Name="Show worktree cleanup options" />
+                        <ToggleButton x:Name="ViewOptionsToggle" Content="View options" Click="OpportunityOptions_Click" Padding="12,6" AutomationProperties.Name="Show grouping and sorting options" />
                     </StackPanel>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Button x:Name="BackToCleanupButton" Content="← Cleanup groups" Click="BackToCleanup_Click" Visibility="Collapsed" HorizontalAlignment="Left" />
+                    <TextBlock x:Name="OpportunityPanelTitle" Text="Cleanup groups" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </DockPanel>
+                <Border x:Name="ViewOptionsPanel" Grid.Row="1" Margin="0,12,0,0">
+                    <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=ViewOptionsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0,0,18,0"><TextBlock Text="Group by" FontSize="12" Opacity="0.65" Margin="0,0,0,6" />
+                            <ComboBox x:Name="OpportunityGroupingPicker" Width="185" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Opportunity view"><ComboBoxItem Content="Cleanup groups" /><ComboBoxItem Content="Project / folder" /><ComboBoxItem Content="Clutter type" /></ComboBox>
+                        </StackPanel>
+                        <StackPanel><TextBlock Text="Sort" FontSize="12" Opacity="0.65" Margin="0,0,0,6" />
+                            <ComboBox x:Name="OpportunitySortPicker" Width="150" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Sort opportunity groups and locations"><ComboBoxItem Content="Largest first" /><ComboBoxItem Content="Name A–Z" /><ComboBoxItem Content="Most locations" /></ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border x:Name="WorktreeCleanupControls" Grid.Row="1" Margin="0,12,0,0">
+                    <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=WorktreeOptionsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <ComboBox x:Name="WorktreeRulePicker" SelectedIndex="0" SelectionChanged="WorktreeRule_Changed" Width="250" HorizontalAlignment="Left" AutomationProperties.Name="Worktree cleanup rule"><ComboBoxItem Content="Old and already in upstream" /><ComboBoxItem Content="Old worktrees" /><ComboBoxItem Content="Already in upstream · any age" /></ComboBox>
+                        <Button x:Name="CheckWorktreesButton" Grid.Column="1" Content="Check worktrees" Click="CheckWorktrees_Click" ToolTip="Check local Git status, integration and observed activity. May read local files; does not fetch remote data." IsEnabled="False" />
+                        <Grid Grid.Row="1" Margin="0,16,24,14" MaxWidth="640" HorizontalAlignment="Left">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="340" /><ColumnDefinition Width="80" /></Grid.ColumnDefinitions>
+                            <Label x:Name="WorktreeAgeLabel" Content="_Inactive for" Target="{Binding ElementName=WorktreeAgeSlider}" FontSize="12" VerticalAlignment="Center" Margin="0,0,16,0" />
+                            <Slider x:Name="WorktreeAgeSlider" Grid.Column="1" Minimum="1" Maximum="365" Value="30" TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="7" ValueChanged="WorktreeAge_Changed" VerticalAlignment="Center" AutomationProperties.Name="Worktree inactivity threshold in days" ToolTip="Latest observed file change or Git reflog activity; actual file access is not tracked." />
+                            <TextBlock x:Name="WorktreeAgeText" Grid.Column="2" Text="30 days" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock x:Name="WorktreeRuleHint" Grid.Row="1" Grid.Column="1" Text="Local changes protected · Branches kept" FontSize="11" Opacity="0.7" TextWrapping="Wrap" MaxWidth="230" VerticalAlignment="Center" />
+                        <TextBlock x:Name="WorktreeCheckSummary" Grid.Row="2" TextWrapping="Wrap" FontSize="12" VerticalAlignment="Center" Margin="0,0,24,0" AutomationProperties.LiveSetting="Polite" />
+                        <Button x:Name="SelectWorktreeMatchesButton" Grid.Row="2" Grid.Column="1" Content="Select matches" Click="SelectWorktreeMatches_Click" IsEnabled="False" Padding="12,6" />
+                    </Grid>
+                </Border>
+            </Grid>
+            <Border x:Name="CleanupOverview" Grid.Row="1" Grid.ColumnSpan="5" Style="{StaticResource Card}" Padding="24,8,24,14">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ItemsControl x:Name="CleanupGroupCards" AutomationProperties.Name="Cleanup checklist">
                             <ItemsControl.ItemTemplate><DataTemplate>
-                                <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,12" ToolTip="{Binding Description}">
+                                <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,20" ToolTip="{Binding Description}">
                                     <Grid>
                                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="120" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="*" /><ColumnDefinition Width="145" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
                                         <CheckBox IsThreeState="True" IsChecked="{Binding Checked, Mode=OneWay}" IsEnabled="{Binding CanSelectGroup}" ToolTip="{Binding SelectionHint}" ToolTipService.ShowOnDisabled="True" Click="CleanupGroupSelection_Click" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name, StringFormat=Select {0} for cleanup}" />
                                         <StackPanel Grid.Column="1" Margin="4,0,14,0">
                                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" />
-                                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,4,0,0" />
-                                            <TextBlock FontSize="11" Opacity="0.65" Margin="0,5,0,0"><Run Text="{Binding Kind, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Count, Mode=OneWay}" /></TextBlock>
+                                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="12" Opacity="0.7" Margin="0,8,0,0" />
                                         </StackPanel>
-                                        <TextBlock Grid.Column="2" Text="{Binding Size}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,20,0">
+                                            <TextBlock Text="{Binding Size}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                            <TextBlock Text="{Binding Count}" FontSize="11" Opacity="0.65" Margin="0,6,0,0" TextTrimming="CharacterEllipsis" MaxWidth="125" ToolTip="{Binding Count}" />
+                                        </StackPanel>
                                         <Button Grid.Column="3" Content="View folders" Click="ViewCleanupGroup_Click" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="{Binding Name, StringFormat=View folders in {0}}" />
                                         <Expander Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Header="{Binding BreakdownHeading}" IsExpanded="False" Foreground="{DynamicResource WindowForeground}" FontSize="12" Margin="4,10,0,0">
                                             <Expander.Style><Style TargetType="Expander"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding HasChildren}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Expander.Style>
@@ -241,7 +250,7 @@
                             </DataTemplate></ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
-                    <TextBlock x:Name="CleanupOverviewNote" Grid.Row="2" FontSize="11" Opacity="0.65" Margin="0,12,0,0" TextWrapping="Wrap" Text="Scan a drive to find cleanup groups." />
+                    <TextBlock x:Name="CleanupOverviewNote" Grid.Row="1" FontSize="11" Opacity="0.65" Margin="0,14,0,0" TextTrimming="CharacterEllipsis" Text="Scan a drive to find cleanup groups." />
                 </Grid>
             </Border>
             <Border x:Name="OpportunityNavigation" Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
@@ -274,7 +283,6 @@
                         <TextBlock x:Name="OpportunityHeading" Text="All locations" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                         <TextBlock x:Name="OpportunityScopeText" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" FontSize="12" Opacity="0.7" Margin="0,4,0,0" />
                         <TextBlock x:Name="OpportunityResultSummary" FontSize="11" Opacity="0.7" Margin="0,5,0,0" />
-                        <TextBlock x:Name="OpportunityFreshnessText" FontSize="12" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,8,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
                     </StackPanel>
                     <Grid x:Name="OpportunityFilters" Grid.Row="1" Margin="12,0,12,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
@@ -342,15 +350,26 @@
             </StackPanel>
           </Grid>
         </Grid>
-        <StackPanel Grid.Row="2" Margin="0,12,0,0">
-            <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" AutomationProperties.LiveSetting="Polite" />
-            <ProgressBar x:Name="ScanProgressBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,10" />
-            <DockPanel>
-                <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" />
-                <Button x:Name="OpenLogButton" Content="Open log" Click="OpenLog_Click" DockPanel.Dock="Right" Visibility="Collapsed" Padding="10,4" MinHeight="28" Margin="0,0,10,0" />
-                <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" Opacity="0.7" AutomationProperties.LiveSetting="Polite" />
-            </DockPanel>
-            <TextBlock x:Name="BackendStatusText" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" AutomationProperties.LiveSetting="Polite" />
+        <StackPanel Grid.Row="2" Margin="0,14,0,0">
+            <Grid Height="4"><ProgressBar x:Name="ScanProgressBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" /></Grid>
+            <Grid Margin="0,6,0,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxHeight="20" ClipToBounds="True" FontSize="12" Opacity="0.7" Margin="0,0,18,0" ToolTip="Open Details for the full message." AutomationProperties.LiveSetting="Polite" AutomationProperties.HelpText="Open Details for the full message." />
+                <TextBlock x:Name="BackendStatusText" Grid.Column="1" Visibility="Collapsed" TextTrimming="CharacterEllipsis" MaxWidth="260" MaxHeight="20" ClipToBounds="True" VerticalAlignment="Center" FontSize="11" Opacity="0.6" Margin="0,0,14,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
+                <ToggleButton x:Name="DiagnosticsToggle" Grid.Column="2" Content="Details" Padding="10,4" MinHeight="28" AutomationProperties.Name="Show full status and diagnostics" />
+            </Grid>
+            <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="20" ClipToBounds="True" Margin="0,6,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
+            <Border x:Name="DiagnosticsPanel" Margin="0,12,0,0">
+                <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=DiagnosticsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                <StackPanel>
+                    <TextBox x:Name="DiagnosticMessage" Text="{Binding Text, ElementName=StatusText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="160" BorderThickness="0" Background="Transparent" Padding="0" AutomationProperties.Name="Full operation status" />
+                    <TextBlock Text="{Binding Text, ElementName=BackendStatusText}" TextWrapping="Wrap" MaxHeight="44" ClipToBounds="True" FontSize="12" Opacity="0.7" Margin="0,10,0,0" ToolTip="{Binding Text, ElementName=BackendStatusText}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="OpenLogButton" Content="Open log" Click="OpenLog_Click" Visibility="Collapsed" Padding="12,5" Margin="0,0,10,0" />
+                        <Button x:Name="DetailsButton" Content="Scan details" Click="Details_Click" Visibility="Collapsed" Padding="12,5" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </Grid>
 </Window>
