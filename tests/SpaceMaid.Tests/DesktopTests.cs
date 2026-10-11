@@ -569,7 +569,10 @@ public sealed class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((Grid)window.FindName("OpportunitiesPanel")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((Grid)window.FindName("ExplorePanel")).Visibility);
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-empty.png"), 1220, 940);
-                Assert.Contains(Descendants(photosView).OfType<Button>(), button => Equals(button.Content, "Cleanup unavailable") && !button.IsEnabled);
+                Assert.IsType<ComboBox>(photosView.FindName("CollectionList"));
+                Assert.Equal(Visibility.Collapsed, ((Border)photosView.FindName("SelectionPanel")).Visibility);
+                Assert.Equal(Visibility.Collapsed, ((Grid)photosView.FindName("CollectionHeader")).Visibility);
+                Assert.Equal("Add folder", ((Button)photosView.FindName("EmptyActionButton")).Content);
                 stage = "discovering and analyzing owned photos through the loaded extension and real tool broker";
                 PumpUntil(() => !string.IsNullOrEmpty(((TextBlock)photosView.FindName("ToolText")).Text), TimeSpan.FromSeconds(10));
                 string photoFolder = Directory.CreateDirectory(Path.Join(fixture.Path, "photo-review")).FullName;
@@ -584,11 +587,56 @@ public sealed class DesktopTests
                 PumpUntil(() => addPhotos.IsCompleted, TimeSpan.FromSeconds(10)); addPhotos.GetAwaiter().GetResult();
                 var photoFiles = (DataGrid)photosView.FindName("FileList");
                 Assert.Equal(2, photoFiles.Items.Count);
+                Assert.Equal(Visibility.Visible, ((Grid)photosView.FindName("CollectionHeader")).Visibility);
+                Assert.Equal(Visibility.Collapsed, ((StackPanel)photosView.FindName("PageButtons")).Visibility);
+                Assert.False(((Expander)photosView.FindName("CollectionDetails")).IsExpanded);
+                Assert.Equal(Visibility.Collapsed, photoFiles.Columns.Single(column => column.SortMemberPath == "Status").Visibility);
+                Assert.Equal(Visibility.Collapsed, photoFiles.Columns.Single(column => column.SortMemberPath == "Type").Visibility);
+                var statusColumnChoice = (MenuItem)photosView.FindName("ShowStatusColumn");
+                statusColumnChoice.IsChecked = true; statusColumnChoice.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                Assert.Equal(Visibility.Visible, photoFiles.Columns.Single(column => column.SortMemberPath == "Status").Visibility);
+                statusColumnChoice.IsChecked = false; statusColumnChoice.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                ((RadioButton)photosView.FindName("FamiliesTab")).IsChecked = true;
+                PumpUntil(() => photoFiles.Items.Count == 0 && ((TextBlock)photosView.FindName("EmptyTitle")).Text == "No related files found", TimeSpan.FromSeconds(3));
+                Assert.Equal(Visibility.Collapsed, photoFiles.Visibility);
+                Assert.Equal("Browse photos", ((Button)photosView.FindName("EmptyActionButton")).Content);
+                photosView.GetType().GetMethod("ShowFailure", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(photosView, [new IOException("Owned fixture retry")]);
+                Assert.Equal(Visibility.Visible, ((Grid)photosView.FindName("StatusBand")).Visibility);
+                Assert.Equal("Try again", ((Button)photosView.FindName("EmptyActionButton")).Content);
+                ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((TextBlock)photosView.FindName("EmptyTitle")).Text == "No related files found", TimeSpan.FromSeconds(3));
+                Assert.Equal(Visibility.Collapsed, ((Grid)photosView.FindName("StatusBand")).Visibility);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-related-empty.png"), 1220, 940);
+                ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => photoFiles.Items.Count == 2, TimeSpan.FromSeconds(3));
+                // The template-based Name column still routes header sorting to
+                // catalog paging, with a visible arrow and actual row reordering.
+                var nameColumn = photoFiles.Columns.Single(column => column.SortMemberPath == "Name");
+                var onSorting = typeof(DataGrid).GetMethod("OnSorting", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                onSorting.Invoke(photoFiles, [new DataGridSortingEventArgs(nameColumn)]);
+                PumpUntil(() => photoFiles.Items.Count == 2 && PhotoName(photoFiles.Items[0]) == "original.png", TimeSpan.FromSeconds(3));
+                Assert.Equal(ListSortDirection.Descending, nameColumn.SortDirection);
+                onSorting.Invoke(photoFiles, [new DataGridSortingEventArgs(nameColumn)]);
+                PumpUntil(() => photoFiles.Items.Count == 2 && PhotoName(photoFiles.Items[0]) == "copy.png", TimeSpan.FromSeconds(3));
+#pragma warning disable WPF0001
+                foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
+                {
+                    app.ThemeMode = theme;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"photos-browse-{(theme == ThemeMode.Light ? "light" : "dark")}.png"), 1220, 940);
+                }
+#pragma warning restore WPF0001
                 photoFiles.SelectedIndex = 0; window.UpdateLayout();
+                Assert.Equal(Visibility.Visible, ((Border)photosView.FindName("SelectionPanel")).Visibility);
                 Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
+                Assert.Equal(Visibility.Collapsed, ((Image)photosView.FindName("SelectedPreview")).Visibility);
                 Assert.Contains("Analyze", ((TextBlock)photosView.FindName("PreviewStatusText")).Text);
+                ((Button)photosView.FindName("CloseSelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Null(photoFiles.SelectedItem); Assert.Equal(Visibility.Collapsed, ((Border)photosView.FindName("SelectionPanel")).Visibility);
+                ((RadioButton)photosView.FindName("DuplicatesTab")).IsChecked = true;
+                PumpUntil(() => photoFiles.Items.Count == 0 && Equals(((Button)photosView.FindName("EmptyActionButton")).Content, "Analyze photos"), TimeSpan.FromSeconds(3));
                 var analyzePhotos = (Button)photosView.FindName("AnalyzeButton");
-                analyzePhotos.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => analyzePhotos.IsEnabled && ((TextBlock)photosView.FindName("StatusText")).Text.Contains("Analysis complete", StringComparison.Ordinal), TimeSpan.FromSeconds(10));
                 ((RadioButton)photosView.FindName("DuplicatesTab")).IsChecked = true;
                 PumpUntil(() => photoFiles.Items.Count == 2 && ((TextBlock)photosView.FindName("CoverageText")).Text.Contains("Default-stream equality", StringComparison.Ordinal), TimeSpan.FromSeconds(10));
@@ -599,8 +647,10 @@ public sealed class DesktopTests
                 Assert.Contains("PNG", ((TextBox)photosView.FindName("SelectionText")).Text);
                 ((Button)photosView.FindName("RetainButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Assert.Contains("Review preference", ((TextBox)photosView.FindName("SelectionText")).Text);
+                Assert.True(((Expander)photosView.FindName("FileDetails")).IsExpanded);
                 Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto)); Assert.Equal(originalBytes, File.ReadAllBytes(copyPhoto));
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-duplicates.png"), 1220, 940);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-duplicates-compact.png"), 1020, 820);
                 File.Delete(copyPhoto); // Only the owned fixture; refresh must invalidate earlier evidence.
                 ((Button)photosView.FindName("RefreshButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((Button)photosView.FindName("RefreshButton")).IsEnabled && photoFiles.Items.Count == 0, TimeSpan.FromSeconds(10));
@@ -610,6 +660,12 @@ public sealed class DesktopTests
                 Assert.Null(((Image)photosView.FindName("SelectedPreview")).Source);
                 Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto));
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+
+                static string PhotoName(object display)
+                {
+                    var value = display.GetType().GetProperty("Row")!.GetValue(display)!;
+                    return (string)value.GetType().GetProperty("Name")!.GetValue(value)!;
+                }
 
                 stage = "rendering framed folders at desktop and compact sizes";
                 picker.ItemsSource = new[] { new DriveChoice(@"G:\", @"G:\", GiB(465.75), GiB(17.67)) };
