@@ -87,8 +87,7 @@ public partial class MainWindow
         ScannedSizeCaption.Text = "Partially refreshed";
         TreeNote.Text = $"Rechecked at {updated.LastRecheckUtc!.Value.ToLocalTime():HH:mm:ss} · Other folders retain earlier scan data";
         MapBasis.Text = "Area = allocated size · Partial refresh";
-        try { var drive = new DriveInfo(updated.RootPath); ShowDriveSpace(drive.TotalSize, drive.AvailableFreeSpace); }
-        catch (IOException) { }
+        RefreshPathDriveSpace();
         _staleScopes.RemoveWhere(scope => requests.Any(request =>
             scope.Path.Equals(request.Path, StringComparison.Ordinal) && (!scope.Recursive || request.Recursive)
             || request.Recursive && scope.Path.StartsWith(request.Path.EndsWith(Path.DirectorySeparatorChar)
@@ -111,7 +110,7 @@ public partial class MainWindow
 
     private async void DrainExplorerRecheck()
     {
-        if (!_explorerReturnPending) return;
+        if (_openingPath || !_explorerReturnPending) return;
         if (_explorerRecheckPath is not { } path || _snapshot is not { } scan || !CanUseFolderMenu(scan)) return;
         _explorerRecheckPath = null; _explorerReturnPending = false;
         await RecheckFolderAsync(path);

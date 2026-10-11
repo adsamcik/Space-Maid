@@ -108,6 +108,11 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <Style x:Key="PathCrumb" TargetType="Button" BasedOn="{StaticResource ColumnHeader}">
+        <Setter Property="Padding" Value="7,5" /><Setter Property="MinHeight" Value="34" />
+        <Setter Property="MinWidth" Value="0" /><Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
     <Style x:Key="SectionLabel" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />

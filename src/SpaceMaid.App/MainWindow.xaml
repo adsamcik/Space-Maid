@@ -5,7 +5,7 @@
         Title="Space Maid" Width="1220" Height="940" MinWidth="1020" MinHeight="820"
         WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="14"
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}"
-        Loaded="Window_Loaded" Closing="Window_Closing">
+        Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PathKeyDown">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
@@ -14,14 +14,20 @@
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <DockPanel VerticalAlignment="Center" Margin="0,0,16,0" MaxWidth="460" HorizontalAlignment="Left">
-                    <Label Content="_Drive" Target="{Binding ElementName=DrivePicker}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <ComboBox x:Name="DrivePicker" MinWidth="260" SelectionChanged="Drive_Changed" AutomationProperties.Name="Drive to scan" />
-                </DockPanel>
+                <Border x:Name="PathBar" VerticalAlignment="Center" Margin="0,0,12,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="5" MinHeight="38" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" PreviewMouseLeftButtonDown="PathBar_MouseDown">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="34" /></Grid.ColumnDefinitions>
+                        <ScrollViewer x:Name="PathScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Margin="6,0,0,0">
+                            <StackPanel x:Name="Breadcrumbs" Orientation="Horizontal" VerticalAlignment="Center" />
+                        </ScrollViewer>
+                        <TextBox x:Name="PathEditor" Grid.ColumnSpan="2" Visibility="Collapsed" VerticalContentAlignment="Center" BorderThickness="0" Background="Transparent" KeyDown="PathEditor_KeyDown" LostKeyboardFocus="PathEditor_LostFocus" AutomationProperties.Name="Folder path" AutomationProperties.HelpText="Enter to open or scan a folder. Escape to cancel." />
+                        <Button x:Name="EditPathButton" Grid.Column="1" Content="&#xE70F;" FontFamily="Segoe Fluent Icons" Click="EditPath_Click" Style="{StaticResource PathCrumb}" ToolTip="Edit path (Ctrl+L)" AutomationProperties.Name="Edit folder path" />
+                    </Grid>
+                </Border>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="ElevateButton" Content="Enable fast scanning" Click="Elevate_Click" Margin="0,0,8,0" Padding="12,5" />
                     <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0" Visibility="Collapsed" Padding="12,5" />
-                    <Button x:Name="ScanButton" Content="Scan drive" Click="Scan_Click" Style="{DynamicResource AccentButtonStyle}" Padding="18,5" />
+                    <Button x:Name="ScanButton" Content="Scan" Click="Scan_Click" Style="{DynamicResource AccentButtonStyle}" Padding="18,5" />
                 </StackPanel>
                 <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,9,0,0">
                     <UniformGrid Columns="3">
@@ -101,20 +107,19 @@
               </Border>
               <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">
                   <Grid x:Name="MapLayout">
-                      <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <DockPanel Margin="0,0,0,8"><TextBlock x:Name="MapTotal" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="12" Opacity="0.7" Margin="8,0,0,0" /><WrapPanel x:Name="Breadcrumbs" VerticalAlignment="Center" /></DockPanel>
-                      <local:TreemapPanel x:Name="SpaceMap" Grid.Row="1" MinHeight="120" ClipToBounds="True" AutomationProperties.Name="Framed folder treemap with one nested child level. Choose a contributor to see its files." />
-                      <TextBlock x:Name="MapHint" Grid.Row="1" Text="Select a folder." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
-                      <WrapPanel Grid.Row="2" Margin="0,8,0,0" Opacity="0.75">
+                      <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                      <local:TreemapPanel x:Name="SpaceMap" MinHeight="120" ClipToBounds="True" AutomationProperties.Name="Framed folder treemap with one nested child level. Choose a contributor to see its files." />
+                      <TextBlock x:Name="MapHint" Text="Select a folder." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
+                      <WrapPanel Grid.Row="1" Margin="0,8,0,0" Opacity="0.75">
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="ProjectSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Projects &amp; data" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="CacheSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Build &amp; cache" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="AgentSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Agent files" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,0,5"><Border x:Name="OtherSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Other" FontSize="11" /></StackPanel>
                           <TextBlock x:Name="MapBasis" Text="Area = allocated size" FontSize="11" Margin="12,0,0,5" />
                       </WrapPanel>
-                      <StackPanel Grid.Row="3" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
+                      <StackPanel Grid.Row="2" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
                           <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,7" />
-                          <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
+                          <TextBox x:Name="SelectedEntryPath" Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
                           <TextBlock x:Name="EntryTypeText" Text="{Binding TypeDescription}" TextWrapping="Wrap" Opacity="0.7" FontSize="12" Margin="0,4,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding TypeDescription}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
                           <WrapPanel Margin="0,4,0,0"><TextBlock Text="Allocated" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Logical" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
                           <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.65" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>

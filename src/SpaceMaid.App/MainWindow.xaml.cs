@@ -29,22 +29,8 @@ public partial class MainWindow : Window
         Activated += Window_Activated;
         UpdateTreeSortHeaders();
         InitializeOpportunityBrowser();
-        var drives = new List<DriveChoice>();
-        foreach (var drive in DriveInfo.GetDrives())
-        {
-            try
-            {
-                if (drive.IsReady)
-                    drives.Add(new(drive.Name, drive.Name,
-                        drive.TotalSize, drive.AvailableFreeSpace));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* A drive may disconnect. */ }
-        }
-        DrivePicker.ItemsSource = drives;
-        DrivePicker.SelectedIndex = drives.Count > 0 ? 0 : -1;
-        ScanButton.IsEnabled = drives.Count > 0;
+        SetScanTarget(Path.GetPathRoot(Environment.SystemDirectory)!);
         UpdateFastScanButton(false);
-        if (drives.Count == 0) StatusText.Text = "No accessible drives were found.";
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -59,15 +45,12 @@ public partial class MainWindow : Window
         if (!_closing) await InitializeExtensionsAsync();
     }
 
-    private void Drive_Changed(object sender, SelectionChangedEventArgs e)
+    internal void SetScanTarget(string path)
     {
-        if (FreeSpaceText is null) return;
-        if (DrivePicker.SelectedItem is DriveChoice drive)
-        {
-            ShowDriveSpace(drive.TotalBytes, drive.FreeBytes);
-        }
         // Results always belong to the selected target, never the previous drive.
         ClearResults();
+        ShowPath(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+        RefreshPathDriveSpace();
         _scanLogPath = null;
         OpenLogButton.Visibility = BackendStatusText.Visibility = Visibility.Collapsed;
     }
@@ -101,7 +84,14 @@ public partial class MainWindow : Window
 
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
-        if (_work is not null || DrivePicker.SelectedItem is not DriveChoice drive) return;
+        if (_editingPath) await NavigatePathAsync(PathEditor.Text, forceScan: true);
+        else await ScanCurrentPathAsync();
+    }
+
+    internal async Task ScanCurrentPathAsync()
+    {
+        if (_work is not null || _browsing || _closing || _currentPath.Length == 0) return;
+        string target = _currentPath;
         ClearResults();
         using var work = new CancellationTokenSource();
         _work = work;
@@ -111,7 +101,7 @@ public partial class MainWindow : Window
         OpenLogButton.ToolTip = _scanLogPath;
         BackendStatusText.Visibility = Visibility.Visible;
         BackendStatusText.Text = "Selecting scanner…";
-        log.Record("app-scan-start", new { Target = drive.Path, Administrator = Elevation.IsAdministrator,
+        log.Record("app-scan-start", new { Target = target, Administrator = Elevation.IsAdministrator,
             Executable = Environment.ProcessPath, Version = typeof(App).Assembly.GetName().Version?.ToString(),
             Build = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
             Runtime = Environment.Version.ToString(), OperatingSystem = Environment.OSVersion.ToString(), ProcessId = Environment.ProcessId });
@@ -132,8 +122,10 @@ public partial class MainWindow : Window
         try
         {
             string? helperFailure = null;
-            var selectedDrive = new DriveInfo(drive.Path);
-            if (_fastEnabled && _scanHelper is null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
+            string root = Path.GetPathRoot(target)!;
+            var selectedDrive = root.Length == 3 ? new DriveInfo(root) : null;
+            if (_fastEnabled && _scanHelper is null && target.Equals(root, StringComparison.OrdinalIgnoreCase)
+                && selectedDrive is not null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
                 && selectedDrive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
             {
                 try { _scanHelper = await HelperLayoutSource.CreateAsync(true, work.Token); }
@@ -143,7 +135,7 @@ public partial class MainWindow : Window
                     log.Record("helper-unavailable", new { Error = ex.ToString() });
                 }
             }
-            var scan = await new VolumeScanner().ScanAsync(drive.Path, progress, work.Token,
+            var scan = await new VolumeScanner().ScanAsync(target, progress, work.Token,
                 preferFast: _fastEnabled || Elevation.IsAdministrator, diagnostic: d => log.Record(d.Event, d), layoutSource: _scanHelper,
                 fastUnavailableReason: helperFailure);
             acquiring = false;
@@ -187,17 +179,12 @@ public partial class MainWindow : Window
                 + (scan.WarningCount > 0 ? $" · {scan.WarningCount:N0} coverage warnings" : "");
             StatusText.Text = _scanStatus;
             DetailsButton.Visibility = Visibility.Visible;
-            try
-            {
-                var refreshed = new DriveInfo(drive.Path);
-                ShowDriveSpace(refreshed.TotalSize, refreshed.AvailableFreeSpace);
-            }
-            catch (IOException) { }
+            RefreshPathDriveSpace();
         }
         catch (OperationCanceledException)
         {
             acquiring = false;
-            log.Record("scan-cancelled", new { Target = drive.Path });
+            log.Record("scan-cancelled", new { Target = target });
             if (!_closing)
             {
                 if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
@@ -209,7 +196,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
-            log.Record("scan-failed", new { Target = drive.Path, Error = ex.ToString(), Win32Error = (ex as Win32Exception)?.NativeErrorCode });
+            log.Record("scan-failed", new { Target = target, Error = ex.ToString(), Win32Error = (ex as Win32Exception)?.NativeErrorCode });
             if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; EmptyCaption.Text = "Check that the drive is connected and accessible, then try again."; }
         }
         finally
@@ -225,8 +212,7 @@ public partial class MainWindow : Window
     internal void SetBusy(bool busy)
     {
         _extensions?.SetDiscoveryBusy(busy);
-        DrivePicker.IsEnabled = !busy;
-        ScanButton.IsEnabled = !busy && DrivePicker.SelectedItem is not null;
+        UpdatePathAvailability(busy);
         UpdateFastScanButton(busy);
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;

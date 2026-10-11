@@ -77,13 +77,24 @@ public sealed class DesktopTests
                 Assert.Equal(availableVisibility, enableFast.Visibility); Assert.False(enableFast.IsEnabled);
                 window.SetBusy(false);
                 Assert.Equal(availableVisibility, enableFast.Visibility); Assert.Equal(!Elevation.IsAdministrator, enableFast.IsEnabled);
-                var picker = (ComboBox)window.FindName("DrivePicker");
                 var fixtureDrive = new DriveInfo(fixture.Path);
-                picker.ItemsSource = new[] { new DriveChoice(fixture.Path, "Controlled scan fixture", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };
-                picker.SelectedIndex = 0;
+                window.SetScanTarget(fixture.Path);
+                var editor = (TextBox)window.FindName("PathEditor");
+                ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(fixture.Path, editor.Text); Assert.Equal(editor.Text.Length, editor.SelectionLength);
+                editor.Text = Path.Join(fixture.Path, "missing-folder");
+                var invalidPath = window.NavigatePathAsync(editor.Text);
+                PumpUntil(() => invalidPath.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(invalidPath.GetAwaiter().GetResult());
+                Assert.Equal(fixture.Path, window.CurrentPath); Assert.Equal(Visibility.Visible, editor.Visibility);
+                var escapePath = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent };
+                editor.RaiseEvent(escapePath); Assert.True(escapePath.Handled);
+                Assert.Equal(Visibility.Collapsed, editor.Visibility); Assert.Equal(fixture.Path, editor.Text);
                 var scanButton = (Button)window.FindName("ScanButton");
                 stage = "scanning fixture through the UI";
+                ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                editor.Text = fixture.Path;
                 scanButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((Button)window.FindName("OpenLogButton")).Visibility == Visibility.Visible, TimeSpan.FromSeconds(3));
                 Assert.Equal(Visibility.Visible, ((Button)window.FindName("OpenLogButton")).Visibility);
                 PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(15));
                 string logFile = Assert.Single(Directory.GetFiles(window.LogDirectory, "*.jsonl"));
@@ -110,6 +121,26 @@ public sealed class DesktopTests
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
                 stage = "navigating the real folder tree and treemap";
+                ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                editor.Text = bin;
+                var enterPath = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent };
+                editor.RaiseEvent(enterPath);
+                PumpUntil(() => ((Border)window.FindName("PathBar")).IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.True(enterPath.Handled); Assert.Equal(bin, window.CurrentPath);
+                Assert.Equal(logFile, Assert.Single(Directory.GetFiles(window.LogDirectory, "*.jsonl"))); // Existing inventory, no new scan.
+                var ancestorMenu = ((StackPanel)window.FindName("Breadcrumbs")).Children.OfType<Button>().Single(button => button.ContextMenu is not null).ContextMenu;
+                ancestorMenu.Items.Cast<MenuItem>().Single(item => Equals(item.ToolTip, fixture.Path)).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                PumpUntil(() => ((Border)window.FindName("PathBar")).IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.Equal(fixture.Path, window.CurrentPath);
+                Assert.Equal(Visibility.Collapsed, ((TextBox)window.FindName("SelectedEntryPath")).Visibility);
+                window.UpdateLayout();
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Assert.Equal(fixture.Path, window.CurrentPath);
+                Assert.Equal(fixture.Path, Assert.IsType<ExplorerRow>(((ListBox)window.FindName("SpaceTree")).SelectedItem).Path);
+                // The following context-menu checks start with only the root expanded.
+                // Address navigation deliberately retained the expanded project.
+                var resetNavigation = window.InitializeExplorerAsync(Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan, [row.Item], default);
+                PumpUntil(() => resetNavigation.IsCompleted, TimeSpan.FromSeconds(3)); resetNavigation.GetAwaiter().GetResult();
                 var tree = (ListBox)window.FindName("SpaceTree");
                 var explorer = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 Assert.True(tree.Items.Count >= 2);
@@ -126,12 +157,12 @@ public sealed class DesktopTests
                     new Point(2, projectExpander.ActualHeight - 2), new Point(projectExpander.ActualWidth - 2, projectExpander.ActualHeight - 2) })
                     Assert.Contains(Assert.IsAssignableFrom<DependencyObject>(tree.InputHitTest(projectExpander.TranslatePoint(point, tree))), expansionTargets);
                 stage = "opening folder operations through routed right-click events";
-                string rootMapTotal = ((TextBlock)window.FindName("MapTotal")).Text;
+                string rootMapTotal = window.CurrentPath;
                 RightClick(window, projectContainer);
                 Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
-                Assert.Equal(rootMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                Assert.Equal(rootMapTotal, window.CurrentPath);
                 PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
                 Assert.Equal(new[] { "Open in File Explorer", "Move to Recycle Bin", "Recheck this folder" }, tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
                 Assert.True(tree.ContextMenu.Items.Cast<MenuItem>().All(i => i.IsEnabled));
@@ -141,7 +172,7 @@ public sealed class DesktopTests
                 var projectTile = rootMap.Buttons.Single(b => ((SpaceContribution)b.DataContext).Path == project);
                 RightClick(window, projectTile);
                 PumpUntil(() => projectTile.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
-                Assert.Equal(rootMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                Assert.Equal(rootMapTotal, window.CurrentPath);
                 PumpUntil(() => projectTile.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
                 Assert.Equal(3, projectTile.ContextMenu.Items.Count);
                 projectTile.ContextMenu.IsOpen = false;
@@ -153,13 +184,13 @@ public sealed class DesktopTests
                 Assert.False(explorer.IsExpanded(projectLink));
                 Assert.Equal(-1, explorer.Find(binLink));
                 var binTile = rootMap.Buttons.Single(b => ((SpaceContribution)b.DataContext).Path == bin);
-                string projectMapTotal = ((TextBlock)window.FindName("MapTotal")).Text;
+                string projectMapTotal = window.CurrentPath;
                 RightClick(window, binTile);
                 PumpUntil(() => binTile.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 Assert.True(explorer.IsExpanded(projectLink));
                 Assert.Same(binTile, rootMap.Buttons.Single(b => ((SpaceContribution)b.DataContext).Path == bin));
-                Assert.Equal(projectMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                Assert.Equal(projectMapTotal, window.CurrentPath);
                 binTile.ContextMenu.IsOpen = false;
                 RightClick(window, tree, keyboard: true);
                 PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
@@ -175,7 +206,7 @@ public sealed class DesktopTests
                     Assert.Equal(FontWeights.SemiBold, ((Button)window.FindName(header)).FontWeight);
                     Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                     Assert.All(expandedBefore, link => Assert.True(explorer.IsExpanded(link)));
-                    Assert.Equal(projectMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
+                    Assert.Equal(projectMapTotal, window.CurrentPath);
                 }
                 Assert.Equal("% parent ↓", ((Button)window.FindName("ShareHeader")).Content);
 
@@ -268,7 +299,7 @@ public sealed class DesktopTests
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
                 // Delete while the exact path text field is focused must not
                 // invoke folder recycling.
-                var pathField = Descendants(((StackPanel)window.FindName("EntryDetail"))).OfType<TextBox>().Single();
+                var pathField = (TextBox)window.FindName("PathEditor");
                 var fieldKey = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(pathField), Environment.TickCount, Key.Delete)
                     { RoutedEvent = Keyboard.PreviewKeyDownEvent };
                 pathField.RaiseEvent(fieldKey);
@@ -481,7 +512,7 @@ public sealed class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((Grid)window.FindName("ExplorePanel")).Visibility);
                 Assert.Equal(100, preliminaryFiles.Items.Count);
                 Assert.True(preliminaryFiles.IsEnabled);
-                Assert.False(picker.IsEnabled);
+                Assert.False(((Border)window.FindName("PathBar")).IsEnabled);
                 Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
                 Assert.Equal(Visibility.Visible, ((Button)window.FindName("CancelButton")).Visibility);
                 Assert.Equal("Path pending…", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).PathText);
@@ -575,8 +606,7 @@ public sealed class DesktopTests
                 PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
                 Assert.False(tree.ContextMenu.IsOpen); // File rows do not expose folder operations.
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
-                picker.ItemsSource = new[] { new DriveChoice(Path.GetPathRoot(fixture.Path)!, "Another target", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };
-                picker.SelectedIndex = 0;
+                window.SetScanTarget(Path.GetPathRoot(fixture.Path)!);
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BackendStatusText")).Visibility);
                 Assert.Empty(tree.ContextMenu.Items.Cast<object>());
@@ -769,8 +799,7 @@ public sealed class DesktopTests
                 }
 
                 stage = "rendering framed folders at desktop and compact sizes";
-                picker.ItemsSource = new[] { new DriveChoice(@"G:\", @"G:\", GiB(465.75), GiB(17.67)) };
-                picker.SelectedIndex = 0;
+                window.SetScanTarget(@"G:\");
                 var layoutScan = NestedLayoutFixture();
                 var layoutLoad = window.InitializeExplorerAsync(layoutScan, [], default);
                 PumpUntil(() => layoutLoad.IsCompleted, TimeSpan.FromSeconds(10));
@@ -1362,7 +1391,7 @@ public sealed class DesktopTests
         Assert.False(retainedRow.CanExpand); Assert.True(retainedRow.Entry.IsIncomplete);
         var showRetained = window.NavigateToEntryAsync(retainedLink);
         PumpUntil(() => showRetained.IsCompleted, TimeSpan.FromSeconds(5)); showRetained.GetAwaiter().GetResult();
-        Assert.Equal("Size not checked", ((TextBlock)window.FindName("MapTotal")).Text);
+        Assert.Contains("Folder contents were not checked", ((TextBlock)window.FindName("MapHint")).Text);
         Assert.Contains("Folder contents were not checked", ((TextBlock)window.FindName("MapHint")).Text);
         Assert.Equal(32768, new FileInfo(Path.Join(retained, "sample.dll")).Length);
 
@@ -1494,7 +1523,7 @@ public sealed class DesktopTests
     private static void AssertMapFillsPane(MainWindow window, TreemapPanel map)
     {
         var layout = (Grid)window.FindName("MapLayout");
-        var legend = layout.Children.OfType<WrapPanel>().Single(panel => Grid.GetRow(panel) == 2);
+        var legend = layout.Children.OfType<WrapPanel>().Single();
         double gap = legend.TranslatePoint(new Point(), layout).Y - map.TranslatePoint(new Point(0, map.ActualHeight), layout).Y;
         Assert.InRange(gap, 0, 12); // A small legend gutter, with no unused map space.
     }

@@ -60,8 +60,7 @@ public partial class MainWindow
             else
             {
                 MarkScanStale(result.Summary + " Rescan to update the full logical-only inventory.", [new(displayed.RootPath)]);
-                try { var drive = new DriveInfo(displayed.RootPath); ShowDriveSpace(drive.TotalSize, drive.AvailableFreeSpace); }
-                catch (IOException) { }
+                RefreshPathDriveSpace();
                 result = result with { RefreshNote = "Full logical-only inventory remains out of date; rescan to refresh it." };
             }
             var uncheck = result.Locations.Where(item => item.Outcome is CleanupOutcome.Recycled or CleanupOutcome.Skipped)

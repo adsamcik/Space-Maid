@@ -35,12 +35,10 @@ public partial class MainWindow
         _selectionIsGroup = false;
         _childOrders.Clear(); _mapOrders.Clear(); _kinds = new Dictionary<int, SpaceKind>();
         SpaceTree.ItemsSource = null;
-        Breadcrumbs.Children.Clear(); Breadcrumbs.ToolTip = null;
         EntryDetail.DataContext = null; EntryDetail.Visibility = Visibility.Collapsed;
         MapHint.Visibility = TreeHint.Visibility = Visibility.Visible;
-        MapHint.Text = "Choose a folder to see its largest contributors.";
-        TreeHint.Text = "Scan a drive to explore its files.";
-        MapTotal.Text = "";
+        MapHint.Text = "Select a folder.";
+        TreeHint.Text = "Scan a folder to explore.";
     }
 
     internal async Task InitializeExplorerAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> opportunities, CancellationToken token)
@@ -215,6 +213,7 @@ public partial class MainWindow
         using var work = new CancellationTokenSource();
         _browseWork = work;
         ExplorePanel.IsEnabled = false;
+        UpdatePathAvailability(_work is not null);
         StatusText.Text = "Opening folder…";
         bool failed = false;
         try { await action(work.Token); }
@@ -223,6 +222,7 @@ public partial class MainWindow
         finally
         {
             _browseWork = null; _browsing = false;
+            UpdatePathAvailability(_work is not null);
             if (!_closing)
             {
                 ExplorePanel.IsEnabled = _work is null;
@@ -400,23 +400,9 @@ public partial class MainWindow
         long total = folder.AttributedBytes(scan.HasAllocationData);
         EntryDetail.DataContext = new ExplorerRow(scan, selected, 0, expanded);
         EntryDetail.Visibility = Visibility.Visible;
-        Breadcrumbs.Children.Clear();
-        var crumbs = new Stack<ScanEntry>(); var visited = new HashSet<int>();
-        for (var current = folder; visited.Add(current.FileIndex); current = scan.Entry(scan.PrimaryLink(current.ParentIndex)))
-        { crumbs.Push(current); if (current.ParentIndex < 0) break; }
-        while (crumbs.TryPop(out var crumb))
-        {
-            if (Breadcrumbs.Children.Count > 0) Breadcrumbs.Children.Add(new TextBlock { Text = "›", VerticalAlignment = VerticalAlignment.Center, Margin = new(3, 0, 3, 0), Opacity = .65 });
-            int destination = crumb.LinkIndex;
-            string label = crumb.LinkIndex == -1 && scan.RootPath != Path.GetPathRoot(scan.RootPath)
-                ? Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.RootPath)) : crumb.Name;
-            var button = new Button { Content = new TextBlock { Text = label, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 180 }, Padding = new(4, 2, 4, 2), MinHeight = 24, Background = Brushes.Transparent, BorderThickness = new(0), FontSize = 12, ToolTip = scan.EntryPath(destination) };
-            button.Click += async (_, _) => await NavigateToEntryAsync(destination);
-            Breadcrumbs.Children.Add(button);
-        }
-        Breadcrumbs.ToolTip = $"{childCount:N0} immediate entries";
+        ShowPath(scan.EntryPath(folder.LinkIndex)!);
+        SelectedEntryPath.Visibility = scan.EntryPath(selected.LinkIndex) == _currentPath ? Visibility.Collapsed : Visibility.Visible;
         bool unmeasured = scan.IsUnmeasuredDirectory(folder.FileIndex);
-        MapTotal.Text = unmeasured ? "Size not checked" : SizeText.Format(folder.AttributedBytes(scan.HasAllocationData)) + (scan.HasAllocationData ? " allocated" : " logical");
         ClearMap();
         SpaceMap.Weights = contributions.Select(item => item.Bytes).ToArray();
         foreach (var contribution in contributions)

@@ -187,6 +187,7 @@ public partial class MainWindow
             ?? _visibleOpportunityRows.FirstOrDefault();
         OpportunityHeading.Text = active?.Name ?? (missingProject ? _cleanupProjectScope!.Name : _cleanupDetailKey is not null ? _cleanupDetailName : "All locations");
         OpportunityScopeText.Text = active?.Path ?? (missingProject ? _cleanupProjectScope!.Path : _snapshot?.RootPath) ?? "";
+        OpportunityScopeText.Visibility = OpportunityScopeText.Text == _currentPath ? Visibility.Collapsed : Visibility.Visible;
         int total = active?.Group.Locations.Count ?? (_cleanupDetailKey is not null
             ? _cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey)?.Locations.Count ?? 0 : _rows.Count);
         OpportunityResultSummary.Text = missingProject ? "No matching folders remain in this project."

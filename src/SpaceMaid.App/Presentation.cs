@@ -96,8 +96,3 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
         }).Where(child => child.Matches.Count > 0).OrderByDescending(child => child.Group.ObservedBytes).ThenBy(child => child.Name).ToArray();
     public event PropertyChangedEventHandler? PropertyChanged;
 }
-
-internal sealed record DriveChoice(string Path, string Label, long TotalBytes, long FreeBytes)
-{
-    public override string ToString() => $"{Label}  ·  {SizeText.Format(TotalBytes)} total";
-}
