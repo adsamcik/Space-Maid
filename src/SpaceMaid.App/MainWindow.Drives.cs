@@ -56,6 +56,7 @@ public partial class MainWindow
 
     private void DisplayDriveChoices()
     {
+        UpdateDriveLocation();
         string? root = Path.GetPathRoot(_currentPath);
         DriveChoices.ItemsSource = _availableDrives.Select(drive => new DriveChoice(drive,
                 drive.VolumeId is null ? null : _driveHistory?.Find(drive.VolumeId, drive.RootPath),
@@ -71,6 +72,7 @@ public partial class MainWindow
     {
         if (!PathBar.IsEnabled) return;
         if (DrivePopup.IsOpen) { DrivePopup.IsOpen = false; return; }
+        DrivesButton.Focus();
         EndPathEdit();
         DrivePopup.IsOpen = true;
         await RefreshDriveChoicesAsync();

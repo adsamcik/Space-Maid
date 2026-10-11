@@ -18,16 +18,17 @@ public partial class MainWindow
 
     private void ShowPath(string path)
     {
-        if (_currentPath.Equals(path, StringComparison.Ordinal) && Breadcrumbs.Children.Count > 0) return;
+        if (_currentPath.Equals(path, StringComparison.Ordinal) && DriveRootText.Text.Length > 0) return;
         string? previousRoot = Path.GetPathRoot(_currentPath);
         _currentPath = path;
+        UpdateDriveLocation();
         OpportunityScopeText.Visibility = OpportunityScopeText.Text == path ? Visibility.Collapsed : Visibility.Visible;
         if (!_editingPath) PathEditor.Text = path;
         foreach (var button in Breadcrumbs.Children.OfType<Button>())
             if (button.ContextMenu is { } previousMenu) previousMenu.IsOpen = false;
         Breadcrumbs.Children.Clear();
         var crumbs = PathNavigation.Crumbs(path);
-        for (int index = 0; index < crumbs.Count; index++)
+        for (int index = 1; index < crumbs.Count; index++)
         {
             if (index > 0) Breadcrumbs.Children.Add(new TextBlock { Text = "›", Opacity = .6, VerticalAlignment = VerticalAlignment.Center });
             if (index == 1 && crumbs.Count > 3)
@@ -59,6 +60,24 @@ public partial class MainWindow
         }
         PathBar.ToolTip = path;
         if (!string.Equals(previousRoot, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase)) RefreshPathDriveSpace();
+    }
+
+    private void UpdateDriveLocation()
+    {
+        string root = Path.GetPathRoot(_currentPath)!;
+        DriveRootText.Text = root;
+        string title = _availableDrives.FirstOrDefault(drive => drive.RootPath.Equals(root, StringComparison.OrdinalIgnoreCase))?.Label ?? "";
+        DriveRootButton.ToolTip = string.IsNullOrEmpty(title) ? $"Open {root}" : $"Open {root} · {title}";
+        AutomationProperties.SetName(DriveRootButton, $"Open drive root {root}");
+    }
+
+    private async void DriveRoot_Click(object sender, RoutedEventArgs e)
+    {
+        if (!PathBar.IsEnabled) return;
+        string root = Path.GetPathRoot(_currentPath)!;
+        var drive = _availableDrives.FirstOrDefault(item => item.RootPath.Equals(root, StringComparison.OrdinalIgnoreCase))
+            ?? new DriveDescriptor(root, "", null, true);
+        await ChooseDriveAsync(new(drive, null, true));
     }
 
     private async void RefreshPathDriveSpace()
@@ -98,7 +117,8 @@ public partial class MainWindow
         _driveRestoreAttempted = true;
         if (!_editingPath) PathEditor.Text = _currentPath;
         _editingPath = true;
-        PathScroll.Visibility = EditPathButton.Visibility = Visibility.Collapsed;
+        PathScroll.Visibility = EditPathButton.Visibility = DriveRootButton.Visibility = Visibility.Collapsed;
+        DriveSwitchLabel.Visibility = Visibility.Visible;
         PathEditor.Visibility = Visibility.Visible;
         PathEditor.Focus(); PathEditor.SelectAll();
     }
@@ -107,7 +127,8 @@ public partial class MainWindow
     {
         _editingPath = false; PathEditor.Text = _currentPath;
         PathEditor.Visibility = Visibility.Collapsed;
-        PathScroll.Visibility = EditPathButton.Visibility = Visibility.Visible;
+        PathScroll.Visibility = EditPathButton.Visibility = DriveRootButton.Visibility = Visibility.Visible;
+        DriveSwitchLabel.Visibility = Visibility.Collapsed;
     }
 
     private void EditPath_Click(object sender, RoutedEventArgs e) => BeginPathEdit();
@@ -129,7 +150,7 @@ public partial class MainWindow
     }
     private async void Window_PathKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.SystemKey == Key.Down && Keyboard.Modifiers == ModifierKeys.Alt && !_editingPath && PathBar.IsEnabled)
+        if (e.SystemKey == Key.Down && Keyboard.Modifiers == ModifierKeys.Alt && PathBar.IsEnabled)
         { e.Handled = true; Drives_Click(DrivesButton, new RoutedEventArgs()); }
         else if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control
             || e.SystemKey == Key.D && Keyboard.Modifiers == ModifierKeys.Alt)

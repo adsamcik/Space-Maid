@@ -54,9 +54,12 @@ internal sealed record DriveChoice(DriveDescriptor Drive, DriveHistoryEntry? His
     public string RootPath => Drive.RootPath;
     public string Title => string.IsNullOrWhiteSpace(Drive.Label) ? RootPath : RootPath + "  ·  " + Drive.Label;
     public bool Ready => Drive.Ready;
+    public bool HasCapacity => Ready && Drive.TotalBytes is > 0 && Drive.FreeBytes is not null;
+    public double FreePercent => HasCapacity ? Math.Clamp((double)Drive.FreeBytes!.Value / Drive.TotalBytes!.Value * 100, 0, 100) : 0;
+    public bool HasScanHistory => History?.ScannedAtUtc is not null;
+    public string SpaceHint => Drive.LowSpace ? "Low space" : "";
     public string Capacity => !Ready ? Drive.UnavailableReason ?? "Not available"
         : Drive.TotalBytes is { } total && Drive.FreeBytes is { } free ? $"{SizeText.Format(free)} free of {SizeText.Format(total)}" : "Capacity unavailable";
-    public string Hint => Drive.LowSpace ? "Low space" : Current ? "Current" : "";
     public string HistoryCaption => History?.ScannedAtUtc is { } scanned
         ? (History.PartialScan ? "Partial scan" : "Last scan") + $" · {scanned.ToLocalTime():d}"
             + (History.ScanPath is { } scope && !scope.Equals(RootPath, StringComparison.OrdinalIgnoreCase)

@@ -96,10 +96,19 @@ public sealed class DesktopTests
                 window.SetBusy(false);
                 Assert.Equal(availableVisibility, enableFast.Visibility); Assert.Equal(!Elevation.IsAdministrator, enableFast.IsEnabled);
                 var fixtureDrive = new DriveInfo(fixture.Path);
+                stage = "returning to the drive root without starting a scan";
+                window.SetScanTarget(project);
+                var rootButton = (Button)window.FindName("DriveRootButton");
+                rootButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => window.CurrentPath == fixtureRoot && ((Border)window.FindName("PathBar")).IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.Empty(Directory.Exists(window.LogDirectory) ? Directory.GetFiles(window.LogDirectory, "*.jsonl") : []);
+                Assert.Empty(((StackPanel)window.FindName("Breadcrumbs")).Children.OfType<Button>());
                 window.SetScanTarget(fixture.Path);
                 var editor = (TextBox)window.FindName("PathEditor");
                 ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Assert.Equal(fixture.Path, editor.Text); Assert.Equal(editor.Text.Length, editor.SelectionLength);
+                Assert.Equal(Visibility.Collapsed, rootButton.Visibility);
+                Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("DriveSwitchLabel")).Visibility);
                 editor.Text = Path.Join(fixture.Path, "missing-folder");
                 var invalidPath = window.NavigatePathAsync(editor.Text);
                 PumpUntil(() => invalidPath.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(invalidPath.GetAwaiter().GetResult());
@@ -107,6 +116,7 @@ public sealed class DesktopTests
                 var escapePath = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent };
                 editor.RaiseEvent(escapePath); Assert.True(escapePath.Handled);
                 Assert.Equal(Visibility.Collapsed, editor.Visibility); Assert.Equal(fixture.Path, editor.Text);
+                Assert.Equal(Visibility.Visible, rootButton.Visibility);
                 var scanButton = (Button)window.FindName("ScanButton");
                 stage = "scanning fixture through the UI";
                 ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -125,7 +135,7 @@ public sealed class DesktopTests
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
                 fixtureChoice = drivesList.Items.Cast<DriveChoice>().Single(choice => choice.RootPath == fixtureRoot);
                 Assert.Single(fixtureChoice.Recommendations); Assert.Contains("Build files", fixtureChoice.Recommendations[0].Label);
-                Assert.Contains("Last scan", fixtureChoice.HistoryCaption); Assert.Equal("Low space", fixtureChoice.Hint);
+                Assert.Contains("Last scan", fixtureChoice.HistoryCaption); Assert.Equal("Low space", fixtureChoice.SpaceHint);
                 Assert.Contains(Path.GetFileName(fixture.Path), fixtureChoice.HistoryCaption);
                 Assert.Equal(fixture.Path, fixtureChoice.RecentPath);
                 var drivesButton = (Button)window.FindName("DrivesButton");
@@ -136,13 +146,35 @@ public sealed class DesktopTests
 #pragma warning disable WPF0001
                 foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {
-                    app.ThemeMode = theme; drivePanel.UpdateLayout();
+                    app.ThemeMode = theme; PumpUntil(() => true, TimeSpan.FromSeconds(1)); window.UpdateLayout(); drivePanel.UpdateLayout();
+                    if (!drivePopup.IsOpen) drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    PumpUntil(() => drivePopup.IsOpen && PresentationSource.FromVisual(drivePanel) is not null, TimeSpan.FromSeconds(3));
+                    string appearance = theme == ThemeMode.Light ? "light" : "dark";
+                    Render(window, Path.Join(FindRepository(), "artifacts", "ui", $"drive-location-{appearance}.png"), 1220, 940);
                     RenderMenu(drivePanel, Path.Join(FindRepository(), "artifacts", "ui", $"drive-picker-{(theme == ThemeMode.Light ? "light" : "dark")}.png"));
+                    window.Width = window.MinWidth; window.UpdateLayout(); drivePanel.UpdateLayout();
+                    Render(window, Path.Join(FindRepository(), "artifacts", "ui", $"drive-location-compact-{appearance}.png"), 1020, 820);
+                    Assert.True(((ScrollViewer)window.FindName("PathScroll")).ActualWidth > 150);
+                    window.Width = 1220; window.UpdateLayout();
                 }
                 app.ThemeMode = ThemeMode.System;
 #pragma warning restore WPF0001
+                PumpUntil(() => true, TimeSpan.FromSeconds(1));
+                if (!drivePopup.IsOpen) drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => drivePopup.IsOpen && PresentationSource.FromVisual(drivePanel) is not null, TimeSpan.FromSeconds(3));
                 var closeDrives = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(drivePanel), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
                 drivePanel.RaiseEvent(closeDrives); Assert.True(closeDrives.Handled); Assert.False(drivePopup.IsOpen);
+                stage = "changing drives while editing a full path";
+                ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                window.UpdateLayout();
+                Render(window, Path.Join(FindRepository(), "artifacts", "ui", "drive-location-edit.png"), 1220, 940);
+                drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => drivePopup.IsOpen && drivesList.ActualWidth > 0, TimeSpan.FromSeconds(3));
+                Assert.Equal(Visibility.Collapsed, editor.Visibility);
+                var chooseRecent = Descendants(drivesList).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, drivesList.Items.Cast<DriveChoice>().Single(choice => choice.Current)) && Equals(button.Tag, "recent"));
+                chooseRecent.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => !drivePopup.IsOpen && window.CurrentPath == fixture.Path && ((Border)window.FindName("PathBar")).IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.Single(Directory.GetFiles(window.LogDirectory, "*.jsonl"));
                 chooseDrive = window.ChooseDriveAsync(fixtureChoice, fixtureChoice.RecentPath);
                 PumpUntil(() => chooseDrive.IsCompleted, TimeSpan.FromSeconds(3)); chooseDrive.GetAwaiter().GetResult();
                 Assert.Equal(fixture.Path, window.CurrentPath);
