@@ -43,7 +43,7 @@ public partial class MainWindow : Window
         DrivePicker.ItemsSource = drives;
         DrivePicker.SelectedIndex = drives.Count > 0 ? 0 : -1;
         ScanButton.IsEnabled = drives.Count > 0;
-        ElevateButton.Visibility = Elevation.IsAdministrator ? Visibility.Collapsed : Visibility.Visible;
+        UpdateFastScanButton(false);
         if (drives.Count == 0) StatusText.Text = "No accessible drives were found.";
     }
 
@@ -227,7 +227,7 @@ public partial class MainWindow : Window
         _extensions?.SetDiscoveryBusy(busy);
         DrivePicker.IsEnabled = !busy;
         ScanButton.IsEnabled = !busy && DrivePicker.SelectedItem is not null;
-        ElevateButton.IsEnabled = !busy;
+        UpdateFastScanButton(busy);
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         OpportunityGrid.IsEnabled = !busy;
@@ -239,6 +239,13 @@ public partial class MainWindow : Window
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         if (!busy) DrainExplorerRecheck();
+    }
+
+    private void UpdateFastScanButton(bool busy)
+    {
+        bool canEnable = !_fastEnabled && !Elevation.IsAdministrator;
+        ElevateButton.Visibility = canEnable ? Visibility.Visible : Visibility.Collapsed;
+        ElevateButton.IsEnabled = canEnable && !busy;
     }
 
     private void ShowDriveSpace(long total, long free)
@@ -393,7 +400,7 @@ public partial class MainWindow : Window
     private async void Elevate_Click(object sender, RoutedEventArgs e) => await RequestElevationAsync();
     private async Task RequestElevationAsync()
     {
-        if (_work is not null || _closing) return;
+        if (_work is not null || _closing || _fastEnabled || Elevation.IsAdministrator) return;
         using var work = new CancellationTokenSource(); _work = work; SetBusy(true);
         try
         {

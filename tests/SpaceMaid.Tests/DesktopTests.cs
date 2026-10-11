@@ -56,6 +56,27 @@ public sealed class DesktopTests
                     foreach (var choice in app.Windows.OfType<StartupWindow>().ToArray()) choice.Close();
                 }));
                 window.Show();
+                stage = "keeping the fast-scan enable button in sync with session state";
+                var enableFast = (Button)window.FindName("ElevateButton");
+                var fastFlag = typeof(MainWindow).GetField("_fastEnabled", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var availableVisibility = Elevation.IsAdministrator ? Visibility.Collapsed : Visibility.Visible;
+                Assert.Equal(availableVisibility, enableFast.Visibility);
+                window.SetBusy(true);
+                Assert.Equal(availableVisibility, enableFast.Visibility); Assert.False(enableFast.IsEnabled);
+                // Simulate successful opt-in without requesting UAC or reading a user volume.
+                fastFlag.SetValue(window, true);
+                window.SetBusy(false);
+                Assert.Equal(Visibility.Collapsed, enableFast.Visibility); Assert.False(enableFast.IsEnabled);
+                Assert.Null(typeof(MainWindow).GetField("_scanHelper", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                // A helper is one-shot; its absence after a scan does not disable the user's choice.
+                window.SetBusy(true); window.SetBusy(false);
+                Assert.Equal(Visibility.Collapsed, enableFast.Visibility);
+                // Cancellation/failure resets the choice; retry is offered only when idle.
+                fastFlag.SetValue(window, false);
+                window.SetBusy(true);
+                Assert.Equal(availableVisibility, enableFast.Visibility); Assert.False(enableFast.IsEnabled);
+                window.SetBusy(false);
+                Assert.Equal(availableVisibility, enableFast.Visibility); Assert.Equal(!Elevation.IsAdministrator, enableFast.IsEnabled);
                 var picker = (ComboBox)window.FindName("DrivePicker");
                 var fixtureDrive = new DriveInfo(fixture.Path);
                 picker.ItemsSource = new[] { new DriveChoice(fixture.Path, "Controlled scan fixture", fixtureDrive.TotalSize, fixtureDrive.AvailableFreeSpace) };
