@@ -172,6 +172,7 @@ public sealed class DesktopTests
                 {
                     ((Button)window.FindName(header)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+                    Assert.Equal(FontWeights.SemiBold, ((Button)window.FindName(header)).FontWeight);
                     Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                     Assert.All(expandedBefore, link => Assert.True(explorer.IsExpanded(link)));
                     Assert.Equal(projectMapTotal, ((TextBlock)window.FindName("MapTotal")).Text);
@@ -403,6 +404,19 @@ public sealed class DesktopTests
                     string theme = mode == ThemeMode.Light ? "light" : "dark";
                     ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"explorer-{theme}.png"), 1220, 910);
+                    // Render the native template states without moving the user's pointer
+                    // or bringing this offscreen test window to the foreground.
+                    var nameHeader = (Button)window.FindName("NameHeader");
+                    var allocationHeader = (Button)window.FindName("AllocationHeader");
+                    var logicalHeader = (Button)window.FindName("LogicalHeader");
+                    Assert.True(VisualStateManager.GoToState(nameHeader, "MouseOver", false));
+                    Assert.True(VisualStateManager.GoToState(allocationHeader, "Pressed", false));
+                    Assert.True(VisualStateManager.GoToState(logicalHeader, "Focused", false));
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"header-states-{theme}.png"), 1220, 910);
+                    if (mode == ThemeMode.Dark) Render(window, Path.Join(artifactRoot, "artifacts", "ui", "header-states-compact-dark.png"), 1020, 790);
+                    Assert.True(VisualStateManager.GoToState(nameHeader, "Normal", false));
+                    Assert.True(VisualStateManager.GoToState(allocationHeader, "Normal", false));
+                    Assert.True(VisualStateManager.GoToState(logicalHeader, "Unfocused", false));
                     ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"main-{theme}.png"), 1220, 910);
                     Render(review, Path.Join(artifactRoot, "artifacts", "ui", $"review-{theme}.png"), 860, 700);
@@ -456,6 +470,8 @@ public sealed class DesktopTests
                 window.ShowPreliminary(preliminary);
                 Assert.Equal(names, preliminaryFiles.Items.Cast<PreliminaryRow>().Select(r => r.File.Name));
                 Assert.Equal("File / exact path ↑", ((Button)window.FindName("PreliminaryNameHeader")).Content);
+                Assert.Equal(FontWeights.SemiBold, ((Button)window.FindName("PreliminaryNameHeader")).FontWeight);
+                Assert.Equal(FontWeights.Normal, ((Button)window.FindName("PreliminaryAllocationHeader")).FontWeight);
 #pragma warning disable WPF0001
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {

@@ -55,6 +55,7 @@ public partial class MainWindow
     {
         bool active = column == selected;
         button.Content = label + (active ? descending ? " ↓" : " ↑" : "");
+        button.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
         string state = active ? descending ? ", descending" : ", ascending" : "";
         AutomationProperties.SetName(button, $"Sort by {label}{state}");
         button.ToolTip = $"Sort by {label}{state}. Click to {(active && descending ? "sort ascending" : active ? "sort descending" : column == ScanSortColumn.Name ? "sort A–Z" : "show largest first")}.";

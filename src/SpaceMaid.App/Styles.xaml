@@ -18,9 +18,44 @@
     <Style x:Key="ColumnHeader" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
         <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
-        <Setter Property="Padding" Value="3,4" /><Setter Property="MinWidth" Value="0" /><Setter Property="MinHeight" Value="28" />
-        <Setter Property="FontSize" Value="12" /><Setter Property="Opacity" Value="0.7" />
+        <Setter Property="Padding" Value="4,6" /><Setter Property="MinWidth" Value="0" /><Setter Property="MinHeight" Value="32" />
+        <Setter Property="FontSize" Value="12" /><Setter Property="FontWeight" Value="Normal" />
         <Setter Property="HorizontalContentAlignment" Value="Right" />
+        <Setter Property="Cursor" Value="Hand" /><Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+            <Grid Background="{TemplateBinding Background}">
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates">
+                        <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.08" /></VisualStateGroup.Transitions>
+                        <VisualState x:Name="Normal"><Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="HeaderHighlight" Storyboard.TargetProperty="Opacity" To="0" Duration="0" />
+                        </Storyboard></VisualState>
+                        <VisualState x:Name="MouseOver"><Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="HeaderHighlight" Storyboard.TargetProperty="Opacity" To="0.07" Duration="0" />
+                            <DoubleAnimation Storyboard.TargetName="HeaderLabel" Storyboard.TargetProperty="Opacity" To="1" Duration="0" />
+                        </Storyboard></VisualState>
+                        <VisualState x:Name="Pressed"><Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="HeaderHighlight" Storyboard.TargetProperty="Opacity" To="0.12" Duration="0" />
+                            <DoubleAnimation Storyboard.TargetName="HeaderLabel" Storyboard.TargetProperty="Opacity" To="1" Duration="0" />
+                        </Storyboard></VisualState>
+                        <VisualState x:Name="Disabled"><Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="HeaderHighlight" Storyboard.TargetProperty="Opacity" To="0" Duration="0" />
+                            <DoubleAnimation Storyboard.TargetName="HeaderLabel" Storyboard.TargetProperty="Opacity" To="0.4" Duration="0" />
+                        </Storyboard></VisualState>
+                    </VisualStateGroup>
+                    <VisualStateGroup x:Name="FocusStates">
+                        <VisualState x:Name="Unfocused"><Storyboard><DoubleAnimation Storyboard.TargetName="HeaderFocus" Storyboard.TargetProperty="Opacity" To="0" Duration="0" /></Storyboard></VisualState>
+                        <VisualState x:Name="Focused"><Storyboard><DoubleAnimation Storyboard.TargetName="HeaderFocus" Storyboard.TargetProperty="Opacity" To="1" Duration="0" /></Storyboard></VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+                <Border x:Name="HeaderHighlight" Background="{TemplateBinding Foreground}" CornerRadius="4" Margin="1" Opacity="0" IsHitTestVisible="False" />
+                <ContentPresenter x:Name="HeaderLabel" Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" RecognizesAccessKey="True" TextElement.Foreground="{TemplateBinding Foreground}" TextElement.FontWeight="{TemplateBinding FontWeight}" Opacity="0.82" />
+                <Border x:Name="HeaderFocus" BorderBrush="{TemplateBinding Foreground}" BorderThickness="2" CornerRadius="4" Margin="1" Opacity="0" IsHitTestVisible="False" />
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="FontWeight" Value="SemiBold"><Setter TargetName="HeaderLabel" Property="Opacity" Value="1" /></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style x:Key="FolderExpander" TargetType="Button">
         <Setter Property="MinWidth" Value="40" /><Setter Property="MinHeight" Value="34" />

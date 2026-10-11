@@ -65,7 +65,7 @@
                   <Grid>
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                       <Grid Margin="12,6,14,4">
-                          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
+                          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions>
                           <Button x:Name="NameHeader" Content="Name" Tag="Name" Click="TreeSort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
                           <Button x:Name="AllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="TreeSort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
                           <Button x:Name="LogicalHeader" Content="Logical" Tag="Logical" Click="TreeSort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
@@ -81,7 +81,7 @@
                           <ListBox.ItemTemplate>
                               <DataTemplate>
                                   <Grid MinHeight="34" ToolTip="{Binding EntryTooltip}">
-                                      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
+                                      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions>
                                       <Grid Margin="{Binding Indent}">
                                           <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="21" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                           <Button Content="{Binding Expander}" IsEnabled="{Binding CanExpand}" Click="Expand_Click" Style="{StaticResource FolderExpander}" AutomationProperties.Name="{Binding Name, StringFormat='Expand or collapse {0}'}" />
