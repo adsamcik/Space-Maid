@@ -12,6 +12,8 @@ public partial class MainWindow
 {
     private string _currentPath = "";
     private bool _editingPath, _openingPath;
+    private int _driveSpaceVersion;
+    private string? _capacityRoot;
     internal string CurrentPath => _currentPath;
 
     private void ShowPath(string path)
@@ -59,15 +61,24 @@ public partial class MainWindow
         if (!string.Equals(previousRoot, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase)) RefreshPathDriveSpace();
     }
 
-    private void RefreshPathDriveSpace()
+    private async void RefreshPathDriveSpace()
     {
+        string root = Path.GetPathRoot(_currentPath)!;
+        int version = ++_driveSpaceVersion;
+        if (!root.Equals(_capacityRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            _capacityRoot = root;
+            FreeSpaceText.Text = "—"; CapacityText.Text = ""; DriveCapacityBar.Value = 0;
+            DriveCapacityBar.ToolTip = null;
+        }
         try
         {
-            var drive = new DriveInfo(Path.GetPathRoot(_currentPath)!);
-            ShowDriveSpace(drive.TotalSize, drive.AvailableFreeSpace);
+            var space = await Task.Run(() => DriveSpaceProvider(root));
+            if (!_closing && version == _driveSpaceVersion) ShowDriveSpace(space.Total, space.Free);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
         {
+            if (_closing || version != _driveSpaceVersion) return;
             FreeSpaceText.Text = "—"; CapacityText.Text = "Capacity unavailable";
             DriveCapacityBar.Value = 0; DriveCapacityBar.ToolTip = null;
             AutomationProperties.SetHelpText(DriveCapacityBar, "Capacity unavailable");
@@ -76,6 +87,7 @@ public partial class MainWindow
 
     private void UpdatePathAvailability(bool busy)
     {
+        if (busy || _browsing || _openingPath) DrivePopup.IsOpen = false;
         PathBar.IsEnabled = !busy && !_browsing && !_openingPath;
         ScanButton.IsEnabled = !busy && !_browsing && !_openingPath && _currentPath.Length > 0;
     }
@@ -83,6 +95,7 @@ public partial class MainWindow
     private void BeginPathEdit()
     {
         if (!PathBar.IsEnabled) return;
+        _driveRestoreAttempted = true;
         if (!_editingPath) PathEditor.Text = _currentPath;
         _editingPath = true;
         PathScroll.Visibility = EditPathButton.Visibility = Visibility.Collapsed;
@@ -116,7 +129,9 @@ public partial class MainWindow
     }
     private async void Window_PathKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control
+        if (e.SystemKey == Key.Down && Keyboard.Modifiers == ModifierKeys.Alt && !_editingPath && PathBar.IsEnabled)
+        { e.Handled = true; Drives_Click(DrivesButton, new RoutedEventArgs()); }
+        else if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control
             || e.SystemKey == Key.D && Keyboard.Modifiers == ModifierKeys.Alt)
         { e.Handled = true; BeginPathEdit(); }
         else if (e.SystemKey == Key.Up && Keyboard.Modifiers == ModifierKeys.Alt && !_editingPath
@@ -127,6 +142,7 @@ public partial class MainWindow
     internal async Task<bool> NavigatePathAsync(string input, bool forceScan = false)
     {
         if (_closing || _work is not null || _browsing || _openingPath) return false;
+        _driveRestoreAttempted = true;
         _openingPath = true;
         try
         {

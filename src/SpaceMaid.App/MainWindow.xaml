@@ -16,12 +16,48 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Border x:Name="PathBar" VerticalAlignment="Center" Margin="0,0,12,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="5" MinHeight="38" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" PreviewMouseLeftButtonDown="PathBar_MouseDown">
                     <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="34" /></Grid.ColumnDefinitions>
-                        <ScrollViewer x:Name="PathScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Margin="6,0,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="34" /></Grid.ColumnDefinitions>
+                        <Button x:Name="DrivesButton" Click="Drives_Click" Style="{StaticResource PathCrumb}" Padding="10,5" ToolTip="Choose a drive" AutomationProperties.Name="Choose a drive">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="Drives" /><TextBlock Text="⌄" Margin="8,0,0,0" /></StackPanel>
+                        </Button>
+                        <ScrollViewer x:Name="PathScroll" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Margin="6,0,0,0">
                             <StackPanel x:Name="Breadcrumbs" Orientation="Horizontal" VerticalAlignment="Center" />
                         </ScrollViewer>
-                        <TextBox x:Name="PathEditor" Grid.ColumnSpan="2" Visibility="Collapsed" VerticalContentAlignment="Center" BorderThickness="0" Background="Transparent" KeyDown="PathEditor_KeyDown" LostKeyboardFocus="PathEditor_LostFocus" AutomationProperties.Name="Folder path" AutomationProperties.HelpText="Enter to open or scan a folder. Escape to cancel." />
-                        <Button x:Name="EditPathButton" Grid.Column="1" Content="&#xE70F;" FontFamily="Segoe Fluent Icons" Click="EditPath_Click" Style="{StaticResource PathCrumb}" ToolTip="Edit path (Ctrl+L)" AutomationProperties.Name="Edit folder path" />
+                        <TextBox x:Name="PathEditor" Grid.Column="1" Grid.ColumnSpan="2" Visibility="Collapsed" VerticalContentAlignment="Center" BorderThickness="0" Background="Transparent" KeyDown="PathEditor_KeyDown" LostKeyboardFocus="PathEditor_LostFocus" AutomationProperties.Name="Folder path" AutomationProperties.HelpText="Enter to open or scan a folder. Escape to cancel." />
+                        <Button x:Name="EditPathButton" Grid.Column="2" Content="&#xE70F;" FontFamily="Segoe Fluent Icons" Click="EditPath_Click" Style="{StaticResource PathCrumb}" ToolTip="Edit path (Ctrl+L)" AutomationProperties.Name="Edit folder path" />
+                        <Popup x:Name="DrivePopup" Placement="Bottom" PlacementTarget="{Binding ElementName=DrivesButton}" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+                            <Border x:Name="DrivePickerPanel" Style="{StaticResource Card}" Background="{DynamicResource WindowBackground}" Width="490" Padding="12" Margin="0,5,0,0" PreviewKeyDown="DrivePopup_KeyDown">
+                                <StackPanel>
+                                    <TextBlock Text="Drives" FontWeight="SemiBold" FontSize="16" Margin="8,2,8,10" />
+                                    <ScrollViewer MaxHeight="430" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl x:Name="DriveChoices" KeyboardNavigation.TabNavigation="Continue">
+                                            <ItemsControl.ItemTemplate><DataTemplate>
+                                                <Border Margin="0,0,0,8" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+                                                    <Border.Style><Style TargetType="Border"><Style.Triggers><DataTrigger Binding="{Binding Current}" Value="True"><Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                                                    <StackPanel>
+                                                        <Button Click="ChooseDrive_Click" IsEnabled="{Binding Ready}" Style="{StaticResource PathCrumb}" HorizontalContentAlignment="Stretch" Padding="12,10" ToolTip="{Binding HistoryTooltip}" AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="{Binding Capacity}">
+                                                            <StackPanel>
+                                                                <DockPanel><TextBlock Text="{Binding Hint}" DockPanel.Dock="Right" Opacity="0.7" FontSize="12" Margin="12,0,0,0" /><TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextTrimming="CharacterEllipsis" /></DockPanel>
+                                                                <TextBlock Text="{Binding Capacity}" Opacity="0.75" Margin="0,4,0,0" />
+                                                                <TextBlock Text="{Binding HistoryCaption}" Opacity="0.6" FontSize="11" Margin="0,8,0,0" TextTrimming="CharacterEllipsis" />
+                                                                <ItemsControl ItemsSource="{Binding Recommendations}" Margin="0,3,0,0">
+                                                                    <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Opacity="0.85" FontSize="12" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" /></DataTemplate></ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </StackPanel>
+                                                        </Button>
+                                                        <Button Tag="recent" ToolTip="{Binding RecentPath}" IsEnabled="{Binding Ready}" Click="ChooseDrive_Click" Margin="8,0,8,6" HorizontalAlignment="Left" AutomationProperties.Name="{Binding RecentPath}">
+                                                            <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PathCrumb}"><Setter Property="Visibility" Value="Collapsed" /><Setter Property="MaxWidth" Value="415" /><Style.Triggers><DataTrigger Binding="{Binding HasRecentFolder}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                                                            <TextBlock Text="{Binding RecentFolder}" TextTrimming="CharacterEllipsis" MaxWidth="395" />
+                                                        </Button>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate></ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                    <TextBlock x:Name="DrivePickerNote" FontSize="12" Opacity="0.65" Margin="8,2,8,0" />
+                                </StackPanel>
+                            </Border>
+                        </Popup>
                     </Grid>
                 </Border>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">

@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     {
         if (_startupOffered) return;
         _startupOffered = true;
+        _ = RefreshDriveChoicesAsync();
         if (!Elevation.IsAdministrator)
         {
             var startup = new StartupWindow { Owner = this };
@@ -91,6 +92,7 @@ public partial class MainWindow : Window
     internal async Task ScanCurrentPathAsync()
     {
         if (_work is not null || _browsing || _closing || _currentPath.Length == 0) return;
+        _driveRestoreAttempted = true;
         string target = _currentPath;
         ClearResults();
         using var work = new CancellationTokenSource();
@@ -123,6 +125,7 @@ public partial class MainWindow : Window
         {
             string? helperFailure = null;
             string root = Path.GetPathRoot(target)!;
+            string? historyVolume = await Task.Run(() => DriveDiscovery.VolumeId(root)).WaitAsync(work.Token);
             var selectedDrive = root.Length == 3 ? new DriveInfo(root) : null;
             if (_fastEnabled && _scanHelper is null && target.Equals(root, StringComparison.OrdinalIgnoreCase)
                 && selectedDrive is not null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
@@ -180,6 +183,7 @@ public partial class MainWindow : Window
             StatusText.Text = _scanStatus;
             DetailsButton.Visibility = Visibility.Visible;
             RefreshPathDriveSpace();
+            await RememberDriveScanAsync(scan, historyVolume);
         }
         catch (OperationCanceledException)
         {
@@ -236,6 +240,7 @@ public partial class MainWindow : Window
 
     private void ShowDriveSpace(long total, long free)
     {
+        _driveSpaceVersion++;
         FreeSpaceText.Text = SizeText.Format(free);
         CapacityText.Text = $"of {SizeText.Format(total)} total";
         DriveCapacityBar.Value = total > 0 ? Math.Clamp(100d * free / total, 0, 100) : 0;

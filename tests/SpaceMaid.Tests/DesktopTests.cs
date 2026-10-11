@@ -45,6 +45,11 @@ public sealed class DesktopTests
                 window = new MainWindow();
                 window.LogDirectory = Path.Join(fixture.Path, "diagnostics");
                 window.ExtensionDataRoot = Path.Join(fixture.Path, "extensions");
+                window.DriveHistoryPath = Path.Join(fixture.Path, "drive-history.json");
+                string fixtureRoot = Path.GetPathRoot(fixture.Path)!;
+                window.DriveProvider = () => [new(fixtureRoot, "Development", DriveDiscovery.VolumeId(fixtureRoot), true, GiB(500), GiB(20)),
+                    new(@"R:\", "", null, false, UnavailableReason: "Not available"), new(@"S:\", "Network drive", null, true)];
+                window.DriveSpaceProvider = _ => (GiB(500), GiB(17.5));
                 // Exercise real native layout offscreen. Detached content can be
                 // remeasured with an unbounded viewport by ScrollIntoView.
                 window.ShowActivated = false;
@@ -56,6 +61,19 @@ public sealed class DesktopTests
                     foreach (var choice in app.Windows.OfType<StartupWindow>().ToArray()) choice.Close();
                 }));
                 window.Show();
+                stage = "choosing a drive without starting a scan";
+                var drivesReady = window.RefreshDriveChoicesAsync();
+                PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
+                var drivesList = (ItemsControl)window.FindName("DriveChoices");
+                var fixtureChoice = drivesList.Items.Cast<DriveChoice>().Single(choice => choice.RootPath == fixtureRoot);
+                var unavailableChoice = drivesList.Items.Cast<DriveChoice>().Single(choice => !choice.Ready);
+                string initialTarget = window.CurrentPath;
+                window.ChooseDriveAsync(unavailableChoice).GetAwaiter().GetResult(); Assert.Equal(initialTarget, window.CurrentPath);
+                var chooseDrive = window.ChooseDriveAsync(fixtureChoice);
+                PumpUntil(() => chooseDrive.IsCompleted, TimeSpan.FromSeconds(3)); chooseDrive.GetAwaiter().GetResult();
+                Assert.Equal(fixtureRoot, window.CurrentPath);
+                Assert.Null(typeof(MainWindow).GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                Assert.Empty(Directory.Exists(window.LogDirectory) ? Directory.GetFiles(window.LogDirectory, "*.jsonl") : []);
                 stage = "keeping the fast-scan enable button in sync with session state";
                 var enableFast = (Button)window.FindName("ElevateButton");
                 var fastFlag = typeof(MainWindow).GetField("_fastEnabled", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -102,6 +120,32 @@ public sealed class DesktopTests
                 Assert.Contains("backend-selected", events);
                 Assert.Contains("app-scan-complete", events);
                 Assert.Contains("Standard Windows scan", ((TextBlock)window.FindName("BackendStatusText")).Text);
+                stage = "showing historical drive suggestions and recent folders";
+                drivesReady = window.RefreshDriveChoicesAsync();
+                PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
+                fixtureChoice = drivesList.Items.Cast<DriveChoice>().Single(choice => choice.RootPath == fixtureRoot);
+                Assert.Single(fixtureChoice.Recommendations); Assert.Contains("Build files", fixtureChoice.Recommendations[0]);
+                Assert.Contains("Last scan", fixtureChoice.HistoryCaption); Assert.Equal("Low space", fixtureChoice.Hint);
+                Assert.Contains(Path.GetFileName(fixture.Path), fixtureChoice.HistoryCaption);
+                Assert.Equal(fixture.Path, fixtureChoice.RecentPath);
+                var drivesButton = (Button)window.FindName("DrivesButton");
+                var drivePopup = (System.Windows.Controls.Primitives.Popup)window.FindName("DrivePopup");
+                drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => drivePopup.IsOpen && drivesList.ActualWidth > 0, TimeSpan.FromSeconds(3));
+                var drivePanel = (Border)window.FindName("DrivePickerPanel");
+#pragma warning disable WPF0001
+                foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
+                {
+                    app.ThemeMode = theme; drivePanel.UpdateLayout();
+                    RenderMenu(drivePanel, Path.Join(FindRepository(), "artifacts", "ui", $"drive-picker-{(theme == ThemeMode.Light ? "light" : "dark")}.png"));
+                }
+                app.ThemeMode = ThemeMode.System;
+#pragma warning restore WPF0001
+                var closeDrives = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(drivePanel), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                drivePanel.RaiseEvent(closeDrives); Assert.True(closeDrives.Handled); Assert.False(drivePopup.IsOpen);
+                chooseDrive = window.ChooseDriveAsync(fixtureChoice, fixtureChoice.RecentPath);
+                PumpUntil(() => chooseDrive.IsCompleted, TimeSpan.FromSeconds(3)); chooseDrive.GetAwaiter().GetResult();
+                Assert.Equal(fixture.Path, window.CurrentPath);
                 var grid = (ListBox)window.FindName("OpportunityGrid");
                 Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
                 Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
@@ -820,6 +864,7 @@ public sealed class DesktopTests
                 ((TextBlock)window.FindName("CandidateText")).Text = "—";
                 ((TextBlock)window.FindName("CandidateCaption")).Text = "Not analyzed";
                 ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · Layout validation";
+                PumpUntil(() => ((ProgressBar)window.FindName("DriveCapacityBar")).Value > 0, TimeSpan.FromSeconds(2));
                 Assert.InRange(((ProgressBar)window.FindName("DriveCapacityBar")).Value, 3, 4);
 #pragma warning disable WPF0001
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
@@ -1623,7 +1668,7 @@ public sealed class DesktopTests
         }
     }
 
-    private static void RenderMenu(ContextMenu menu, string path)
+    private static void RenderMenu(FrameworkElement menu, string path)
     {
         menu.UpdateLayout();
         Assert.True(menu.ActualWidth > 0 && menu.ActualHeight > 0);
