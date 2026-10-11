@@ -219,6 +219,26 @@ public partial class MainWindow
         _cleanupProjectScope = null;
         ApplyOpportunityFilters();
     }
+    private bool RevealRecommendedGroup(DriveRecommendation recommendation)
+    {
+        // Stable keys survive caption changes. Older saved history still
+        // resolves by its original group name, including the worktree alias.
+        var group = recommendation.GroupKey is { } key
+            ? _cleanupGroups.FirstOrDefault(item => item.Key == key)
+            : _cleanupGroups.FirstOrDefault(item => item.Name == recommendation.Name
+                || recommendation.Name == "Worktrees to review" && item.Key == "cleanup:worktrees");
+        _opportunitySearchTimer.Stop();
+        OpportunityGroupingPicker.SelectedIndex = 0;
+        ClearOpportunityFilters();
+        _cleanupDrillDown = group is not null; _activeOpportunityGroup = group?.Key;
+        _cleanupDetailKey = _cleanupDetailName = _cleanupDetailParentName = null;
+        _cleanupProjectScope = null;
+        ApplyOpportunityFilters(); OpportunitiesTab.IsChecked = true;
+        ViewOptionsToggle.IsChecked = WorktreeOptionsToggle.IsChecked = false;
+        if (group is null) StatusText.Text = recommendation.Name + " no longer found · Showing cleanup groups";
+        else OpportunityGrid.Focus();
+        return group is not null;
+    }
     private void ViewCleanupProjects_Click(object sender, RoutedEventArgs e)
     {
         if (_work is not null || sender is not Button { DataContext: OpportunityGroupRow group }) return;

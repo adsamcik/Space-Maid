@@ -40,11 +40,15 @@
                                                                 <DockPanel><TextBlock Text="{Binding Hint}" DockPanel.Dock="Right" Opacity="0.7" FontSize="12" Margin="12,0,0,0" /><TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextTrimming="CharacterEllipsis" /></DockPanel>
                                                                 <TextBlock Text="{Binding Capacity}" Opacity="0.75" Margin="0,4,0,0" />
                                                                 <TextBlock Text="{Binding HistoryCaption}" Opacity="0.6" FontSize="11" Margin="0,8,0,0" TextTrimming="CharacterEllipsis" />
-                                                                <ItemsControl ItemsSource="{Binding Recommendations}" Margin="0,3,0,0">
-                                                                    <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Opacity="0.85" FontSize="12" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" /></DataTemplate></ItemsControl.ItemTemplate>
-                                                                </ItemsControl>
                                                             </StackPanel>
                                                         </Button>
+                                                        <ItemsControl ItemsSource="{Binding Recommendations}" Margin="8,0,8,4">
+                                                            <ItemsControl.ItemTemplate><DataTemplate>
+                                                                <Button Click="Recommendation_Click" IsEnabled="{Binding Ready}" Style="{StaticResource PathCrumb}" HorizontalContentAlignment="Stretch" ToolTip="{Binding Help}" AutomationProperties.Name="{Binding Help}">
+                                                                    <DockPanel><TextBlock Text="›" DockPanel.Dock="Right" FontSize="18" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.6" /><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" /></DockPanel>
+                                                                </Button>
+                                                            </DataTemplate></ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
                                                         <Button Tag="recent" ToolTip="{Binding RecentPath}" IsEnabled="{Binding Ready}" Click="ChooseDrive_Click" Margin="8,0,8,6" HorizontalAlignment="Left" AutomationProperties.Name="{Binding RecentPath}">
                                                             <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PathCrumb}"><Setter Property="Visibility" Value="Collapsed" /><Setter Property="MaxWidth" Value="415" /><Style.Triggers><DataTrigger Binding="{Binding HasRecentFolder}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Button.Style>
                                                             <TextBlock Text="{Binding RecentFolder}" TextTrimming="CharacterEllipsis" MaxWidth="395" />

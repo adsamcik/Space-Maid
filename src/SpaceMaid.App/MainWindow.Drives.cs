@@ -106,19 +106,67 @@ public partial class MainWindow
         if (!_closing) { DisplayDriveChoices(); DrivesButton.Focus(); }
     }
 
-    private async Task RememberDriveScanAsync(ScanSnapshot scan, string? originalVolume)
+    private async Task<string?> RememberDriveScanAsync(ScanSnapshot scan, string? originalVolume)
     {
         await InitializeDriveHistoryAsync();
         string root = Path.GetPathRoot(scan.RootPath)!;
         // Resolve again after scanning: a disconnected/remapped drive must
         // not receive another volume's successful-scan history.
         string? identity = await Task.Run(() => DriveDiscovery.VolumeId(root));
-        if (identity is null || !identity.Equals(originalVolume, StringComparison.OrdinalIgnoreCase) || _closing) return;
+        if (identity is null || !identity.Equals(originalVolume, StringComparison.OrdinalIgnoreCase) || _closing) return null;
         _driveHistory!.RememberSelection(identity, root, scan.RootPath);
         _driveHistory.RecordScan(identity, root, scan.RootPath, scan.ScannedAtUtc, scan.HasAllocationData, scan.WarningCount > 0,
-            _cleanupGroups.Select(group => new DriveRecommendation(group.Key == "cleanup:worktrees" ? "Worktrees to review" : group.Name, group.ObservedBytes)));
+            _cleanupGroups.Select(group => new DriveRecommendation(group.Key == "cleanup:worktrees" ? "Worktrees to review" : group.Name, group.ObservedBytes, group.Key)));
         await _driveHistory.SaveAsync();
         if (!_closing) DisplayDriveChoices();
+        return identity;
+    }
+
+    private async void Recommendation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: DriveRecommendationLink link }) await OpenRecommendationAsync(link);
+        e.Handled = true;
+    }
+
+    internal async Task<bool> OpenRecommendationAsync(DriveRecommendationLink link)
+    {
+        if (_closing || _work is not null || _browsing || _openingPath || !link.Ready) return false;
+        _driveRestoreAttempted = true;
+        DrivePopup.IsOpen = false; EndPathEdit(); _openingPath = true;
+        try
+        {
+            string? identity;
+            using (var check = new CancellationTokenSource())
+            {
+                _work = check; SetBusy(true); StatusText.Text = "Opening cleanup…";
+                try
+                {
+                    identity = await Task.Run(() => DriveDiscovery.VolumeId(Path.GetPathRoot(link.Drive.RootPath)!)).WaitAsync(check.Token);
+                }
+                catch (OperationCanceledException) { StatusText.Text = "Opening cancelled"; return false; }
+                finally { _work = null; if (!_closing) SetBusy(false); }
+            }
+            if (_closing) return false;
+            if (identity is null || !identity.Equals(link.Drive.VolumeId, StringComparison.OrdinalIgnoreCase))
+            { StatusText.Text = "Drive changed · Choose it again"; await RefreshDriveChoicesAsync(); return false; }
+            if (!link.CanReuse(_snapshotVolumeId, _snapshot?.RootPath))
+            {
+                SetScanTarget(link.Drive.RootPath); ExploreTab.IsChecked = true;
+                if (!await ScanCurrentPathAsync()) return false;
+            }
+            else await NavigateToEntryAsync(-1);
+            if (_closing) return false;
+            if (!link.CanReuse(_snapshotVolumeId, _snapshot?.RootPath))
+            { StatusText.Text = "Drive changed · Choose it again"; return false; }
+            return RevealRecommendedGroup(link.Recommendation);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or System.ComponentModel.Win32Exception)
+        { if (!_closing) StatusText.Text = "Could not open cleanup: " + error.Message; return false; }
+        finally
+        {
+            _openingPath = false;
+            if (!_closing) { UpdatePathAvailability(_work is not null); DrainExplorerRecheck(); }
+        }
     }
 
     private void DrivePopup_KeyDown(object sender, KeyEventArgs e)

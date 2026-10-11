@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace SpaceMaid.App;
 
-internal sealed record DriveRecommendation(string Name, long Bytes);
+internal sealed record DriveRecommendation(string Name, long Bytes, string? GroupKey = null);
 internal sealed record DriveHistoryEntry(string VolumeId, string RootPath, string LastPath, DateTime LastUsedUtc,
     DateTime? ScannedAtUtc, string? ScanPath, bool HasAllocationData, bool PartialScan, DriveRecommendation[] Recommendations);
 
@@ -40,7 +40,7 @@ internal sealed class DriveHistoryStore(string filePath)
                     if (entry is null || !ValidId(entry.VolumeId) || !TryRoot(entry.RootPath, out string root)
                         || !TryScopedPath(entry.LastPath, root, out string lastPath) || entry.LastUsedUtc == default
                         || entry.LastUsedUtc.Kind != DateTimeKind.Utc || entry.Recommendations is null
-                        || entry.Recommendations.Any(value => value is null || !ValidName(value.Name)))
+                        || entry.Recommendations.Any(value => value is null || !ValidName(value.Name) || !ValidGroupKey(value.GroupKey)))
                         throw new InvalidDataException("Drive history contains invalid metadata.");
                     string? scanPath = null;
                     if (entry.ScannedAtUtc.HasValue != (entry.ScanPath is not null)
@@ -156,11 +156,13 @@ internal sealed class DriveHistoryStore(string filePath)
             .ToDictionary(value => value.VolumeId, StringComparer.OrdinalIgnoreCase);
 
     private static DriveRecommendation[] TopRecommendations(IEnumerable<DriveRecommendation> recommendations)
-        => recommendations.Where(value => value is not null && ValidName(value.Name) && value.Bytes > 0)
+        => recommendations.Where(value => value is not null && ValidName(value.Name) && ValidGroupKey(value.GroupKey) && value.Bytes > 0)
             .OrderByDescending(value => value.Bytes).Take(3).ToArray();
 
     private static bool ValidId(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 256 && !value.Any(char.IsControl);
     private static bool ValidName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 && !value.Any(char.IsControl);
+    private static bool ValidGroupKey(string? value) => value is null
+        || value.StartsWith("cleanup:", StringComparison.Ordinal) && value.Length <= 80 && !value.Any(char.IsControl);
 
     private static bool TryRoot(string? input, out string root)
     {

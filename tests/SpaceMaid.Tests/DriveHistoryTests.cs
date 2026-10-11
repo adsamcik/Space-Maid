@@ -17,7 +17,7 @@ public sealed class DriveHistoryTests
         Assert.Null(history.Error);
         history.RememberSelection("volume-one", @"G:\", @"G:\Projects\App");
         history.RecordScan("volume-one", @"G:\", @"G:\", new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc), true, false,
-            [new("Build files", 80), new("Packages", 120), new("Worktrees", 40), new("Small", 10), new("Empty", 0), new("Invalid", -1)]);
+            [new("Build files", 80, "cleanup:build"), new("Packages", 120, "cleanup:cache"), new("Worktrees", 40), new("Small", 10), new("Empty", 0), new("Invalid", -1)]);
         history.RememberSelection("volume-one", @"G:\", @"G:\Photos");
         await history.SaveAsync();
         Assert.Null(history.Error);
@@ -33,6 +33,7 @@ public sealed class DriveHistoryTests
         Assert.True(entry.HasAllocationData);
         Assert.False(entry.PartialScan);
         Assert.Equal(new[] { "Packages", "Build files", "Worktrees" }, entry.Recommendations.Select(value => value.Name));
+        Assert.Equal("cleanup:cache", entry.Recommendations[0].GroupKey);
         Assert.All(entry.Recommendations, value => Assert.True(value.Bytes > 0));
     }
 
@@ -150,5 +151,38 @@ public sealed class DriveHistoryTests
         await blocked.SaveAsync();
         Assert.NotNull(blocked.Error);
         Assert.NotNull(blocked.Find("volume-one", @"G:\"));
+    }
+
+    [Theory]
+    [InlineData(@"G:\", true)]
+    [InlineData(@"G:\Projects\App", true)]
+    [InlineData(@"G:\Projects\App\bin", false)]
+    [InlineData(@"G:\Projects\Other", false)]
+    [InlineData(@"G:\Pro", false)]
+    [InlineData(@"H:\", false)]
+    public void RecommendationsReuseOnlyScansCoveringTheirRecordedScope(string scanRoot, bool expected)
+    {
+        var link = new DriveRecommendationLink(new(@"G:\", "", "volume-one", true), @"G:\Projects\App", new("Build files", 10));
+        Assert.Equal(expected, link.CanReuse("volume-one", scanRoot));
+        Assert.False(link.CanReuse("different-volume", scanRoot));
+        Assert.False(link.CanReuse(null, scanRoot));
+    }
+
+    [Fact]
+    public async Task RecommendationsFromExistingHistoryWithoutGroupKeysStillLoad()
+    {
+        using var directory = new TestDirectory();
+        string file = Path.Join(directory.Path, "history.json");
+        await File.WriteAllTextAsync(file, JsonSerializer.Serialize(new { Version = 1, LastVolumeId = "volume-one", Entries = new[]
+        {
+            new { VolumeId = "volume-one", RootPath = @"G:\", LastPath = @"G:\", LastUsedUtc = DateTime.UtcNow,
+                ScannedAtUtc = DateTime.UtcNow, ScanPath = @"G:\", HasAllocationData = true, PartialScan = false,
+                Recommendations = new[] { new { Name = "Build files", Bytes = 100 } } }
+        }}));
+        var history = new DriveHistoryStore(file);
+        await history.LoadAsync();
+        Assert.Null(history.Error);
+        var hint = Assert.Single(history.Find("volume-one", @"G:\")!.Recommendations);
+        Assert.Equal("Build files", hint.Name); Assert.Null(hint.GroupKey);
     }
 }

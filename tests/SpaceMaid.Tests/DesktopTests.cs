@@ -124,7 +124,7 @@ public sealed class DesktopTests
                 drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
                 fixtureChoice = drivesList.Items.Cast<DriveChoice>().Single(choice => choice.RootPath == fixtureRoot);
-                Assert.Single(fixtureChoice.Recommendations); Assert.Contains("Build files", fixtureChoice.Recommendations[0]);
+                Assert.Single(fixtureChoice.Recommendations); Assert.Contains("Build files", fixtureChoice.Recommendations[0].Label);
                 Assert.Contains("Last scan", fixtureChoice.HistoryCaption); Assert.Equal("Low space", fixtureChoice.Hint);
                 Assert.Contains(Path.GetFileName(fixture.Path), fixtureChoice.HistoryCaption);
                 Assert.Equal(fixture.Path, fixtureChoice.RecentPath);
@@ -146,6 +146,47 @@ public sealed class DesktopTests
                 chooseDrive = window.ChooseDriveAsync(fixtureChoice, fixtureChoice.RecentPath);
                 PumpUntil(() => chooseDrive.IsCompleted, TimeSpan.FromSeconds(3)); chooseDrive.GetAwaiter().GetResult();
                 Assert.Equal(fixture.Path, window.CurrentPath);
+                stage = "opening a drive recommendation from the matching inventory";
+                ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 1;
+                ((TextBox)window.FindName("OpportunitySearch")).Text = "no matches";
+                drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => drivePopup.IsOpen && drivesList.ActualWidth > 0, TimeSpan.FromSeconds(3));
+                var recommendationButton = Descendants(drivesList).OfType<Button>().Single(button => button.DataContext is DriveRecommendationLink);
+                int scanLogCount = Directory.GetFiles(window.LogDirectory, "*.jsonl").Length;
+                recommendationButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => ((Border)window.FindName("PathBar")).IsEnabled && ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked == true, TimeSpan.FromSeconds(3));
+                Assert.False(drivePopup.IsOpen);
+                Assert.Equal(scanLogCount, Directory.GetFiles(window.LogDirectory, "*.jsonl").Length);
+                Assert.Equal("Build files", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+                Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
+                Assert.Equal("", ((TextBox)window.FindName("OpportunitySearch")).Text);
+                Assert.False(Assert.IsType<OpportunityRow>(((ListBox)window.FindName("OpportunityGrid")).Items[0]).Selected);
+                var recommended = fixtureChoice.Recommendations[0];
+                var renamed = window.OpenRecommendationAsync(recommended with { Recommendation = new("Old caption", 8192, "cleanup:build") });
+                PumpUntil(() => renamed.IsCompleted, TimeSpan.FromSeconds(3)); Assert.True(renamed.GetAwaiter().GetResult());
+                var legacy = window.OpenRecommendationAsync(recommended with { Recommendation = new("Build files", 8192) });
+                PumpUntil(() => legacy.IsCompleted, TimeSpan.FromSeconds(3)); Assert.True(legacy.GetAwaiter().GetResult());
+                var gone = window.OpenRecommendationAsync(recommended with { Recommendation = new("Old caches", 8192, "cleanup:cache") });
+                PumpUntil(() => gone.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(gone.GetAwaiter().GetResult());
+                Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
+                Assert.Contains("no longer found", ((TextBlock)window.FindName("StatusText")).Text);
+                stage = "scanning before opening a recommendation when inventory is absent";
+                // A drive fixture is deliberately bounded to this temporary
+                // directory. The shortcut still runs the real scanner and UI.
+                var bounded = recommended with { Drive = recommended.Drive with { RootPath = fixture.Path } };
+                window.SetScanTarget(fixture.Path);
+                var discoverRecommendation = window.OpenRecommendationAsync(bounded);
+                PumpUntil(() => discoverRecommendation.IsCompleted, TimeSpan.FromSeconds(5)); Assert.True(discoverRecommendation.GetAwaiter().GetResult());
+                Assert.Equal(scanLogCount + 1, Directory.GetFiles(window.LogDirectory, "*.jsonl").Length);
+                Assert.Equal("Build files", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+                window.SetScanTarget(Path.Join(fixture.Path, "missing-drive"));
+                var failedRecommendation = window.OpenRecommendationAsync(bounded with { Drive = bounded.Drive with { RootPath = Path.Join(fixture.Path, "missing-drive") } });
+                PumpUntil(() => failedRecommendation.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(failedRecommendation.GetAwaiter().GetResult());
+                Assert.False(((RadioButton)window.FindName("OpportunitiesTab")).IsChecked);
+                Assert.Contains("Scan could not finish", ((TextBlock)window.FindName("StatusText")).Text);
+                discoverRecommendation = window.OpenRecommendationAsync(bounded);
+                PumpUntil(() => discoverRecommendation.IsCompleted, TimeSpan.FromSeconds(5)); Assert.True(discoverRecommendation.GetAwaiter().GetResult());
+                ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 var grid = (ListBox)window.FindName("OpportunityGrid");
                 Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
                 Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
@@ -173,13 +214,14 @@ public sealed class DesktopTests
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
                 stage = "navigating the real folder tree and treemap";
+                int existingScanLogs = Directory.GetFiles(window.LogDirectory, "*.jsonl").Length;
                 ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 editor.Text = bin;
                 var enterPath = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent };
                 editor.RaiseEvent(enterPath);
                 PumpUntil(() => ((Border)window.FindName("PathBar")).IsEnabled, TimeSpan.FromSeconds(3));
                 Assert.True(enterPath.Handled); Assert.Equal(bin, window.CurrentPath);
-                Assert.Equal(logFile, Assert.Single(Directory.GetFiles(window.LogDirectory, "*.jsonl"))); // Existing inventory, no new scan.
+                Assert.Equal(existingScanLogs, Directory.GetFiles(window.LogDirectory, "*.jsonl").Length); // Existing inventory, no new scan.
                 var ancestorMenu = ((StackPanel)window.FindName("Breadcrumbs")).Children.OfType<Button>().Single(button => button.ContextMenu is not null).ContextMenu;
                 ancestorMenu.Items.Cast<MenuItem>().Single(item => Equals(item.ToolTip, fixture.Path)).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 PumpUntil(() => ((Border)window.FindName("PathBar")).IsEnabled, TimeSpan.FromSeconds(3));

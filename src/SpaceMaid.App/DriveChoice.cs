@@ -64,8 +64,26 @@ internal sealed record DriveChoice(DriveDescriptor Drive, DriveHistoryEntry? His
             + (History.HasAllocationData ? "" : " · Logical sizes")
         : "No scan history";
     public string HistoryTooltip => History?.ScanPath is { } scope ? $"Previous scan: {scope}\nHistorical sizes; scan again to check current contents." : "Scan this drive to get suggestions.";
-    public IReadOnlyList<string> Recommendations => History?.Recommendations.Select(hint => $"{hint.Name} · {SizeText.Format(hint.Bytes)}").ToArray() ?? [];
+    public IReadOnlyList<DriveRecommendationLink> Recommendations => History?.Recommendations
+        .Select(hint => new DriveRecommendationLink(Drive, History.ScanPath ?? RootPath, hint)).ToArray() ?? [];
     public bool HasRecentFolder => History is { } history && !history.LastPath.Equals(RootPath, StringComparison.OrdinalIgnoreCase);
     public string RecentFolder => HasRecentFolder ? "Recent: " + Path.GetFileName(Path.TrimEndingDirectorySeparator(History!.LastPath)) : "";
     public string? RecentPath => HasRecentFolder ? History!.LastPath : null;
+}
+
+internal sealed record DriveRecommendationLink(DriveDescriptor Drive, string ScopePath, DriveRecommendation Recommendation)
+{
+    public string Label => $"{Recommendation.Name} · {SizeText.Format(Recommendation.Bytes)}";
+    public string Help => $"Open {Recommendation.Name}. Scans {Drive.RootPath} if needed.";
+    public bool Ready => Drive.Ready;
+
+    internal bool CanReuse(string? scannedVolume, string? scannedRoot)
+    {
+        if (Drive.VolumeId is null || !Drive.VolumeId.Equals(scannedVolume, StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrEmpty(scannedRoot)) return false;
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(scannedRoot));
+        string scope = Path.TrimEndingDirectorySeparator(Path.GetFullPath(ScopePath));
+        return scope.Equals(root, StringComparison.OrdinalIgnoreCase)
+            || scope.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
 }

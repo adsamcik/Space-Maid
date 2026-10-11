@@ -14,6 +14,7 @@ public partial class MainWindow : Window
 {
     private readonly ObservableCollection<OpportunityRow> _rows = [];
     private ScanSnapshot? _snapshot;
+    private string? _snapshotVolumeId;
     private CancellationTokenSource? _work;
     private bool _closing;
     private bool _startupOffered;
@@ -62,6 +63,7 @@ public partial class MainWindow : Window
         ClearPreliminary();
         _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
         _snapshot = null;
+        _snapshotVolumeId = null;
         _scanStale = false;
         _staleScopes.Clear();
         _explorerRecheckPath = null;
@@ -89,9 +91,9 @@ public partial class MainWindow : Window
         else await ScanCurrentPathAsync();
     }
 
-    internal async Task ScanCurrentPathAsync()
+    internal async Task<bool> ScanCurrentPathAsync()
     {
-        if (_work is not null || _browsing || _closing || _currentPath.Length == 0) return;
+        if (_work is not null || _browsing || _closing || _currentPath.Length == 0) return false;
         _driveRestoreAttempted = true;
         string target = _currentPath;
         ClearResults();
@@ -143,7 +145,7 @@ public partial class MainWindow : Window
                 fastUnavailableReason: helperFailure);
             acquiring = false;
             _scanHelper?.Dispose(); _scanHelper = null;
-            if (_closing) return;
+            if (_closing) return false;
             if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
             PreliminaryCaption.Text = "Preparing results…";
             BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : $" · {scan.FallbackReason}");
@@ -156,7 +158,7 @@ public partial class MainWindow : Window
                 var total = CleanupPlanner.Create(scan, opportunities, work.Token);
                 return (Opportunities: opportunities, Total: total, Groups: OpportunityGrouping.Build(scan, opportunities, work.Token), Elapsed: timer.Elapsed);
             }, work.Token);
-            if (_closing) return;
+            if (_closing) return false;
             work.Token.ThrowIfCancellationRequested();
             _snapshot = scan;
             _detectionElapsed = result.Elapsed;
@@ -183,7 +185,11 @@ public partial class MainWindow : Window
             StatusText.Text = _scanStatus;
             DetailsButton.Visibility = Visibility.Visible;
             RefreshPathDriveSpace();
-            await RememberDriveScanAsync(scan, historyVolume);
+            string? verifiedVolume = await RememberDriveScanAsync(scan, historyVolume);
+            if (_closing) return false;
+            work.Token.ThrowIfCancellationRequested();
+            _snapshotVolumeId = verifiedVolume;
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -197,11 +203,13 @@ public partial class MainWindow : Window
                 EmptyCaption.Text = "Start another scan to calculate cleanup estimates.";
                 TreeHint.Text = "Scan cancelled. Start another scan when you're ready.";
             }
+            return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
             log.Record("scan-failed", new { Target = target, Error = ex.ToString(), Win32Error = (ex as Win32Exception)?.NativeErrorCode });
             if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; EmptyCaption.Text = "Check that the drive is connected and accessible, then try again."; }
+            return false;
         }
         finally
         {
