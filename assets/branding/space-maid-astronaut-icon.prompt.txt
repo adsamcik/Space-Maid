@@ -1,0 +1,15 @@
+Generated from scratch with the built-in image_gen tool; transparent_background: true.
+Source: space-maid-astronaut-icon.png. No reference images.
+
+Use case: logo-brand
+Asset type: Windows taskbar application icon for Space Maid, a disk-cleanup app.
+Primary request: Design a completely new Space Maid mascot from scratch. She is a friendly female astronaut whose actual spacesuit incorporates a maid's recognizable white scalloped headpiece and simple apron bib. The space theme must be unmistakable at a glance.
+Composition: One single finished icon, square 1024 by 1024 canvas. Close front-facing head-and-shoulders bust, filling approximately 85 percent of the canvas, with a strong compact silhouette. A large rounded astronaut helmet and broad deep-navy visor surround a very simple warm friendly female face. Integrate a bold three-lobed white maid crest into the TOP OF THE HELMET as a single distinctive shape. Below the helmet only a tiny simplified spacesuit collar and white apron bib; most of the icon is the helmet. One large four-point sparkle near the helmet edge can suggest space and cleanliness. Avoid loose objects.
+Style: Polished modern flat mascot logo, vector-like raster artwork. Few large solid color regions, thick smooth outlines, clean deliberate curves, minimal internal detail. Friendly, professional, elegant. High contrast that remains recognizable at 16, 24 and 32 pixels; omit eyelashes, tiny seams, lettering and intricate fabric. Use cream-white helmet and headpiece, deep navy contours and visor, restrained cool cyan highlights, and a warm face. The large circular helmet silhouette should carry the design.
+Background: Genuinely transparent outside the mascot silhouette. No square tile, scenery or star field.
+Constraints: no text, no watermark, no mockup, no multi-icon sheet, no full body, no fine gradients, no photorealism, no shiny 3D rendering, no thin hair strands. This is a new design, no reference image.
+
+Windows icon packaging (ImageMagick, preserves transparency):
+magick assets/branding/space-maid-astronaut-icon.png -define icon:auto-resize=256,128,96,64,48,40,32,24,20,16 assets/branding/space-maid-astronaut-icon.ico
+
+The executable uses ApplicationIcon; MainWindow uses the same ICO embedded as a WPF Resource.

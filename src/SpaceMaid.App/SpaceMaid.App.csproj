@@ -3,11 +3,11 @@
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>../../assets/branding/space-maid-taskbar-icon.ico</ApplicationIcon>
+    <ApplicationIcon>../../assets/branding/space-maid-astronaut-icon.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <Resource Include="../../assets/branding/space-maid-taskbar-icon.ico" Link="Assets/SpaceMaid.ico" />
+    <Resource Include="../../assets/branding/space-maid-astronaut-icon.ico" Link="Assets/SpaceMaid.ico" />
     <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
     <ProjectReference Include="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" ReferenceOutputAssembly="false" />
