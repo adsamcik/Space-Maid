@@ -8,13 +8,17 @@ public partial class RecycleFolderWindow : Window
     public RecycleFolderWindow(FolderDeletionTarget target)
     {
         InitializeComponent();
-        TargetPath.Text = target.Path;
+        TargetPath.Text = target.Path; TargetPath.ToolTip = target.Path;
+        TargetName.Text = System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(target.Path));
+        TargetName.ToolTip = TargetName.Text;
         TargetSize.Text = target.HasAllocationData
-            ? $"Observed allocated size: {SizeText.Format(target.AllocatedBytes)} · Logical: {SizeText.Format(target.LogicalBytes)}"
-            : $"Observed logical size: {SizeText.Format(target.LogicalBytes)} · Physical allocation unavailable";
-        CoverageNote.Text = target.IsIncomplete
-            ? "The scan is partial. Deletion includes current contents, including files the scan could not read. These sizes are not a promise of space freed."
-            : "Sizes come from the scan. Current contents may have changed; shared allocation may remain in use elsewhere.";
+            ? $"{SizeText.Format(target.AllocatedBytes)} · Scanned"
+            : $"{SizeText.Format(target.LogicalBytes)} · Logical";
+        SizeDetails.Text = target.HasAllocationData
+            ? $"Scanned allocation: {SizeText.Format(target.AllocatedBytes)} · Logical: {SizeText.Format(target.LogicalBytes)}"
+            : $"Scanned logical size: {SizeText.Format(target.LogicalBytes)} · Allocation unknown";
+        TargetSize.ToolTip = SizeDetails.Text;
+        PartialScanNote.Visibility = target.IsIncomplete ? Visibility.Visible : Visibility.Collapsed;
     }
     private void Recycle_Click(object sender, RoutedEventArgs e) => DialogResult = true;
 }

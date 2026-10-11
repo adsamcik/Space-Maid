@@ -245,6 +245,11 @@ public sealed class DesktopTests
                     {
                         Assert.Equal(bin, ((TextBox)dialog.FindName("TargetPath")).Text);
                         Assert.True(((Button)dialog.FindName("KeepButton")).IsDefault);
+                        Assert.True(((Button)dialog.FindName("KeepButton")).IsCancel);
+                        Assert.Equal("Cancel", ((Button)dialog.FindName("KeepButton")).Content);
+                        Assert.Equal("bin", ((TextBlock)dialog.FindName("TargetName")).Text);
+                        Assert.False(((Expander)dialog.FindName("DeletionDetails")).IsExpanded);
+                        Assert.Equal(Visibility.Collapsed, ((TextBlock)dialog.FindName("PartialScanNote")).Visibility);
                         Assert.Contains("8 KiB", ((TextBlock)dialog.FindName("TargetSize")).Text);
                         confirmed = true;
                     }
@@ -442,7 +447,7 @@ public sealed class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"main-{theme}.png"), 1220, 910);
                     Render(review, Path.Join(artifactRoot, "artifacts", "ui", $"review-{theme}.png"), 860, 700);
                     Render(details, Path.Join(artifactRoot, "artifacts", "ui", $"details-{theme}.png"), 700, 680);
-                    Render(recyclePreview, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-{theme}.png"), 590, 460);
+                    Render(recyclePreview, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-{theme}.png"), 520, 300);
                     Render(onlinePreview, Path.Join(artifactRoot, "artifacts", "ui", $"online-only-{theme}.png"), 590, 550);
                 }
 #pragma warning restore WPF0001

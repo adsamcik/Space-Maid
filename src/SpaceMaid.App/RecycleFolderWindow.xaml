@@ -1,19 +1,34 @@
 <Window x:Class="SpaceMaid.App.RecycleFolderWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Move folder to Recycle Bin" Width="590" SizeToContent="Height" ResizeMode="NoResize"
+        Title="Recycle folder" Width="520" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14"
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
-    <StackPanel Margin="24">
-        <TextBlock Text="Move this folder to the Recycle Bin?" FontSize="21" FontWeight="SemiBold" TextWrapping="Wrap" />
-        <TextBlock Text="The folder and its current contents will be moved." Margin="0,10,0,14" TextWrapping="Wrap" />
-        <TextBox x:Name="TargetPath" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.Name="Exact folder to recycle" />
-        <TextBlock x:Name="TargetSize" Margin="0,12,0,0" TextWrapping="Wrap" />
-        <TextBlock x:Name="CoverageNote" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
-        <TextBlock Text="Space stays occupied until the Recycle Bin is emptied. You can restore the folder from the Recycle Bin. Cancellation may leave some contents already moved." Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-            <Button x:Name="KeepButton" Content="Keep folder" IsCancel="True" IsDefault="True" Margin="0,0,10,0" />
-            <Button x:Name="RecycleButton" Content="Move to Recycle Bin" Click="Recycle_Click" />
+    <StackPanel Margin="20">
+        <TextBlock Text="Move to Recycle Bin?" FontSize="20" FontWeight="SemiBold" />
+        <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,16,0,10">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
+                    <TextBlock x:Name="TargetName" Grid.Column="1" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <TextBlock x:Name="TargetSize" Grid.Column="2" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
+                </Grid>
+                <TextBox x:Name="TargetPath" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="72" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent" Padding="0" Margin="0,8,0,0" FontSize="12" AutomationProperties.Name="Exact folder to recycle" />
+            </StackPanel>
+        </Border>
+        <TextBlock Text="Includes all contents. Empty the bin to free space." FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+        <TextBlock x:Name="PartialScanNote" Text="Partial scan · Size may be incomplete." Visibility="Collapsed" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,0" />
+        <Expander x:Name="DeletionDetails" Header="Details" FontSize="12" Margin="0,10,0,0">
+            <StackPanel Margin="0,8,0,0">
+                <TextBlock x:Name="SizeDetails" TextWrapping="Wrap" />
+                <TextBlock x:Name="CoverageNote" Text="Scan estimate; contents may have changed. Shared files may remain in use elsewhere." TextWrapping="Wrap" Margin="0,6,0,0" Opacity="0.7" />
+                <TextBlock Text="You can restore from the bin. Cancelling may leave some contents already moved." TextWrapping="Wrap" Margin="0,6,0,0" Opacity="0.7" />
+            </StackPanel>
+        </Expander>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button x:Name="KeepButton" Content="Cancel" IsCancel="True" IsDefault="True" Margin="0,0,8,0" />
+            <Button x:Name="RecycleButton" Content="Move to Recycle Bin" Click="Recycle_Click" Style="{DynamicResource AccentButtonStyle}" />
         </StackPanel>
     </StackPanel>
 </Window>
