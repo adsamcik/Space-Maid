@@ -28,7 +28,7 @@ public partial class MainWindow
         try
         {
             _extensions = new ExtensionRuntime(() => _snapshot, () => _scanStale, RevealExtensionLocation,
-                dataRoot: ExtensionDataRoot, logDirectory: Path.Join(LogDirectory, "Extensions"));
+                dataRoot: ExtensionDataRoot, logDirectory: Path.Join(LogDirectory, "Extensions"), evidenceReview: ReviewAssistantEvidenceAsync);
             _extensions.JobsChanged += ExtensionJobsChanged;
             _extensions.SetDiscoveryBusy(_work is not null);
             await _extensions.InitializeAsync(_extensionLifetime.Token);

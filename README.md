@@ -6,6 +6,8 @@ A .NET 10 Windows desktop app for finding development clutter and reviewing pote
 
 The approved [extensions and Photos architecture](docs/extensions-and-photos-design.md) is implemented as a trusted local extension host, a separate read-only scan helper, and a bundled Photos workflow.
 
+**Local assistant** is available through **Extensions → Local assistant → Open workflow**. Enable it, choose a compatible local GGUF instruction model and a scanned folder, then request investigation suggestions. It uses Microsoft.Extensions.AI with a separate Windows-isolated CPU worker and bounded access to deterministic scan summaries. Model text cannot authorize cleanup: selected suggestions require the host's live checks and separate user confirmation. See [setup and trust boundaries](docs/local-assistant.md).
+
 ## Run
 
 Install the .NET 10 SDK, then run from this directory:

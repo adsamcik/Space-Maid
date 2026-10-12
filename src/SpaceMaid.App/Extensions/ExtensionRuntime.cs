@@ -30,6 +30,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     private readonly List<ExtensionLoadContext> _contexts = [];
     private readonly List<LoadedExtension> _entries = [];
     private readonly bool _administrator;
+    private readonly Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? _evidenceReview;
     private ExtensionSettings _settings;
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _initializing;
@@ -39,12 +40,15 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     internal string? LogPath => _diagnostics.FilePath;
     internal string? SettingsError { get; private set; }
     internal bool IsAdministrator => _administrator;
+    internal IInventoryEvidence Evidence => _inventory;
     internal OpportunityCatalog Opportunities { get; }
     internal event Action? JobsChanged { add => _jobs.Changed += value; remove => _jobs.Changed -= value; }
 
     internal ExtensionRuntime(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Action<string> reveal,
-        string? dataRoot = null, string? bundleRoot = null, string? logDirectory = null, bool? administrator = null)
+        string? dataRoot = null, string? bundleRoot = null, string? logDirectory = null, bool? administrator = null,
+        Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? evidenceReview = null)
     {
+        _evidenceReview = evidenceReview;
         _administrator = administrator ?? Elevation.IsAdministrator;
         _dataRoot = dataRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid", "Extensions");
         _bundleRoot = bundleRoot ?? Path.Combine(AppContext.BaseDirectory, "Extensions");
@@ -106,7 +110,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
                     throw new InvalidDataException("The extension descriptor differs from its manifest.");
                 string dataDirectory = Path.Combine(_dataRoot, id), cacheDirectory = Path.Combine(dataDirectory, "Cache");
                 System.IO.Directory.CreateDirectory(dataDirectory); System.IO.Directory.CreateDirectory(cacheDirectory);
-                var host = new Host(dataDirectory, cacheDirectory, _inventory, _jobs.ForOwner(id), _tools, _reveal,
+                var host = new Host(dataDirectory, cacheDirectory, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
@@ -126,6 +130,26 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         }
     }
     internal void SetDiscoveryBusy(bool busy) => _jobs.SetDiscoveryBusy(busy);
+    internal async Task<EvidenceCleanupReviewResult> ReviewEvidenceAsync(IInventoryEvidenceSession session,
+        IReadOnlyList<EvidenceId> selected, CancellationToken token)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
+        if (_administrator || session is not InventoryEvidenceSession owned || !ReferenceEquals(owned.Owner, _inventory)
+            || _evidenceReview is null) throw new InvalidOperationException("Host cleanup review is unavailable for this evidence session.");
+        if (selected is null || selected.Count is < 1 or > 20) throw new ArgumentException("Select 1–20 investigation items.");
+        var summary = await session.SummarizeAsync(selected, linked.Token);
+        if (!summary.Coverage.Complete) throw new InvalidOperationException("Refresh this scope before requesting cleanup review.");
+        foreach (var id in selected)
+        {
+            var entry = await session.DetailsAsync(id, linked.Token);
+            if (!entry.IsDirectory || entry.ReviewPolicy.Disposition == EvidenceReviewDisposition.Blocked)
+                throw new InvalidOperationException("Only regular unblocked folders can be mapped to cleanup rules.");
+            string prefix = entry.Path.EndsWith('\\') ? entry.Path : entry.Path + "\\";
+            if (session.Scope.ExcludedPaths.Any(path => path.Equals(entry.Path, StringComparison.Ordinal) || path.StartsWith(prefix, StringComparison.Ordinal)))
+                throw new InvalidOperationException("A selected folder contains a user exclusion. Choose a folder that does not contain excluded data.");
+        }
+        return await _evidenceReview(session, selected, linked.Token);
+    }
     internal ExtensionsWindow CreateManagerWindow(Window owner) => new(this) { Owner = owner };
     internal bool IsEnabled(LoadedExtension entry) => SettingsError is null && !_settings.DisabledIds.Contains(entry.Id, StringComparer.OrdinalIgnoreCase)
         && !_settings.Directories.Any(value => value.Directory.Equals(entry.Directory, StringComparison.OrdinalIgnoreCase) && !value.Enabled);
@@ -218,10 +242,14 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         // Contexts intentionally remain loaded until process exit; settings apply on restart.
     }
     private sealed record Host(string DataDirectory, string CacheDirectory, IInventoryReader Inventory,
-        IExtensionJobs Jobs, IToolBroker Tools, Action<string> Reveal, Action<string, object> Diagnostics) : IExtensionHost
+        IExtensionJobs Jobs, IToolBroker Tools, Action<string> Reveal,
+        Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>> EvidenceReview,
+        Action<string, object> Diagnostics) : IExtensionHost, IExtensionEvidenceReview
     {
         public void RevealLocation(string path) => Reveal(path);
         public void Log(string eventName, object data) => Diagnostics(eventName, data);
+        public Task<EvidenceCleanupReviewResult> ReviewEvidenceAsync(IInventoryEvidenceSession session, IReadOnlyList<EvidenceId> selectedItems, CancellationToken token)
+            => EvidenceReview(session, selectedItems, token);
     }
     private sealed class ExtensionLoadContext(string entryAssembly) : AssemblyLoadContext(isCollectible: false)
     {

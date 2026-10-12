@@ -1,6 +1,6 @@
 # Inventory evidence for integrations
 
-The host now offers an optional API v1 capability, `IInventoryEvidence`, on `IExtensionHost.Inventory`. It provides deterministic metadata summaries, scoped browsing and strict admission of untrusted investigation proposals. Existing Photos, Apps and Opportunities entrypoints continue to work. There is no model runtime, assistant UI or new cleanup executor in this foundation.
+The host offers an optional API v1 capability, `IInventoryEvidence`, on `IExtensionHost.Inventory`. It provides deterministic metadata summaries, scoped browsing and strict admission of untrusted investigation proposals. Existing Photos, Apps and Opportunities entrypoints continue to work. The [local assistant](local-assistant.md) now consumes this capability through a separately isolated model worker and the existing human cleanup review.
 
 ## Scope and trust
 

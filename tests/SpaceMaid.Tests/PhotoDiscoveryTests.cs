@@ -45,22 +45,26 @@ public sealed class PhotoDiscoveryTests
         using var catalog = new PhotoCatalog(Path.Join(fixture.Path, "db")); catalog.Initialize(); var id = catalog.AddCollection(source);
         var host = new PhotoTestHost(fixture.Path, source, paths); host.InventoryStub.BatchSize = 64;
         using var cancelled = new CancellationTokenSource();
+        long committedAtCancellation = 0;
         host.InventoryStub.BeforeBatch = offset =>
         {
             if (offset == 512)
             {
-                Assert.Equal(512, catalog.Page(id, PhotoMode.Browse, PhotoSort.Name, false, 0).Total);
+                // Discovery may flush a partial batch after one second. Keep
+                // exactly the rows already committed, regardless of throughput.
+                committedAtCancellation = catalog.Page(id, PhotoMode.Browse, PhotoSort.Name, false, 0).Total;
+                Assert.InRange(committedAtCancellation, 1, 512);
                 cancelled.Cancel();
             }
             return Task.CompletedTask;
         };
         var service = new PhotosService(host, catalog);
         await Assert.ThrowsAsync<OperationCanceledException>(() => service.DiscoverAsync(catalog.Collections().Single(), null, cancelled.Token));
-        Assert.Equal(512, catalog.Page(id, PhotoMode.Browse, PhotoSort.Name, false, 0).Total);
+        Assert.Equal(committedAtCancellation, catalog.Page(id, PhotoMode.Browse, PhotoSort.Name, false, 0).Total);
         Assert.Contains("Interrupted", catalog.LastJob(id));
         var diagnostic = host.Logs.Last(x => x.Event == "photos-discovery").Data;
         Assert.Equal("Interrupted", diagnostic.GetProperty("State").GetString()); Assert.False(diagnostic.GetProperty("Complete").GetBoolean());
-        Assert.Equal(512, diagnostic.GetProperty("Committed").GetInt64());
+        Assert.Equal(committedAtCancellation, diagnostic.GetProperty("Committed").GetInt64());
         Directory.Move(source, source + "-moved"); Directory.Move(source + "-moved", source);
         host.InventoryStub.BeforeBatch = null;
         await service.DiscoverAsync(catalog.Collections().Single(), null, CancellationToken.None);

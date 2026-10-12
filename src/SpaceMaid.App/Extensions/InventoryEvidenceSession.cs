@@ -26,14 +26,16 @@ internal sealed class InventoryEvidenceSession : IInventoryEvidenceSession
     private readonly Dictionary<Guid, Cursor> _cursors = [];
     private int _work, _requests;
     private bool _disposed;
+    internal object? Owner { get; }
     public EvidenceScope Scope { get; }
 
     private sealed record Cursor(int Directory, string? Query, IEnumerator<int> Entries) : IDisposable
     { public void Dispose() => Entries.Dispose(); }
 
     internal InventoryEvidenceSession(Func<ScanSnapshot?> currentScan, Func<bool> isStale, string root,
-        IReadOnlyList<string> excludedPaths, CancellationToken lifetime = default)
+        IReadOnlyList<string> excludedPaths, CancellationToken lifetime = default, object? owner = null)
     {
+        Owner = owner;
         _currentScan = currentScan; _isStale = isStale; _lifetime = lifetime;
         _scan = currentScan() ?? throw new InvalidOperationException("Scan the selected location before opening an evidence session.");
         EnsureCurrent();

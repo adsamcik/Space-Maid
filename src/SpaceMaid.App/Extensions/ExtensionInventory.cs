@@ -18,7 +18,7 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
         CancellationToken token) => Task.Run<IInventoryEvidenceSession>(() =>
     {
         token.ThrowIfCancellationRequested(); lifetime.ThrowIfCancellationRequested();
-        return new InventoryEvidenceSession(currentScan, isScanStale, root, excludedPaths, lifetime);
+        return new InventoryEvidenceSession(currentScan, isScanStale, root, excludedPaths, lifetime, this);
     }, token);
 
     public Task<InventoryFolderSize?> ReadFolderSizeAsync(string path, bool refresh, CancellationToken token) => Task.Run(async () =>

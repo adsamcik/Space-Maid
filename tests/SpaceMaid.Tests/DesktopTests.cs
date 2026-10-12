@@ -17,7 +17,7 @@ using Xunit;
 
 namespace SpaceMaid.Tests;
 
-public sealed class DesktopTests
+public sealed partial class DesktopTests
 {
     [Fact]
     public void FluentDesktopLoadsScansPreviewsAndConfirmedFolderRecycling()
@@ -998,6 +998,8 @@ public sealed class DesktopTests
 
                 stage = "checking Apps extension packaging, sorting, search, cancellation and drive changes";
                 CheckApps(window, app, fixture, artifactRoot);
+                stage = "checking local assistant metadata, review, disable and cancellation";
+                CheckAssistant(window, app, artifactRoot);
                 stage = "rendering framed folders at desktop and compact sizes";
                 window.SetScanTarget(@"G:\");
                 var layoutScan = NestedLayoutFixture();
@@ -1131,9 +1133,10 @@ public sealed class DesktopTests
         thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        // The bounded smoke now renders both photo views, a full gallery page,
-        // two themes and compact layouts alongside the existing workflows.
-        Assert.True(thread.Join(TimeSpan.FromSeconds(60)), $"The WPF smoke test timed out while {stage}.");
+        // This single-Application harness also exercises the Assistant's
+        // renders, cancellation and human review. Retain each interaction's
+        // own timeout while allowing the complete set of workflows to finish.
+        Assert.True(thread.Join(TimeSpan.FromSeconds(90)), $"The WPF smoke test timed out while {stage}.");
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
