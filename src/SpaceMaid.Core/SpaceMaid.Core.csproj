@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
+    <InternalsVisibleTo Include="SpaceMaid.ScanHelper" />
     <EmbeddedResource Include="Analysis/Data/FileFormatRegistry.json.gz" LogicalName="SpaceMaid.FileFormatRegistry" />
   </ItemGroup>
 </Project>

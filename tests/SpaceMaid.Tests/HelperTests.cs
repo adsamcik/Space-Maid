@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Text.Json;
 using SpaceMaid.App;
 using SpaceMaid.Core.Scanning;
@@ -41,25 +42,147 @@ public sealed class HelperTests
     }
 
     [Fact]
-    public async Task OwnedHelperAuthenticatesAndExitsOnDisconnectOrReportsNativeAccessFailure()
+    public async Task OwnedHelperReusesItsProcessAfterCancellationOrNativeAccessFailureAndExitsOnDisconnect()
     {
         var connected = await HelperLayoutSource.CreateAsync(false);
         connected.Dispose(); await connected.Exit.WaitAsync(TimeSpan.FromSeconds(10));
         using var source = await HelperLayoutSource.CreateAsync(false);
-        using var stop = new CancellationTokenSource();
-        if (Elevation.IsAdministrator)
+        int processId = source.ProcessId;
+        for (int request = 0; request < 2; request++)
         {
-            Assert.ThrowsAny<OperationCanceledException>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => stop.Cancel(), stop.Token));
+            using var stop = new CancellationTokenSource();
+            if (Elevation.IsAdministrator)
+                Assert.ThrowsAny<OperationCanceledException>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => stop.Cancel(), stop.Token));
+            else
+            {
+                var error = Assert.Throws<Win32Exception>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => { }, stop.Token));
+                Assert.Equal(5, error.NativeErrorCode);
+            }
+            Assert.True(source.IsAvailable); Assert.False(source.Exit.IsCompleted);
+            Assert.Equal(processId, source.ProcessId);
         }
-        else
+        Assert.Throws<InvalidDataException>(() => source.Acquire(@"G:\not-a-volume-root", _ => { }, CancellationToken.None));
+        using (var cancelled = new CancellationTokenSource())
         {
-            var error = Assert.Throws<Win32Exception>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => { }, stop.Token));
-            Assert.Equal(5, error.NativeErrorCode);
+            cancelled.Cancel();
+            Assert.ThrowsAny<OperationCanceledException>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => { }, cancelled.Token));
         }
+        Assert.True(source.IsAvailable);
+        source.Dispose();
         await source.Exit.WaitAsync(TimeSpan.FromSeconds(10));
-        using var invalid = await HelperLayoutSource.CreateAsync(false);
-        Assert.Throws<InvalidDataException>(() => invalid.Acquire(@"G:\not-a-volume-root", _ => { }, CancellationToken.None));
-        await invalid.Exit.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(source.IsAvailable);
+    }
+
+    [Fact]
+    public async Task SessionSupportsSuccessFailureCancellationAndLateCancelWithoutRestarting()
+    {
+        using var pair = await PipePair.ConnectAsync();
+        using var finishLast = new ManualResetEventSlim();
+        int calls = 0;
+        var source = new SessionSource((volume, consume, token) =>
+        {
+            int call = Interlocked.Increment(ref calls);
+            if (call == 2) throw new Win32Exception(5, "Owned access-denied fixture.");
+            consume(new(new byte[] { (byte)call }, 2));
+            if (call == 3)
+            {
+                if (!token.WaitHandle.WaitOne(TimeSpan.FromSeconds(5))) throw new TimeoutException("Cancel was not received.");
+                token.ThrowIfCancellationRequested();
+            }
+            if (call == 4)
+            {
+                if (!finishLast.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Last request was not released.");
+                token.ThrowIfCancellationRequested();
+            }
+        });
+        var run = Task.Run(() => ScanPipeSession.RunAsync(pair.Client, source));
+        try
+        {
+            Request(pair.Server, 1);
+            var first = await Response(pair.Server, 1, ScanFrameKind.Batch);
+            Assert.Equal(2, BinaryPrimitives.ReadDoubleLittleEndian(first.AsSpan(8)));
+            Assert.Equal(1, first[16]);
+            await Response(pair.Server, 1, ScanFrameKind.Complete);
+            Request(pair.Server, 2);
+            var failed = await Response(pair.Server, 2, ScanFrameKind.Failure);
+            Assert.Equal(5, BinaryPrimitives.ReadInt32LittleEndian(failed.AsSpan(8)));
+            Request(pair.Server, 3);
+            await Response(pair.Server, 3, ScanFrameKind.Batch);
+            ScanPipeProtocol.Write(pair.Server, ScanFrameKind.Cancel, BitConverter.GetBytes(3L));
+            await Response(pair.Server, 3, ScanFrameKind.Cancelled);
+            Request(pair.Server, 4);
+            await Response(pair.Server, 4, ScanFrameKind.Batch);
+            // This delayed command must not cancel request 4.
+            ScanPipeProtocol.Write(pair.Server, ScanFrameKind.Cancel, BitConverter.GetBytes(3L));
+            finishLast.Set();
+            await Response(pair.Server, 4, ScanFrameKind.Complete);
+            Assert.Equal(4, calls); Assert.False(run.IsCompleted);
+        }
+        finally { finishLast.Set(); pair.Server.Dispose(); await run.WaitAsync(TimeSpan.FromSeconds(10)); }
+    }
+
+    [Fact]
+    public async Task SessionRejectsCommandsOutsideItsReadOnlyScanContract()
+    {
+        using var pair = await PipePair.ConnectAsync();
+        int calls = 0;
+        var run = Task.Run(() => ScanPipeSession.RunAsync(pair.Client, new SessionSource((_, _, _) => calls++)));
+        ScanPipeProtocol.Write(pair.Server, ScanFrameKind.Hello, []);
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task DeadHelperIsUnavailableAndCanBeReplaced()
+    {
+        using var source = await HelperLayoutSource.CreateAsync(false);
+        using (var process = Process.GetProcessById(source.ProcessId)) process.Kill();
+        await source.Exit.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(source.IsAvailable);
+        Assert.Throws<IOException>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => { }, default));
+        using var replacement = await HelperLayoutSource.CreateAsync(false);
+        Assert.True(replacement.IsAvailable);
+        Assert.NotEqual(source.ProcessId, replacement.ProcessId);
+        replacement.Dispose(); await replacement.Exit.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private static void Request(Stream pipe, long id)
+    {
+        byte[] payload = new byte[11]; BinaryPrimitives.WriteInt64LittleEndian(payload, id);
+        System.Text.Encoding.ASCII.GetBytes(Path.GetPathRoot(Environment.CurrentDirectory)!).CopyTo(payload, 8);
+        ScanPipeProtocol.Write(pipe, ScanFrameKind.Request, payload);
+    }
+
+    private static async Task<byte[]> Response(Stream pipe, long id, ScanFrameKind kind) => await Task.Run(() =>
+    {
+        var frame = ScanPipeProtocol.ReadHeader(pipe); Assert.Equal(kind, frame.Kind);
+        byte[] data = new byte[frame.Length]; pipe.ReadExactly(data);
+        Assert.Equal(id, BinaryPrimitives.ReadInt64LittleEndian(data)); return data;
+    }).WaitAsync(TimeSpan.FromSeconds(10));
+
+    private sealed class SessionSource(Action<string, Action<NtfsLayoutBlock>, CancellationToken> acquire) : INtfsLayoutSource
+    {
+        public void Acquire(string root, Action<NtfsLayoutBlock> consume, CancellationToken token) => acquire(root, consume, token);
+    }
+
+    private sealed class PipePair(NamedPipeServerStream server, NamedPipeClientStream client) : IDisposable
+    {
+        public NamedPipeServerStream Server => server;
+        public NamedPipeClientStream Client => client;
+        public static async Task<PipePair> ConnectAsync()
+        {
+            string name = "SpaceMaid-Test-" + Guid.NewGuid().ToString("N");
+            var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 4096, 4096);
+            var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+            try
+            {
+                await Task.WhenAll(server.WaitForConnectionAsync(), client.ConnectAsync(10000)).WaitAsync(TimeSpan.FromSeconds(10));
+                return new(server, client);
+            }
+            catch { server.Dispose(); client.Dispose(); throw; }
+        }
+        public void Dispose() { server.Dispose(); client.Dispose(); }
     }
 
     private sealed class FixtureSource(byte[][] batches) : INtfsLayoutSource
@@ -74,6 +197,8 @@ public sealed class HelperTests
         string volume = Path.GetPathRoot(Environment.CurrentDirectory)!;
         using var source = await HelperLayoutSource.CreateAsync(true);
         var throughHelper = Measure(source, source.ProcessId);
+        Assert.True(source.IsAvailable);
+        source.Dispose();
         await source.Exit.WaitAsync(TimeSpan.FromSeconds(10));
         var direct = Measure(new NativeNtfsLayoutSource(), Environment.ProcessId);
         // The direct probe needs elevation separately; run it in an already

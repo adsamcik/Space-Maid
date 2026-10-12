@@ -14,7 +14,7 @@ Install the .NET 10 SDK, then run from this directory:
 dotnet run --project src/SpaceMaid.App -c Release
 ```
 
-At startup, choose **Enable fast scanning** to authorize the bundled read-only helper through Windows UAC, or **Continue without admin**. Space Maid and extensions stay unelevated; cancelling UAC keeps standard scanning available. Choose a drive and click **Scan drive**. Cancellation is checked between metadata batches and during analysis. A helper handles one local NTFS scan and exits; further fast scans request a new helper. If Space Maid was manually launched as administrator, Photos and extensions remain unavailable until reopened normally.
+At startup, choose **Enable fast scanning** to authorize the bundled read-only helper through Windows UAC, or **Continue without admin**. Space Maid and extensions stay unelevated; cancelling UAC keeps standard scanning available. Choose a drive and click **Scan drive**. One helper is reused for the app session, including after scan cancellation and native scan failures. It exits when the app closes or disconnects. Cancellation is checked between metadata batches and during analysis. A broken connection falls back to standard scanning; **Enable fast scanning** starts a replacement. If Space Maid was manually launched as administrator, Photos and extensions remain unavailable until reopened normally.
 
 ## Apps
 

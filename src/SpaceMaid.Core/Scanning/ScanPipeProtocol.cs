@@ -2,14 +2,15 @@ using System.Buffers.Binary;
 
 namespace SpaceMaid.Core.Scanning;
 
-public enum ScanFrameKind : ushort { Hello = 1, Request = 2, Batch = 3, Complete = 4, Failure = 5, Cancel = 6 }
+public enum ScanFrameKind : ushort { Hello = 1, Request = 2, Batch = 3, Complete = 4, Failure = 5, Cancel = 6, Cancelled = 7 }
 
 // A bounded, versioned stream protocol. Payloads are binary metadata, never
-// serialized paths/objects. No commands beyond one scan and cancellation.
+// serialized paths/objects. Only serial read-only scans and cancellation.
+// Request IDs keep a late cancellation from affecting a subsequent scan.
 public static class ScanPipeProtocol
 {
-    public const int MaximumPayload = 64 * 1024 * 1024 + 8;
-    public const ushort Version = 1;
+    public const int MaximumPayload = 64 * 1024 * 1024 + 16;
+    public const ushort Version = 2;
     private const uint Magic = 0x534D4149;
 
     public static void Write(Stream stream, ScanFrameKind kind, ReadOnlySpan<byte> payload)
@@ -18,11 +19,13 @@ public static class ScanPipeProtocol
         stream.Write(payload); stream.Flush();
     }
 
-    public static void WriteBlock(Stream stream, NtfsLayoutBlock block)
+    public static void WriteBlock(Stream stream, long request, NtfsLayoutBlock block)
     {
-        WriteHeader(stream, ScanFrameKind.Batch, checked(8 + block.Data.Length));
-        Span<byte> timing = stackalloc byte[8]; BinaryPrimitives.WriteDoubleLittleEndian(timing, block.QueryMilliseconds);
-        stream.Write(timing); stream.Write(block.Data.Span); stream.Flush();
+        WriteHeader(stream, ScanFrameKind.Batch, checked(16 + block.Data.Length));
+        Span<byte> prefix = stackalloc byte[16];
+        BinaryPrimitives.WriteInt64LittleEndian(prefix, request);
+        BinaryPrimitives.WriteDoubleLittleEndian(prefix[8..], block.QueryMilliseconds);
+        stream.Write(prefix); stream.Write(block.Data.Span); stream.Flush();
     }
 
     private static void WriteHeader(Stream stream, ScanFrameKind kind, int length)

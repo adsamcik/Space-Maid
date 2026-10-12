@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using SpaceMaid.Core.Scanning;
@@ -14,13 +15,16 @@ namespace SpaceMaid.App;
 internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposable
 {
     private readonly NamedPipeServerStream _pipe;
-    private readonly Process _process;
-    private bool _used;
+    private readonly object _requestGate = new(), _writeGate = new();
+    private readonly int _processId;
+    private long _request;
     private int _disposed;
-    private Task _exit = Task.CompletedTask;
+    private readonly Task _exit;
     internal Task Exit => _exit;
-    internal int ProcessId => _process.Id;
-    private HelperLayoutSource(NamedPipeServerStream pipe, Process process) { _pipe = pipe; _process = process; }
+    internal int ProcessId => _processId;
+    internal bool IsAvailable => Volatile.Read(ref _disposed) == 0 && !_exit.IsCompleted && _pipe.IsConnected;
+    private HelperLayoutSource(NamedPipeServerStream pipe, Process process)
+    { _pipe = pipe; _processId = process.Id; _exit = ReapAsync(process); }
 
     internal static async Task<HelperLayoutSource> CreateAsync(bool elevate, CancellationToken token = default)
     {
@@ -64,42 +68,86 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
 
     public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
     {
-        if (_used) throw new IOException("This scan helper has already completed its request.");
-        _used = true;
-        using var cancelled = token.Register(() => _pipe.Dispose());
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
-        try
+        // Validation/cancellation before sending cannot poison the idle session.
+        token.ThrowIfCancellationRequested();
+        NativeNtfsLayoutSource.ValidateVolume(volume);
+        lock (_requestGate)
         {
-            NativeNtfsLayoutSource.ValidateVolume(volume);
-            ScanPipeProtocol.Write(_pipe, ScanFrameKind.Request, Encoding.ASCII.GetBytes(volume));
-            while (true)
+            token.ThrowIfCancellationRequested();
+            if (!IsAvailable) throw new IOException("The fast-scan helper is no longer connected.");
+            long id = ++_request;
+            byte[] request = new byte[11]; BinaryPrimitives.WriteInt64LittleEndian(request, id);
+            Encoding.ASCII.GetBytes(volume).CopyTo(request, 8);
+            bool terminal = false;
+            ExceptionDispatchInfo? consumeFailure = null;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
+            using var drainTimeout = new CancellationTokenSource();
+            using var abort = drainTimeout.Token.Register(Dispose);
+            int cancellationSent = 0;
+            void CancelRequest()
             {
-                token.ThrowIfCancellationRequested();
-                var frame = ScanPipeProtocol.ReadHeader(_pipe);
-                if (frame.Kind == ScanFrameKind.Complete && frame.Length == 0) return;
-                if (frame.Kind == ScanFrameKind.Failure && frame.Length is >= 4 and <= 4100)
+                if (Interlocked.Exchange(ref cancellationSent, 1) != 0) return;
+                drainTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+                // Never block the UI's Cancel handler on a pipe write. The ID
+                // makes a delayed command harmless even after the next request.
+                _ = Task.Run(() =>
                 {
-                    _pipe.ReadExactly(buffer.AsSpan(0, frame.Length));
-                    throw new Win32Exception(BinaryPrimitives.ReadInt32LittleEndian(buffer), Encoding.UTF8.GetString(buffer, 4, frame.Length - 4));
-                }
-                if (frame.Kind != ScanFrameKind.Batch || frame.Length < 8) throw new InvalidDataException("Unexpected helper response.");
-                if (frame.Length > buffer.Length)
-                { ArrayPool<byte>.Shared.Return(buffer); buffer = ArrayPool<byte>.Shared.Rent(frame.Length); }
-                _pipe.ReadExactly(buffer.AsSpan(0, frame.Length));
-                double query = BinaryPrimitives.ReadDoubleLittleEndian(buffer);
-                if (!double.IsFinite(query) || query < 0) throw new InvalidDataException("Invalid helper timing.");
-                consume(new(buffer.AsMemory(8, frame.Length - 8), query));
+                    try { lock (_writeGate) if (IsAvailable) ScanPipeProtocol.Write(_pipe, ScanFrameKind.Cancel, BitConverter.GetBytes(id)); }
+                    catch (Exception ex) when (ex is IOException or ObjectDisposedException) { Dispose(); }
+                });
             }
+            try
+            {
+                lock (_writeGate) ScanPipeProtocol.Write(_pipe, ScanFrameKind.Request, request);
+                using var cancelled = token.Register(CancelRequest);
+                while (true)
+                {
+                    var frame = ScanPipeProtocol.ReadHeader(_pipe);
+                    if (frame.Kind is not (ScanFrameKind.Batch or ScanFrameKind.Complete or ScanFrameKind.Cancelled or ScanFrameKind.Failure)
+                        || frame.Kind == ScanFrameKind.Batch && frame.Length < 16
+                        || frame.Kind is ScanFrameKind.Complete or ScanFrameKind.Cancelled && frame.Length != 8
+                        || frame.Kind == ScanFrameKind.Failure && frame.Length is not (>= 12 and <= 4108))
+                        throw new InvalidDataException("Unexpected helper response.");
+                    if (frame.Length > buffer.Length)
+                    { ArrayPool<byte>.Shared.Return(buffer); buffer = ArrayPool<byte>.Shared.Rent(frame.Length); }
+                    _pipe.ReadExactly(buffer.AsSpan(0, frame.Length));
+                    if (BinaryPrimitives.ReadInt64LittleEndian(buffer) != id)
+                        throw new InvalidDataException("Incorrect helper request.");
+                    if (frame.Kind != ScanFrameKind.Batch)
+                    {
+                        terminal = true;
+                        token.ThrowIfCancellationRequested();
+                        consumeFailure?.Throw();
+                        if (frame.Kind == ScanFrameKind.Failure)
+                            throw new Win32Exception(BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(8)), Encoding.UTF8.GetString(buffer, 12, frame.Length - 12));
+                        if (frame.Kind == ScanFrameKind.Cancelled) throw new IOException("The helper cancelled the scan.");
+                        return;
+                    }
+                    double query = BinaryPrimitives.ReadDoubleLittleEndian(buffer.AsSpan(8));
+                    if (!double.IsFinite(query) || query < 0) throw new InvalidDataException("Invalid helper timing.");
+                    if (token.IsCancellationRequested || consumeFailure is not null) continue;
+                    try { consume(new(buffer.AsMemory(16, frame.Length - 16), query)); }
+                    catch (Exception ex) { consumeFailure = ExceptionDispatchInfo.Capture(ex); CancelRequest(); }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!terminal) Dispose();
+                if (token.IsCancellationRequested && ex is IOException or ObjectDisposedException)
+                    throw new OperationCanceledException(token);
+                consumeFailure?.Throw();
+                if (ex is ObjectDisposedException)
+                    throw new IOException("The fast-scan helper disconnected before finishing the request.", ex);
+                throw;
+            }
+            finally { ArrayPool<byte>.Shared.Return(buffer); }
         }
-        catch (Exception ex) when (token.IsCancellationRequested && ex is IOException or ObjectDisposedException)
-        { throw new OperationCanceledException(token); }
-        finally { ArrayPool<byte>.Shared.Return(buffer); Dispose(); }
     }
 
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        _pipe.Dispose(); _exit = ReapAsync(_process);
+        _pipe.Dispose();
     }
     private static async Task ReapAsync(Process process)
     {

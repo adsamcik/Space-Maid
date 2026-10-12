@@ -126,25 +126,32 @@ public partial class MainWindow : Window
         try
         {
             string? helperFailure = null;
+            bool helperStarted = false;
             string root = Path.GetPathRoot(target)!;
             string? historyVolume = await Task.Run(() => DriveDiscovery.VolumeId(root)).WaitAsync(work.Token);
             var selectedDrive = root.Length == 3 ? new DriveInfo(root) : null;
-            if (_fastEnabled && _scanHelper is null && target.Equals(root, StringComparison.OrdinalIgnoreCase)
+            if (_fastEnabled && _scanHelper?.IsAvailable != true && target.Equals(root, StringComparison.OrdinalIgnoreCase)
                 && selectedDrive is not null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
                 && selectedDrive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
             {
-                try { _scanHelper = await HelperLayoutSource.CreateAsync(true, work.Token); }
+                try
+                {
+                    _scanHelper?.Dispose();
+                    _scanHelper = await HelperLayoutSource.CreateAsync(true, work.Token);
+                    helperStarted = true;
+                    log.Record("helper-started", new { _scanHelper.ProcessId });
+                }
                 catch (Exception ex) when (ex is IOException or InvalidDataException or Win32Exception)
                 {
                     _fastEnabled = false; helperFailure = $"Fast scan helper was unavailable: {ex.Message}. Standard scanning was used.";
                     log.Record("helper-unavailable", new { Error = ex.ToString() });
                 }
             }
+            if (_scanHelper?.IsAvailable == true) log.Record("helper-session", new { _scanHelper.ProcessId, Reused = !helperStarted });
             var scan = await new VolumeScanner().ScanAsync(target, progress, work.Token,
                 preferFast: _fastEnabled || Elevation.IsAdministrator, diagnostic: d => log.Record(d.Event, d), layoutSource: _scanHelper,
                 fastUnavailableReason: helperFailure);
             acquiring = false;
-            _scanHelper?.Dispose(); _scanHelper = null;
             if (_closing) return false;
             if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
             PreliminaryCaption.Text = "Preparing results…";
@@ -214,7 +221,12 @@ public partial class MainWindow : Window
         finally
         {
             acquiring = false;
-            _scanHelper?.Dispose(); _scanHelper = null;
+            if (_closing) _scanHelper?.Dispose();
+            if (_scanHelper is { IsAvailable: false })
+            {
+                log.Record("helper-disconnected", new { _scanHelper.ProcessId });
+                _scanHelper.Dispose(); _scanHelper = null; _fastEnabled = false;
+            }
             if (!_closing && log.Error is not null) BackendStatusText.Text += $" · Logging unavailable: {log.Error}";
             _work = null;
             if (!_closing) SetBusy(false);
@@ -413,12 +425,13 @@ public partial class MainWindow : Window
                 ? "Continuing with standard scanning."
                 : $"Fast scanning could not start: {ex.Message}. Standard scanning is available.";
         }
-        finally { _work = null; if (!_closing) SetBusy(false); }
+        finally { _work = null; if (_closing) _scanHelper?.Dispose(); else SetBusy(false); }
     }
     private bool _shutdownComplete;
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
+        var scanHelper = _scanHelper;
         _closing = true; _opportunitySearchTimer.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
         try
@@ -430,6 +443,9 @@ public partial class MainWindow : Window
                 try { await _worktreeCheckTask; }
                 catch (Exception error) { Debug.WriteLine($"Worktree check shutdown: {error}"); }
             if (_extensions is not null) await _extensions.DisposeAsync();
+            if (scanHelper is not null)
+                try { await scanHelper.Exit.WaitAsync(TimeSpan.FromSeconds(10)); }
+                catch (Exception error) { Debug.WriteLine($"Scanner shutdown: {error}"); }
         }
         catch (Exception error) { Debug.WriteLine($"Extension shutdown: {error}"); }
         finally

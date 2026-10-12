@@ -87,7 +87,7 @@ public sealed class DesktopTests
                 window.SetBusy(false);
                 Assert.Equal(Visibility.Collapsed, enableFast.Visibility); Assert.False(enableFast.IsEnabled);
                 Assert.Null(typeof(MainWindow).GetField("_scanHelper", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
-                // A helper is one-shot; its absence after a scan does not disable the user's choice.
+                // The enable control reflects the session choice while work is busy.
                 window.SetBusy(true); window.SetBusy(false);
                 Assert.Equal(Visibility.Collapsed, enableFast.Visibility);
                 // Cancellation/failure resets the choice; retry is offered only when idle.
@@ -1055,10 +1055,28 @@ public sealed class DesktopTests
                 CheckOpportunityValidation(window, app, artifactRoot);
                 stage = "confirming batch cleanup and refreshing its affected folders";
                 CheckOpportunityCleanup(window, app, artifactRoot);
+                stage = "retaining one helper across app scans and closing it with the window";
+                var helperStart = HelperLayoutSource.CreateAsync(false);
+                PumpUntil(() => helperStart.IsCompleted, TimeSpan.FromSeconds(10));
+                var appHelper = helperStart.GetAwaiter().GetResult();
+                typeof(MainWindow).GetField("_scanHelper", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, appHelper);
+                fastFlag.SetValue(window, true);
+                window.SetScanTarget(fixture.Path);
+                for (int scanNumber = 0; scanNumber < 2; scanNumber++)
+                {
+                    // Owned folder scans leave the authorized helper idle; no UAC
+                    // or user-volume enumeration is needed to check its lifecycle.
+                    var appScan = window.ScanCurrentPathAsync();
+                    PumpUntil(() => appScan.IsCompleted, TimeSpan.FromSeconds(10));
+                    Assert.True(appScan.GetAwaiter().GetResult());
+                    Assert.Same(appHelper, typeof(MainWindow).GetField("_scanHelper", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                    Assert.True(appHelper.IsAvailable); Assert.False(appHelper.Exit.IsCompleted);
+                }
                 stage = "closing windows";
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
                 PumpUntil(() => !app.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(10));
+                Assert.True(appHelper.Exit.IsCompletedSuccessfully); Assert.False(appHelper.IsAvailable);
                 File.Copy(extensionLog, Path.Join(artifactRoot, "artifacts", "extensions", "extension-smoke.jsonl"), true);
             }
             catch (Exception ex) { failure = new InvalidOperationException($"WPF smoke failed while {stage}.", ex); }
