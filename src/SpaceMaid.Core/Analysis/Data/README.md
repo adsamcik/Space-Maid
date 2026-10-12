@@ -33,6 +33,8 @@ Input SHA-256:
 
 ## Attribution and reuse
 
+The generated lookup and provenance sidecar are excluded from Space Maid's MIT license. See the project's `THIRD_PARTY_NOTICES.md` for the distinction between the authored implementation and this externally sourced collection.
+
 The supplied research has mixed upstream provenance and no blanket MIT or CC0 license. The factual labels and relationships remain attributed through the provenance sidecar. The report identifies ArchiveTeam (CC0), dexvert (Unlicense with exceptions), PRONOM JSON (MIT), Tika (Apache-2.0), Linguist and mime-db (MIT), libmagic (BSD), Shared MIME-info (GPL-2.0-or-later), EDAM (CC-BY-SA-4.0), and specialist sources with per-record or unknown documentation terms. Consult the original source URLs and the report's source appendix for those terms; this projection does not establish new permission to redistribute upstream prose or relicense the whole collection. The omitted `sources` and source-record tables also mean this is not the original complete license/notice bundle.
 
 The small naming supplement follows [SQLite's sidecar formats](https://sqlite.org/fileformat2.html), [TypeScript declaration conventions](https://www.typescriptlang.org/docs/handbook/modules/theory.html), [W3C SVG compression naming](https://www.w3.org/TR/SVG/mimereg.html), [Git ignore documentation](https://git-scm.com/docs/gitignore), and the examples in the supplied report. The implementation uses authored lookup code and factual registry projections; it does not execute imported source patterns or format parsers.

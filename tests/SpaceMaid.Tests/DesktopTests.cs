@@ -669,6 +669,7 @@ public sealed partial class DesktopTests
                 var detailPanel = (StackPanel)window.FindName("EntryDetail");
                 Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The treemap overlaps its selected-entry details.");
 
+                BeginWorkflow("Explorer visualization and virtualization");
                 SetStage("checking wide-folder UI virtualization");
                 var wideBuilder = new ScanBuilder(trackPreliminary: true);
                 wideBuilder.RootIndex = wideBuilder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));

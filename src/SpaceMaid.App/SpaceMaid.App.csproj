@@ -12,12 +12,15 @@
     <BundledExtension Include="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" ExtensionId="space-maid.developer" />
     <BundledExtension Include="../SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" ExtensionId="space-maid.assistant" />
     <Resource Include="../../assets/branding/space-maid-visor.ico" Link="Assets/SpaceMaid.ico" />
+    <Content Include="../../LICENSE;../../THIRD_PARTY_NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../SpaceMaid.Core/Analysis/Data/README.md" Link="Notices/FileFormatRegistry/README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../SpaceMaid.Core/Analysis/Data/FileFormatRegistry.provenance.json.gz" Link="Notices/FileFormatRegistry/FileFormatRegistry.provenance.json.gz" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
-    <ProjectReference Include="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" ReferenceOutputAssembly="false" Private="false" />
     <!-- Bundle extension files explicitly; do not propagate their manifests to the app root. -->
     <ProjectReference Include="@(BundledExtension)" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="../SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" ReferenceOutputAssembly="false" Private="false" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>
   <Target Name="CopyScanHelper" BeforeTargets="AssignTargetPaths">
@@ -47,7 +50,7 @@
     </ItemGroup>
   </Target>
   <Target Name="CopyAssistantWorker" BeforeTargets="AssignTargetPaths">
-    <MSBuild Projects="../SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" Targets="GetPublishedWorkerDirectory" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
+    <MSBuild Projects="../SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" Targets="GetPublishedWorkerDirectory" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)" RemoveProperties="PublishDir;PublishUrl">
       <Output TaskParameter="TargetOutputs" ItemName="WorkerPublish" />
     </MSBuild>
     <ItemGroup>

@@ -18,6 +18,12 @@ dotnet run --project src/SpaceMaid.App -c Release
 
 At startup, choose **Enable fast scanning** to authorize the bundled read-only helper through Windows UAC, or **Continue without admin**. Space Maid and extensions stay unelevated; cancelling UAC keeps standard scanning available. Choose a drive and click **Scan drive**. One helper is reused for the app session, including after scan cancellation and native scan failures. It exits when the app closes or disconnects. Cancellation is checked between metadata batches and during analysis. A broken connection falls back to standard scanning; **Enable fast scanning** starts a replacement. If Space Maid was manually launched as administrator, Photos and extensions remain unavailable until reopened normally.
 
+## CI and license
+
+[CI](.github/workflows/ci.yml) runs for pull requests, pushes to `main`, and manual dispatch. Linux builds the app and test bundle and publishes a Windows x64 package using the SDK pinned in `global.json`. A Windows job runs the Linux-built test bundle as a normal user, including the WPF and native filesystem checks. Test results, workflow timings and desktop renders are retained even after a test failure. No release or deployment is performed.
+
+Space Maid's original code is licensed under [MIT](LICENSE). Bundled dependencies and the imported file-format registry retain their own terms and attribution; see [third-party notices](THIRD_PARTY_NOTICES.md). License files and registry provenance are included in the app package.
+
 ## Apps
 
 **Apps** quickly finds installation folders on the selected drive using Windows' 32/64-bit installation records and shallow listings of common program, user-program and game folders. The sortable list starts with the largest folders and shows size bars, publishers, exact paths and searchable names. **Add app folder** includes a custom or portable installation; **Open folder** reveals the selected location. Returning to Apps retains its search, sort and selection.

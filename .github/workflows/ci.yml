@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  build:
+    name: Linux build and Windows package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Build app and test bundle
+        run: dotnet build tests/SpaceMaid.Tests/SpaceMaid.Tests.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --artifacts-path artifacts/ci -m:1
+      - name: Publish app
+        run: dotnet publish src/SpaceMaid.App/SpaceMaid.App.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --artifacts-path artifacts/ci --output artifacts/package -m:1
+      - name: Verify package
+        shell: pwsh
+        run: ./tools/ci/Verify-Package.ps1 -PackagePath artifacts/package
+      - name: Save app package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: space-maid-win-x64
+          path: artifacts/package/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save Windows test bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-test-bundle
+          path: artifacts/ci/bin/SpaceMaid.Tests/release_win-x64/
+          if-no-files-found: error
+          retention-days: 1
+
+  test:
+    name: Windows integration tests
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-test-bundle
+          path: artifacts/ci/bin/SpaceMaid.Tests/release_win-x64
+      - name: Run tests as a normal user
+        shell: pwsh
+        run: ./tools/ci/Run-WindowsTests.ps1 -AssemblyPath artifacts/ci/bin/SpaceMaid.Tests/release_win-x64/SpaceMaid.Tests.dll
+      - name: Save test results and desktop diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-test-results
+          path: |
+            artifacts/ci-test-results/
+            artifacts/desktop-workflows.tsv
+            artifacts/ui/
+            artifacts/extensions/
+          if-no-files-found: warn
+          retention-days: 7

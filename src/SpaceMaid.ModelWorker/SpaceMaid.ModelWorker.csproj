@@ -14,6 +14,17 @@
     <PackageReference Include="LLamaSharp" Version="0.27.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
   </ItemGroup>
+  <Target Name="IncludeRuntimeLicenseNotices" AfterTargets="ResolveFrameworkReferences" Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <_WorkerRuntimePack Include="@(ResolvedRuntimePack)" Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'" />
+      <_WorkerRuntimeNotice Include="%(_WorkerRuntimePack.PackageDirectory)/LICENSE.TXT;%(_WorkerRuntimePack.PackageDirectory)/THIRD-PARTY-NOTICES.TXT" />
+    </ItemGroup>
+    <Error Condition="'@(_WorkerRuntimePack)' == ''" Text="The worker's runtime package could not be resolved for license attribution." />
+    <Error Condition="!Exists('%(_WorkerRuntimeNotice.Identity)')" Text="Missing runtime license notice: %(_WorkerRuntimeNotice.Identity)" />
+    <ItemGroup>
+      <Content Include="@(_WorkerRuntimeNotice)" Link="Runtime-%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
   <Target Name="GetPublishedWorkerDirectory" DependsOnTargets="Publish" Returns="@(_WorkerPublishedDirectory)">
     <ItemGroup><_WorkerPublishedDirectory Include="$([System.IO.Path]::GetFullPath('$(PublishDir)', '$(MSBuildProjectDirectory)'))" /></ItemGroup>
   </Target>
