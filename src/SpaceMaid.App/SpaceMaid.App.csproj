@@ -7,14 +7,16 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <BundledExtension Include="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" ExtensionId="space-maid.photos" />
+    <BundledExtension Include="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" ExtensionId="space-maid.apps" />
+    <BundledExtension Include="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" ExtensionId="space-maid.developer" />
+    <BundledExtension Include="../SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" ExtensionId="space-maid.assistant" />
     <Resource Include="../../assets/branding/space-maid-visor.ico" Link="Assets/SpaceMaid.ico" />
     <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
     <ProjectReference Include="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="../SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" ReferenceOutputAssembly="false" />
+    <!-- Bundle extension files explicitly; do not propagate their manifests to the app root. -->
+    <ProjectReference Include="@(BundledExtension)" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="../SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" ReferenceOutputAssembly="false" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>
@@ -27,43 +29,28 @@
       <Content Include="@(HelperFiles)" Link="ScanHelper/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>
-  <Target Name="CopyBundledPhotos" BeforeTargets="AssignTargetPaths">
-    <MSBuild Projects="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
-      <Output TaskParameter="TargetOutputs" ItemName="PhotosTarget" />
+  <Target Name="CopyBundledExtensions" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="%(BundledExtension.Identity)" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
+      <Output TaskParameter="TargetOutputs" ItemName="BundledExtensionTargetOutputs" />
     </MSBuild>
+    <!-- TargetOutputs identify their source project; attach its declared bundle ID. -->
+    <JoinItems Left="@(BundledExtensionTargetOutputs->Distinct())" LeftKey="MSBuildSourceProjectFile" LeftMetadata="*"
+               Right="@(BundledExtension)" RightKey="FullPath" RightMetadata="ExtensionId" ItemSpecToUse="Left">
+      <Output TaskParameter="JoinResult" ItemName="BundledExtensionTargets" />
+    </JoinItems>
     <ItemGroup>
-      <PhotosFiles Include="%(PhotosTarget.RootDir)%(PhotosTarget.Directory)**/*" Exclude="%(PhotosTarget.RootDir)%(PhotosTarget.Directory)SpaceMaid.Extensions.Contracts.*;%(PhotosTarget.RootDir)%(PhotosTarget.Directory)SpaceMaid.Core.*" />
-      <Content Include="@(PhotosFiles)" Link="Extensions/space-maid.photos/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <BundledExtensionFiles Include="%(BundledExtensionTargets.RootDir)%(BundledExtensionTargets.Directory)**/*"
+                             Exclude="%(BundledExtensionTargets.RootDir)%(BundledExtensionTargets.Directory)SpaceMaid.Extensions.Contracts.*;%(BundledExtensionTargets.RootDir)%(BundledExtensionTargets.Directory)SpaceMaid.Core.*">
+        <ExtensionId>%(BundledExtensionTargets.ExtensionId)</ExtensionId>
+      </BundledExtensionFiles>
+      <Content Include="@(BundledExtensionFiles)" Link="Extensions/%(BundledExtensionFiles.ExtensionId)/%(BundledExtensionFiles.RecursiveDir)%(BundledExtensionFiles.Filename)%(BundledExtensionFiles.Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>
-  <Target Name="CopyBundledApps" BeforeTargets="AssignTargetPaths">
-    <MSBuild Projects="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
-      <Output TaskParameter="TargetOutputs" ItemName="AppsTarget" />
-    </MSBuild>
-    <ItemGroup>
-      <AppsFiles Include="%(AppsTarget.RootDir)%(AppsTarget.Directory)**/*" Exclude="%(AppsTarget.RootDir)%(AppsTarget.Directory)SpaceMaid.Extensions.Contracts.*;%(AppsTarget.RootDir)%(AppsTarget.Directory)SpaceMaid.Core.*" />
-      <Content Include="@(AppsFiles)" Link="Extensions/space-maid.apps/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    </ItemGroup>
-  </Target>
-  <Target Name="CopyBundledDeveloper" BeforeTargets="AssignTargetPaths">
-    <MSBuild Projects="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
-      <Output TaskParameter="TargetOutputs" ItemName="DeveloperTarget" />
-    </MSBuild>
-    <ItemGroup>
-      <DeveloperFiles Include="%(DeveloperTarget.RootDir)%(DeveloperTarget.Directory)**/*" Exclude="%(DeveloperTarget.RootDir)%(DeveloperTarget.Directory)SpaceMaid.Extensions.Contracts.*;%(DeveloperTarget.RootDir)%(DeveloperTarget.Directory)SpaceMaid.Core.*" />
-      <Content Include="@(DeveloperFiles)" Link="Extensions/space-maid.developer/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    </ItemGroup>
-  </Target>
-  <Target Name="CopyBundledAssistant" BeforeTargets="AssignTargetPaths">
-    <MSBuild Projects="../SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
-      <Output TaskParameter="TargetOutputs" ItemName="AssistantTarget" />
-    </MSBuild>
+  <Target Name="CopyAssistantWorker" BeforeTargets="AssignTargetPaths">
     <MSBuild Projects="../SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" Targets="GetPublishedWorkerDirectory" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
       <Output TaskParameter="TargetOutputs" ItemName="WorkerPublish" />
     </MSBuild>
     <ItemGroup>
-      <AssistantFiles Include="%(AssistantTarget.RootDir)%(AssistantTarget.Directory)**/*" Exclude="%(AssistantTarget.RootDir)%(AssistantTarget.Directory)SpaceMaid.Extensions.Contracts.*;%(AssistantTarget.RootDir)%(AssistantTarget.Directory)SpaceMaid.Core.*" />
-      <Content Include="@(AssistantFiles)" Link="Extensions/space-maid.assistant/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
       <WorkerFiles Include="%(WorkerPublish.Identity)/**/*" />
       <Content Include="@(WorkerFiles)" Link="Extensions/space-maid.assistant/Worker/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>

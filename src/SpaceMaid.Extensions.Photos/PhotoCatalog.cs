@@ -45,6 +45,7 @@ internal static class PhotoKinds
 
 internal sealed class PhotoCatalog : IDisposable
 {
+    internal const int PageSize = 100;
     private readonly string _connectionString;
     private readonly object _gate = new();
     public PhotoCatalog(string directory)
@@ -239,7 +240,7 @@ internal sealed class PhotoCatalog : IDisposable
             using var connection = Open();
             using var count = connection.CreateCommand(); count.CommandText = $"SELECT COUNT(*) FROM locations l JOIN objects o ON o.id=l.object_id WHERE {current}{modeFilter}";
             Add(count, "$collection", collection); var total = Convert.ToInt64(count.ExecuteScalar());
-            page = Math.Clamp(page, 0, (int)Math.Min(int.MaxValue, Math.Max(0, (total - 1) / 100)));
+            page = Math.Clamp(page, 0, (int)Math.Min(int.MaxValue, Math.Max(0, (total - 1) / PageSize)));
             using var command = connection.CreateCommand();
             command.CommandText = $"""
                 SELECT o.id,l.path,l.name,l.role,o.logical_bytes,o.allocated_bytes,o.default_bytes,o.revision,o.available,
@@ -249,10 +250,10 @@ internal sealed class PhotoCatalog : IDisposable
                     (SELECT COUNT(DISTINCT p.id) FROM locations x JOIN objects p ON p.id=x.object_id WHERE x.collection_id=l.collection_id AND x.missing=0 AND p.hash=o.hash AND p.hash_revision=p.revision AND p.default_bytes=o.default_bytes),
                     COALESCE(o.content_revision=o.revision,0)
                 FROM locations l JOIN objects o ON o.id=l.object_id WHERE {current}{modeFilter}
-                ORDER BY {column} {(descending ? "DESC" : "ASC")},l.path COLLATE BINARY,o.id LIMIT 100 OFFSET $offset;
+                ORDER BY {column} {(descending ? "DESC" : "ASC")},l.path COLLATE BINARY,o.id LIMIT {PageSize} OFFSET $offset;
                 """;
-            Add(command, "$collection", collection); Add(command, "$offset", page * 100L);
-            using var reader = command.ExecuteReader(); var rows = new List<PhotoRow>(100);
+            Add(command, "$collection", collection); Add(command, "$offset", page * (long)PageSize);
+            using var reader = command.ExecuteReader(); var rows = new List<PhotoRow>(PageSize);
             while (reader.Read()) rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4), Long(reader, 5), Long(reader, 6), reader.GetString(7), reader.GetBoolean(8), (uint)reader.GetInt64(9), reader.GetString(10), String(reader, 11), Integer(reader, 12), Integer(reader, 13), Integer(reader, 14), String(reader, 15), String(reader, 16), String(reader, 17), reader.GetString(18),
                 mode == PhotoMode.Duplicates ? "Equal default streams · Alternate streams and companion files are outside this comparison." : mode == PhotoMode.Families ? "Possible relationship · Matching basename and folder; does not establish edit fidelity or equivalence." : null, reader.GetInt64(19)) { AnalysisCurrent = reader.GetBoolean(20) });
             return new(rows, total, page);

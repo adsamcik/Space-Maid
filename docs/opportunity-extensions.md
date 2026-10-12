@@ -65,3 +65,7 @@ Build retention defaults to three days and is configurable from 1–365 days in 
 Native recycling success requires the confirmed folder identity at Windows' exact same-volume Recycle Bin destination and an absent original path. Progress or a successful Shell return code alone does not establish completion. Permanent-delete fallback remains blocked, with native error codes and callback evidence in the action log.
 
 Register custom providers in catalog tests, then use the real manifest loader to verify packaging. Existing `OpportunityExtensionTests` exercises viewless Developer loading, restart disablement, independent provider keys/membership, failure isolation and fail-closed review/execution. `DesktopTests` covers the actual shared checklist, selection, breakdowns, refresh and confirmed recycling with owned fixtures.
+
+Bundled extensions are listed once as `BundledExtension` items in `src/SpaceMaid.App/SpaceMaid.App.csproj`, with their project path and `ExtensionId`. The shared packaging target copies each extension's dependencies and native assets into `Extensions/<id>`, excluding host-shared Core and Contracts assemblies. ScanHelper and the assistant's self-contained Worker retain separate packaging rules.
+
+Desktop workflow checks live in `Desktop*Checks.cs`; `DesktopHarness.cs` contains rendering, routed-input and dispatcher helpers. `DesktopTests.cs` owns the single Application and ordered workflow calls. Keep those calls sequential and retain their timeouts when adding checks.

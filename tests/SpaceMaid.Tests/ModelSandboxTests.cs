@@ -190,6 +190,8 @@ public sealed class PublishedModelWorkerFactAttribute : FactAttribute
         {
             var configured = Environment.GetEnvironmentVariable("SPACEMAID_TEST_MODEL_WORKER");
             if (configured is not null && File.Exists(configured)) return Path.GetFullPath(configured);
+            var packaged = Path.Combine(AppContext.BaseDirectory, "Extensions", "space-maid.assistant", "Worker", "SpaceMaid.ModelWorker.exe");
+            if (File.Exists(packaged)) return packaged;
             var parent = new DirectoryInfo(AppContext.BaseDirectory);
             while (parent is not null)
             {

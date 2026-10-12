@@ -121,7 +121,7 @@ internal sealed class ThumbnailCache(IExtensionHost host)
             return new(null, error is IOException && (error.Message.StartsWith("File changed", StringComparison.Ordinal) || error.Message.StartsWith("Cloud-only", StringComparison.Ordinal)) ? error.Message : "Preview unavailable · Codec missing or file unreadable");
         }
     }
-    internal static string Key(PhotoRow row) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{row.ObjectId}|{row.Revision}|{row.SidecarRevision}|orientation:{row.Orientation}|160|fit|WIC:{Environment.OSVersion.Version}:{typeof(BitmapDecoder).Assembly.GetName().Version}|recipe1")));
+    internal static string Key(PhotoRow row) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{row.ObjectId}|{row.Revision}|{row.SidecarRevision}|orientation:{row.Orientation}|{Dimensions}|fit|WIC:{Environment.OSVersion.Version}:{typeof(BitmapDecoder).Assembly.GetName().Version}|recipe1")));
     internal static string DecoderKey(string sourceKey, Guid format, string version) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{sourceKey}|{format:D}|{version}")));
     private static BitmapSource Orient(BitmapSource bitmap, int? orientation)
     {
