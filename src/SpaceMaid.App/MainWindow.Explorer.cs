@@ -55,8 +55,9 @@ public partial class MainWindow
         TreeNote.Text = scan.HasAllocationData ? "Shared files counted once"
             : "Logical sizes only · Physical allocation is unavailable";
         MapBasis.Text = scan.HasAllocationData ? "Area = allocated size" : "Area = logical size";
-        _treeSortColumn = scan.HasAllocationData ? ScanSortColumn.Allocated : ScanSortColumn.Logical;
-        _treeDescending = true;
+        var visibleSort = VisibleTreeSort(scan);
+        if (_treeSortColumn != visibleSort) _treeDescending = visibleSort != ScanSortColumn.Name;
+        _treeSortColumn = visibleSort;
         UpdateTreeSortHeaders();
         var children = await ChildOrderAsync(scan.RootIndex, token);
         _explorer.Expand(-1, children);
@@ -313,11 +314,14 @@ public partial class MainWindow
     }
     private async void Tree_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (SpaceTree.SelectedItem is ExplorerRow row && row.CanExpand)
+        if (ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is ListBoxItem { DataContext: ExplorerRow row } && row.CanExpand)
             await BrowseAsync(token => ToggleFolderAsync(row, token));
     }
     private async void Tree_KeyDown(object sender, KeyEventArgs e)
     {
+        // Headers now live inside the list. Their keys must not navigate a selected folder.
+        if (!ReferenceEquals(e.OriginalSource, SpaceTree)
+            && ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is not ListBoxItem) return;
         if (SpaceTree.SelectedItem is not ExplorerRow row || _explorer is null) return;
         if (e.Key == Key.Right)
         {

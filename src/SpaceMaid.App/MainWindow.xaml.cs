@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InitializeTreeColumns();
         Activated += Window_Activated;
         UpdateTreeSortHeaders();
         InitializeOpportunityBrowser();
@@ -38,6 +39,7 @@ public partial class MainWindow : Window
     {
         if (_startupOffered) return;
         _startupOffered = true;
+        LoadColumnLayout();
         _ = RefreshDriveChoicesAsync();
         if (!Elevation.IsAdministrator)
         {
@@ -432,6 +434,7 @@ public partial class MainWindow : Window
     {
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
         var scanHelper = _scanHelper;
+        SaveColumnLayout();
         _closing = true; _opportunitySearchTimer.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
         try

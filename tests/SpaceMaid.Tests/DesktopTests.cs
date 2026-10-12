@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -47,6 +48,7 @@ public sealed class DesktopTests
                 window.LogDirectory = Path.Join(fixture.Path, "diagnostics");
                 window.ExtensionDataRoot = Path.Join(fixture.Path, "extensions");
                 window.DriveHistoryPath = Path.Join(fixture.Path, "drive-history.json");
+                window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
                 string fixtureRoot = Path.GetPathRoot(fixture.Path)!;
                 window.DriveProvider = () => [new(fixtureRoot, "Development", DriveDiscovery.VolumeId(fixtureRoot), true, GiB(500), GiB(20)),
                     new(@"R:\", "", null, false, UnavailableReason: "Not available"), new(@"S:\", "Network drive", null, true)];
@@ -274,7 +276,7 @@ public sealed class DesktopTests
                 stage = "opening folder operations through routed right-click events";
                 int binLink = explorer.Scan.PrimaryLink(row.Item.DirectoryIndex);
                 int projectLink = explorer.Scan.PrimaryLink(explorer.Scan.Entry(binLink).ParentIndex);
-                var projectContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(projectLink)));
+                var projectContainer = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(projectLink)));
                 stage = "checking expansion hit targets beyond the arrow glyph";
                 window.UpdateLayout();
                 var projectExpander = Descendants(projectContainer).OfType<Button>().Single();
@@ -325,17 +327,20 @@ public sealed class DesktopTests
                 tree.ContextMenu.IsOpen = false;
 
                 stage = "sorting tree columns while preserving expansion, selection and map scope";
+                CheckTreeColumns(window, tree);
                 var expandedBefore = tree.Items.Cast<ExplorerRow>().Where(r => r.Expanded).Select(r => r.Entry.LinkIndex).ToArray();
-                foreach (string header in new[] { "NameHeader", "NameHeader", "LogicalHeader", "AllocationHeader", "ShareHeader" })
+                foreach (string header in new[] { "NameHeader", "NameHeader", "ModifiedHeader", "ModifiedHeader", "CreatedHeader", "TypeHeader", "ExtensionHeader", "AttributesHeader", "LogicalHeader", "AllocationHeader", "ShareHeader" })
                 {
-                    ((Button)window.FindName(header)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    ((ButtonBase)window.FindName(header)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
-                    Assert.Equal(FontWeights.SemiBold, ((Button)window.FindName(header)).FontWeight);
+                    Assert.Equal(FontWeights.SemiBold, ((ButtonBase)window.FindName(header)).FontWeight);
                     Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                     Assert.All(expandedBefore, link => Assert.True(explorer.IsExpanded(link)));
                     Assert.Equal(projectMapTotal, window.CurrentPath);
                 }
-                Assert.Equal("% parent ↓", ((Button)window.FindName("ShareHeader")).Content);
+                Assert.Equal("% parent ↓", ((GridViewColumnHeader)window.FindName("ShareHeader")).Content);
+                ResetTreeColumns(window);
+                PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
 
                 var navigation = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
                 PumpUntil(() => navigation.IsCompleted, TimeSpan.FromSeconds(10));
@@ -371,8 +376,8 @@ public sealed class DesktopTests
                 var typeText = (TextBlock)window.FindName("EntryTypeText");
                 Assert.Contains("Inferred type: Ambiguous (.dll)", typeText.Text);
                 Assert.Equal(Visibility.Visible, typeText.Visibility);
-                var fileContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(tree.SelectedIndex));
-                Assert.Contains(Descendants(fileContainer).OfType<Grid>(), cell => cell.ToolTip is string tooltip && tooltip.Contains(typeText.Text));
+                var fileContainer = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(tree.SelectedIndex));
+                Assert.Contains(typeText.Text, Assert.IsType<string>(fileContainer.ToolTip));
                 Render(window, Path.Join(FindRepository(), "artifacts", "ui", "registry-ambiguous-selection.png"), 1220, 910);
 
                 stage = "constructing cleanup review";
@@ -453,7 +458,7 @@ public sealed class DesktopTests
                     Assert.Null(updatedRows.Scan.FindEntry(bin));
                     Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                     Assert.True(updatedRows.IsExpanded(updatedRows.Scan.FindEntry(project)!.Value));
-                    Assert.Equal("% parent ↓", ((Button)window.FindName("ShareHeader")).Content);
+                    Assert.Equal("Allocated ↓", ((GridViewColumnHeader)window.FindName("AllocationHeader")).Content);
                     capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                     Assert.True(scanButton.IsEnabled); // Captured old-scan actions cannot operate on the refreshed inventory.
                 }
@@ -590,9 +595,9 @@ public sealed class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"explorer-{theme}.png"), 1220, 910);
                     // Render the native template states without moving the user's pointer
                     // or bringing this offscreen test window to the foreground.
-                    var nameHeader = (Button)window.FindName("NameHeader");
-                    var allocationHeader = (Button)window.FindName("AllocationHeader");
-                    var logicalHeader = (Button)window.FindName("LogicalHeader");
+                    var nameHeader = (GridViewColumnHeader)window.FindName("NameHeader");
+                    var allocationHeader = (GridViewColumnHeader)window.FindName("AllocationHeader");
+                    var logicalHeader = (GridViewColumnHeader)window.FindName("ModifiedHeader");
                     Assert.True(VisualStateManager.GoToState(nameHeader, "MouseOver", false));
                     Assert.True(VisualStateManager.GoToState(allocationHeader, "Pressed", false));
                     Assert.True(VisualStateManager.GoToState(logicalHeader, "Focused", false));
@@ -647,7 +652,7 @@ public sealed class DesktopTests
                 Assert.Contains("PRELIMINARY", ((TextBlock)window.FindName("ScannedSizeLabel")).Text);
                 stage = "sorting preliminary rows and retaining the choice across progress updates";
                 foreach (string header in new[] { "PreliminaryNameHeader", "PreliminaryNameHeader", "PreliminaryLogicalHeader", "PreliminaryAllocationHeader" })
-                    ((Button)window.FindName(header)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    ((ButtonBase)window.FindName(header)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 ((Button)window.FindName("PreliminaryNameHeader")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 var names = preliminaryFiles.Items.Cast<PreliminaryRow>().Select(r => r.File.Name).ToArray();
                 Assert.Equal(names.Order(StringComparer.OrdinalIgnoreCase), names);
@@ -712,7 +717,7 @@ public sealed class DesktopTests
                 Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 stage = "disabling recycling on a drive-root context menu";
-                RightClick(window, Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0)));
+                RightClick(window, Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0)));
                 PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.True(((MenuItem)tree.ContextMenu.Items[0]).IsEnabled);
                 Assert.False(((MenuItem)tree.ContextMenu.Items[1]).IsEnabled);
@@ -728,7 +733,7 @@ public sealed class DesktopTests
                 wideContent.UpdateLayout();
                 PumpUntil(() => tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1) is not null, TimeSpan.FromSeconds(10));
                 Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100, "Scrolling realized the whole wide folder.");
-                var finalFile = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1));
+                var finalFile = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1));
                 RightClick(window, finalFile);
                 PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
                 Assert.False(tree.ContextMenu.IsOpen); // File rows do not expose folder operations.
@@ -1024,7 +1029,7 @@ public sealed class DesktopTests
                 groupedLoad.GetAwaiter().GetResult();
                 var groupedRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 window.UpdateLayout();
-                var rootContainer = Assert.IsType<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0));
+                var rootContainer = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0));
                 Descendants(rootContainer).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
                 Assert.False(groupedRows.IsExpanded(-1));
@@ -1047,6 +1052,8 @@ public sealed class DesktopTests
                 Assert.True(Assert.IsType<ExplorerRow>(tree.SelectedItem).Expanded);
                 Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
+                stage = "keeping the initial sort visible after column changes and basic scanning";
+                CheckVisibleInitialSort(window);
                 stage = "browsing thousands of grouped opportunities and retaining hidden selections";
                 CheckOpportunityBrowser(window, app, artifactRoot);
                 stage = "browsing additional cleanup categories by tool and project";
@@ -1966,6 +1973,119 @@ public sealed class DesktopTests
             int index = builder.AddFile(new(new(id), FileAttributes.Normal, GiB(logical), GiB(allocated), 0));
             builder.AddLink(index, new(parent), name);
         }
+    }
+
+    private static void CheckTreeColumns(MainWindow window, ListBox tree)
+    {
+        var columns = (GridView)window.FindName("TreeColumns");
+        Assert.Equal(new[] { "Name", "Allocated", "Modified" }, columns.Columns.Select(column => ((GridViewColumnHeader)column.Header).Tag));
+        var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+        var selected = tree.SelectedItem;
+        var expansion = rows.ExpandedPaths();
+        var button = (Button)window.FindName("ColumnsButton");
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var menu = button.ContextMenu;
+        Assert.True(menu.IsOpen);
+        Assert.False(menu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, ScanSortColumn.Name)).IsEnabled);
+        foreach (var item in menu.Items.OfType<MenuItem>().Where(item => item.Tag is ScanSortColumn && !item.IsChecked))
+        { item.IsChecked = true; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)); }
+        Assert.Equal(9, columns.Columns.Count);
+        Assert.Same(selected, tree.SelectedItem); Assert.Equal(expansion, rows.ExpandedPaths());
+        RenderMenu(menu, Path.Join(FindRepository(), "artifacts", "ui", "tree-column-menu.png"));
+        menu.IsOpen = false;
+        window.UpdateLayout();
+        var dateColumn = (GridViewColumn)window.FindName("ModifiedColumn");
+        var header = (GridViewColumnHeader)dateColumn.Header;
+        Assert.True(header.Focusable); Assert.True(header.IsTabStop);
+        foreach (var key in new[] { Key.Left, Key.Right })
+        {
+            var input = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(header), 0, key)
+                { RoutedEvent = Keyboard.PreviewKeyDownEvent, Source = header };
+            tree.RaiseEvent(input);
+            Assert.False(input.Handled); Assert.Equal(expansion, rows.ExpandedPaths());
+        }
+        var thumb = Assert.Single(Descendants(header).OfType<Thumb>());
+        // Header and gripper double-clicks never toggle the selected folder.
+        foreach (var target in new UIElement[] { header, thumb })
+        {
+            tree.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                { RoutedEvent = Control.MouseDoubleClickEvent, Source = target });
+            Assert.Equal(expansion, rows.ExpandedPaths()); Assert.Same(selected, tree.SelectedItem);
+        }
+        thumb.RaiseEvent(new DragStartedEventArgs(0, 0) { RoutedEvent = Thumb.DragStartedEvent });
+        thumb.RaiseEvent(new DragDeltaEventArgs(27, 0) { RoutedEvent = Thumb.DragDeltaEvent });
+        thumb.RaiseEvent(new DragCompletedEventArgs(27, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
+        Assert.Equal(177, dateColumn.Width);
+        columns.Columns.Move(columns.Columns.IndexOf(dateColumn), 1);
+        Render(window, Path.Join(FindRepository(), "artifacts", "ui", "tree-columns-all.png"), 1220, 910);
+        var viewer = Descendants(tree).OfType<ScrollViewer>().First();
+        viewer.ScrollToHorizontalOffset(190); window.UpdateLayout();
+        PumpUntil(() => true, TimeSpan.FromSeconds(1));
+        Assert.True(viewer.HorizontalOffset > 0, $"Horizontal scrolling: extent {viewer.ExtentWidth}, viewport {viewer.ViewportWidth}, scrollable {viewer.ScrollableWidth}, actual {viewer.ActualWidth}, bar {viewer.HorizontalScrollBarVisibility}, columns {columns.Columns.Sum(column => column.ActualWidth)}");
+        Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100);
+        window.SaveColumnLayout();
+        var saved = TreeColumnLayout.Load(window.ColumnLayoutPath);
+        Assert.Equal(ScanSortColumn.Modified, saved.Columns[1].Id); Assert.Equal(177, saved.Columns[1].Width);
+        Assert.All(saved.Columns, state => Assert.True(state.Visible));
+        ResetTreeColumns(window);
+        PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+        typeof(MainWindow).GetMethod("LoadColumnLayout", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+        Assert.Equal(9, columns.Columns.Count); Assert.Same(dateColumn, columns.Columns[1]); Assert.Equal(177, dateColumn.Width);
+        viewer.ScrollToHorizontalOffset(0); window.UpdateLayout();
+        var nameHeader = (GridViewColumnHeader)window.FindName("NameHeader");
+        RightClick(window, nameHeader);
+        Assert.False(tree.ContextMenu.IsOpen);
+        Assert.True(nameHeader.ContextMenu.IsOpen); nameHeader.ContextMenu.IsOpen = false;
+    }
+
+    private static void CheckVisibleInitialSort(MainWindow window)
+    {
+        ResetTreeColumns(window);
+        PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+        Load(true);
+        ClickSort("AllocationHeader");
+        var button = (Button)window.FindName("ColumnsButton");
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var allocation = button.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, ScanSortColumn.Allocated));
+        allocation.IsChecked = false; allocation.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Assert.False(button.ContextMenu.IsEnabled); // Another toggle cannot hide the pending sort column.
+        button.ContextMenu.IsOpen = false;
+        PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+        Assert.True(button.ContextMenu.IsEnabled);
+        Load(true); Assert.Equal("Name ↑", ((GridViewColumnHeader)window.FindName("NameHeader")).Content);
+        ResetTreeColumns(window);
+        ClickSort("AllocationHeader");
+        Load(false); Assert.Equal("Name ↑", ((GridViewColumnHeader)window.FindName("NameHeader")).Content);
+        var columns = (GridView)window.FindName("TreeColumns");
+        Assert.Contains(columns.Columns, column => ReferenceEquals(column.Header, window.FindName("NameHeader")));
+
+        void Load(bool allocationData)
+        {
+            var builder = new ScanBuilder { AllocationData = allocationData };
+            builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+            for (ulong i = 2; i <= 3; i++)
+            {
+                int file = builder.AddFile(new(new(i), FileAttributes.Normal, (long)i, allocationData ? (long)i : 0, 0));
+                builder.AddLink(file, new(1), $"file-{i}.bin");
+            }
+            var scan = builder.Build(@"G:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+            var task = window.InitializeExplorerAsync(scan, [], default);
+            PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(10)); task.GetAwaiter().GetResult();
+        }
+        void ClickSort(string name)
+        {
+            ((GridViewColumnHeader)window.FindName(name)).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private static void ResetTreeColumns(MainWindow window)
+    {
+        var button = (Button)window.FindName("ColumnsButton");
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var reset = button.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "Reset columns"));
+        reset.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        button.ContextMenu.IsOpen = false;
     }
 
     private static void PumpUntil(Func<bool> completed, TimeSpan timeout)

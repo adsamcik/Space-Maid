@@ -22,7 +22,7 @@ internal static class LayoutParser
             var record = data[..fileEnd];
             ulong id = U64(record, file + 16);
             var attributes = (FileAttributes)U32(record, file + 12);
-            long writeTime = 0;
+            long writeTime = 0, creationTime = 0;
             uint extra = U32(record, file + 32);
             if (extra != 0)
             {
@@ -31,6 +31,7 @@ internal static class LayoutParser
                 if (length != 0 && length < 24) throw Bad();
                 Require(record, info, length == 0 ? 56 : checked((int)length));
                 writeTime = I64(record, info + 16);
+                creationTime = I64(record, info);
             }
             long logical = 0, allocated = 0;
             uint firstStream = U32(record, file + 28);
@@ -67,7 +68,7 @@ internal static class LayoutParser
                     stream = streamEnd;
                 }
             }
-            int index = builder.AddFile(new(new(id), attributes, logical, allocated, writeTime));
+            int index = builder.AddFile(new(new(id), attributes, logical, allocated, writeTime, creationTime));
             if ((id & 0x0000FFFFFFFFFFFF) == 5 && (attributes & FileAttributes.Directory) != 0)
                 builder.RootIndex = index;
             uint firstName = U32(record, file + 24);

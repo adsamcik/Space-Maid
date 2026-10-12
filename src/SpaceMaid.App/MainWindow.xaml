@@ -142,39 +142,64 @@
               <Border Style="{StaticResource Card}" Padding="0">
                   <Grid>
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <Grid Margin="12,6,14,4">
-                          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions>
-                          <Button x:Name="NameHeader" Content="Name" Tag="Name" Click="TreeSort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
-                          <Button x:Name="AllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="TreeSort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
-                          <Button x:Name="LogicalHeader" Content="Logical" Tag="Logical" Click="TreeSort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
-                          <Button x:Name="ShareHeader" Content="% parent" Tag="Share" Click="TreeSort_Click" Grid.Column="3" Style="{StaticResource ColumnHeader}" />
-                      </Grid>
-                      <ListBox x:Name="SpaceTree" Grid.Row="1" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
+                      <ListView x:Name="SpaceTree" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
-                               ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation. Right-click a folder for its operations.">
-                          <ListBox.ContextMenu><ContextMenu /></ListBox.ContextMenu>
-                          <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
-                          <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="5,0" /><Setter Property="AutomationProperties.Name" Value="{Binding Description}" /></Style></ListBox.ItemContainerStyle>
-                          <ListBox.ItemTemplate>
-                              <DataTemplate>
-                                  <Grid MinHeight="34" ToolTip="{Binding EntryTooltip}">
-                                      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions>
-                                      <Grid Margin="{Binding Indent}">
+                               ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation. Right-click a folder for its operations.">
+                          <ListView.ContextMenu><ContextMenu /></ListView.ContextMenu>
+                          <ListView.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
+                          <ListView.ItemContainerStyle><Style TargetType="ListViewItem" BasedOn="{StaticResource TreeRow}" /></ListView.ItemContainerStyle>
+                          <ListView.View>
+                              <GridView x:Name="TreeColumns" ColumnHeaderContainerStyle="{StaticResource TreeColumnHeader}" AllowsColumnReorder="True">
+                                  <GridViewColumn x:Name="NameColumn" Width="260">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="NameHeader" Content="Name" Tag="Name" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><Grid Margin="{Binding Indent}" MinHeight="34" ClipToBounds="True">
                                           <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="21" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                           <Button Content="{Binding Expander}" IsEnabled="{Binding CanExpand}" Click="Expand_Click" Style="{StaticResource FolderExpander}" AutomationProperties.Name="{Binding Name, StringFormat='Expand or collapse {0}'}" />
                                           <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" Opacity="0.65" Grid.Column="1" VerticalAlignment="Center" />
                                           <StackPanel Grid.Column="2" VerticalAlignment="Center"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Flags}" FontSize="11" Opacity="0.65"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Flags}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel>
-                                      </Grid>
-                                      <TextBlock Text="{Binding Allocated}" Grid.Column="1" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" ToolTip="{Binding SizeNote}" />
-                                      <TextBlock Text="{Binding Logical}" Grid.Column="2" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" />
-                                      <TextBlock Text="{Binding Share}" Grid.Column="3" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.65" />
-                                  </Grid>
-                              </DataTemplate>
-                          </ListBox.ItemTemplate>
-                      </ListBox>
+                                      </Grid></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="AllocationColumn" Width="96">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="AllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Allocated}" Style="{StaticResource TreeNumberCell}" ToolTip="{Binding SizeNote}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="ModifiedColumn" Width="150">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="ModifiedHeader" Content="Modified" Tag="Modified" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Modified}" Style="{StaticResource TreeTextCell}" ToolTip="{Binding DateNote}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="LogicalColumn" Width="96">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="LogicalHeader" Content="Logical" Tag="Logical" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Logical}" Style="{StaticResource TreeNumberCell}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="ShareColumn" Width="80">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="ShareHeader" Content="% parent" Tag="Share" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Share}" Style="{StaticResource TreeNumberCell}" Opacity="0.65" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="CreatedColumn" Width="150">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="CreatedHeader" Content="Created" Tag="Created" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Created}" Style="{StaticResource TreeTextCell}" ToolTip="{Binding DateNote}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="TypeColumn" Width="170">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="TypeHeader" Content="Type" Tag="Type" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Type}" Style="{StaticResource TreeTextCell}" ToolTip="{Binding TypeDescription}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="ExtensionColumn" Width="90">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="ExtensionHeader" Content="Extension" Tag="Extension" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Extension}" Style="{StaticResource TreeTextCell}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                                  <GridViewColumn x:Name="AttributesColumn" Width="180">
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="AttributesHeader" Content="Attributes" Tag="Attributes" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Attributes}" Style="{StaticResource TreeTextCell}" ToolTip="{Binding Attributes}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                  </GridViewColumn>
+                              </GridView>
+                          </ListView.View>
+                      </ListView>
                       <TextBlock x:Name="TreeHint" Text="Scan a drive to explore." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
-                      <TextBlock x:Name="TreeNote" Text="Shared files counted once" Grid.Row="2" Margin="12,8" FontSize="12" TextWrapping="Wrap" Opacity="0.65" />
+                      <DockPanel Grid.Row="2" Margin="12,4,8,4">
+                          <Button x:Name="ColumnsButton" DockPanel.Dock="Right" Content="Columns" Click="Columns_Click" Style="{StaticResource ColumnHeader}" ToolTip="Choose columns. Drag headers to reorder; drag their edges to resize." AutomationProperties.Name="Choose tree columns" />
+                          <TextBlock x:Name="TreeNote" Text="Shared files counted once" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" />
+                      </DockPanel>
                   </Grid>
               </Border>
               <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">

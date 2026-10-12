@@ -208,7 +208,12 @@ public sealed class VolumeScanner
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
         var rootId = new FileIdentity(LayoutParser.U64(idBuffer, 8), LayoutParser.U64(idBuffer, 16));
         if (rootId == default) throw new Win32Exception(50);
-        builder.RootIndex = builder.AddFile(new(rootId, FileAttributes.Directory, 0, 0, 0));
+        long rootWrite = 0, rootCreated = 0;
+        byte[] basicInfo = new byte[40];
+        fixed (byte* pointer = basicInfo)
+            if (NativeMethods.GetFileInformationByHandleEx(rootHandle, 0, pointer, 40))
+            { rootWrite = LayoutParser.I64(basicInfo, 16); rootCreated = LayoutParser.I64(basicInfo, 0); }
+        builder.RootIndex = builder.AddFile(new(rootId, FileAttributes.Directory, 0, 0, rootWrite, rootCreated));
         var pending = new Queue<(string Path, FileIdentity Id)>();
         var visited = new HashSet<FileIdentity> { rootId };
         pending.Enqueue((target, rootId));
@@ -272,7 +277,7 @@ public sealed class VolumeScanner
                             long logical = isDirectory ? 0 : LayoutParser.I64(buffer, offset + 40);
                             long allocation = isDirectory ? 0 : LayoutParser.I64(buffer, offset + 48);
                             if (logical < 0 || allocation < 0) throw new InvalidDataException("Invalid directory size.");
-                            int index = builder.AddFile(new(id, attributes, logical, allocation, LayoutParser.I64(buffer, offset + 24)));
+                            int index = builder.AddFile(new(id, attributes, logical, allocation, LayoutParser.I64(buffer, offset + 24), LayoutParser.I64(buffer, offset + 8)));
                             builder.AddLink(index, directory.Id, name);
                             if (isDirectory && recursive)
                             {
@@ -297,7 +302,7 @@ public sealed class VolumeScanner
         NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x81, 7, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
 
-    private readonly record struct BasicEntry(string Name, FileAttributes Attributes, long Size, long WriteTime);
+    private readonly record struct BasicEntry(string Name, FileAttributes Attributes, long Size, long WriteTime, long CreatedTime);
 
     private static void AcquireBasic(string target, ScanBuilder builder, ScanReporter reporter, CancellationToken token, bool recursive = true)
     {
@@ -314,12 +319,12 @@ public sealed class VolumeScanner
             {
                 var entries = new FileSystemEnumerable<BasicEntry>(directory.Path,
                     (ref FileSystemEntry entry) => new(entry.FileName.ToString(), entry.Attributes,
-                        entry.IsDirectory ? 0 : entry.Length, entry.LastWriteTimeUtc.ToFileTime()), options);
+                        entry.IsDirectory ? 0 : entry.Length, entry.LastWriteTimeUtc.ToFileTime(), entry.CreationTimeUtc.ToFileTime()), options);
                 foreach (var entry in entries)
                 {
                     token.ThrowIfCancellationRequested();
                     var id = new FileIdentity(sequence++);
-                    int index = builder.AddFile(new(id, entry.Attributes, entry.Size, 0, entry.WriteTime));
+                    int index = builder.AddFile(new(id, entry.Attributes, entry.Size, 0, entry.WriteTime, entry.CreatedTime));
                     builder.AddLink(index, directory.Id, entry.Name);
                     if (recursive && (entry.Attributes & FileAttributes.Directory) != 0)
                     {

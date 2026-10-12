@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
@@ -14,20 +15,21 @@ public partial class MainWindow
 
     private async void TreeSort_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: string tag } && Enum.TryParse<ScanSortColumn>(tag, out var column))
+        if (sender is ButtonBase { Tag: string tag } && Enum.TryParse<ScanSortColumn>(tag, out var column))
             await SortTreeAsync(column);
     }
 
     internal Task SortTreeAsync(ScanSortColumn column) => BrowseAsync(async token =>
     {
         var scan = _snapshot!;
-        bool descending = _treeSortColumn == column ? !_treeDescending : column != ScanSortColumn.Name;
+        bool descending = _treeSortColumn == column ? !_treeDescending : column is ScanSortColumn.Allocated or ScanSortColumn.Logical or ScanSortColumn.Share or ScanSortColumn.Modified or ScanSortColumn.Created;
         var directories = _childOrders.Keys.ToArray();
         var orders = await Task.Run(() => directories.ToDictionary(directory => directory,
             directory => scan.SortedChildren(directory, column, descending, token)), token);
         token.ThrowIfCancellationRequested();
         int selected = _selectedLink;
         bool grouped = _selectionIsGroup;
+        var viewport = CaptureTreeViewport();
         _syncTree = true;
         try
         {
@@ -36,8 +38,9 @@ public partial class MainWindow
             foreach (var order in orders) _childOrders.Add(order.Key, order.Value);
             _treeSortColumn = column;
             _treeDescending = descending;
-            SelectTree(selected);
+            SpaceTree.SelectedIndex = _explorer.Find(selected);
             _selectionIsGroup = grouped;
+            RestoreTreeViewport(viewport);
         }
         finally { _syncTree = false; }
         UpdateTreeSortHeaders();
@@ -49,16 +52,26 @@ public partial class MainWindow
         SetSortHeader(AllocationHeader, "Allocated", ScanSortColumn.Allocated, _treeSortColumn, _treeDescending);
         SetSortHeader(LogicalHeader, "Logical", ScanSortColumn.Logical, _treeSortColumn, _treeDescending);
         SetSortHeader(ShareHeader, "% parent", ScanSortColumn.Share, _treeSortColumn, _treeDescending);
+        SetSortHeader(ModifiedHeader, "Modified", ScanSortColumn.Modified, _treeSortColumn, _treeDescending);
+        SetSortHeader(CreatedHeader, "Created", ScanSortColumn.Created, _treeSortColumn, _treeDescending);
+        SetSortHeader(TypeHeader, "Type", ScanSortColumn.Type, _treeSortColumn, _treeDescending);
+        SetSortHeader(ExtensionHeader, "Extension", ScanSortColumn.Extension, _treeSortColumn, _treeDescending);
+        SetSortHeader(AttributesHeader, "Attributes", ScanSortColumn.Attributes, _treeSortColumn, _treeDescending);
     }
 
-    private static void SetSortHeader(Button button, string label, ScanSortColumn column, ScanSortColumn selected, bool descending)
+    private static void SetSortHeader(ButtonBase button, string label, ScanSortColumn column, ScanSortColumn selected, bool descending)
     {
         bool active = column == selected;
         button.Content = label + (active ? descending ? " ↓" : " ↑" : "");
         button.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
         string state = active ? descending ? ", descending" : ", ascending" : "";
         AutomationProperties.SetName(button, $"Sort by {label}{state}");
-        button.ToolTip = $"Sort by {label}{state}. Click to {(active && descending ? "sort ascending" : active ? "sort descending" : column == ScanSortColumn.Name ? "sort A–Z" : "show largest first")}.";
+        bool date = column is ScanSortColumn.Modified or ScanSortColumn.Created;
+        string next = date ? active && descending ? "show oldest first" : "show newest first"
+            : active ? descending ? "sort ascending" : "sort descending"
+            : column == ScanSortColumn.Attributes ? "sort ascending"
+            : column is ScanSortColumn.Name or ScanSortColumn.Type or ScanSortColumn.Extension ? "sort A–Z" : "show largest first";
+        button.ToolTip = $"Sort by {label}. Click to {next}.";
     }
 
     private void PreliminarySort_Click(object sender, RoutedEventArgs e)

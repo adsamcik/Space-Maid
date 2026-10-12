@@ -1,10 +1,12 @@
+using SpaceMaid.Core.Analysis;
+
 namespace SpaceMaid.Core.Scanning;
 
 internal readonly record struct FileIdentity(ulong Low, ulong High = 0);
 
 internal readonly record struct FileRecord(
     FileIdentity Identity, FileAttributes Attributes, long LogicalBytes,
-    long AllocatedBytes, long LastWriteFileTime)
+    long AllocatedBytes, long LastWriteFileTime, long CreationFileTime = 0)
 {
     public bool IsDirectory => (Attributes & FileAttributes.Directory) != 0;
 }
@@ -21,9 +23,9 @@ public sealed record ScanProgress(string Phase, int Files, TimeSpan Elapsed, str
 public sealed record ScanMetrics(TimeSpan Acquisition, TimeSpan Aggregation, long ManagedAllocatedBytes,
     long PeakProcessWorkingSetBytes = 0);
 
-public enum ScanSortColumn { Name, Allocated, Logical, Share }
+public enum ScanSortColumn { Name, Allocated, Logical, Share, Modified, Created, Type, Extension, Attributes }
 public readonly record struct ScanEntryMetadata(uint Attributes, long LastWriteFileTime,
-    ulong? NativeIdLow, ulong? NativeIdHigh);
+    ulong? NativeIdLow, ulong? NativeIdHigh, long CreationFileTime = 0);
 
 public readonly record struct ScanEntry(int LinkIndex, int FileIndex, int ParentIndex,
     string Name, bool IsDirectory, bool IsPrimaryName, bool IsShared, bool IsIncomplete,
@@ -150,10 +152,11 @@ public sealed class ScanSnapshot
 
     public ScanEntryMetadata GetMetadata(int linkIndex)
     {
-        var file = Records[Entry(linkIndex).FileIndex];
+        if (linkIndex < -1 || linkIndex >= Links.Length) throw new ArgumentOutOfRangeException(nameof(linkIndex));
+        var file = Records[linkIndex == -1 ? RootIndex : Links[linkIndex].FileIndex];
         bool nativeIdentity = HasAllocationData;
         return new((uint)file.Attributes, file.LastWriteFileTime,
-            nativeIdentity ? file.Identity.Low : null, nativeIdentity ? file.Identity.High : null);
+            nativeIdentity ? file.Identity.Low : null, nativeIdentity ? file.Identity.High : null, file.CreationFileTime);
     }
 
     // Streaming traversal avoids sorting or copying a large directory for extensions.
@@ -181,11 +184,26 @@ public sealed class ScanSnapshot
         // Compare pooled names directly; sorting a large folder creates no path/name strings.
         Array.Sort(sorted, (a, b) =>
         {
+            var fileA = Records[Links[a].FileIndex];
+            var fileB = Records[Links[b].FileIndex];
+            if (column is ScanSortColumn.Modified or ScanSortColumn.Created)
+            {
+                long timeA = column == ScanSortColumn.Modified ? fileA.LastWriteFileTime : fileA.CreationFileTime;
+                long timeB = column == ScanSortColumn.Modified ? fileB.LastWriteFileTime : fileB.CreationFileTime;
+                bool knownA = IsValidFileTime(timeA), knownB = IsValidFileTime(timeB);
+                // Unknown dates stay at the bottom in either direction.
+                if (knownA != knownB) return knownA ? -1 : 1;
+            }
             int comparison = column switch
             {
                 ScanSortColumn.Name => Name(a).CompareTo(Name(b), StringComparison.OrdinalIgnoreCase),
                 ScanSortColumn.Allocated => HasAllocationData ? AttributedBytes(a).CompareTo(AttributedBytes(b)) : 0,
                 ScanSortColumn.Logical => DirectoryLogical[Links[a].FileIndex].CompareTo(DirectoryLogical[Links[b].FileIndex]),
+                ScanSortColumn.Modified => ValidTime(fileA.LastWriteFileTime).CompareTo(ValidTime(fileB.LastWriteFileTime)),
+                ScanSortColumn.Created => ValidTime(fileA.CreationFileTime).CompareTo(ValidTime(fileB.CreationFileTime)),
+                ScanSortColumn.Type => TypeLabel(a, fileA).CompareTo(TypeLabel(b, fileB), StringComparison.OrdinalIgnoreCase),
+                ScanSortColumn.Extension => Extension(a, fileA).CompareTo(Extension(b, fileB), StringComparison.OrdinalIgnoreCase),
+                ScanSortColumn.Attributes => ((uint)fileA.Attributes).CompareTo((uint)fileB.Attributes),
                 _ => AttributedBytes(a).CompareTo(AttributedBytes(b))
             };
             if (comparison != 0) return descending ? -comparison : comparison;
@@ -195,6 +213,12 @@ public sealed class ScanSnapshot
         token.ThrowIfCancellationRequested();
         return sorted;
     }
+
+    public static bool IsValidFileTime(long value) => value > 0 && value <= 2650467743999999999L;
+    private static long ValidTime(long value) => IsValidFileTime(value) ? value : 0;
+    private ReadOnlySpan<char> TypeLabel(int link, FileRecord file) => file.IsDirectory ? "Folder"
+        : FileTypeClassifier.Label(FileTypeClassifier.Classify(Name(link)));
+    private ReadOnlySpan<char> Extension(int link, FileRecord file) => file.IsDirectory ? [] : Path.GetExtension(Name(link));
 
     public long AttributedBytes(int linkIndex)
     {

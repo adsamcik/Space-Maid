@@ -107,6 +107,30 @@ public sealed class ScannerTests
         Assert.Throws<InvalidDataException>(() => LayoutParser.Parse(batch, new()));
     }
 
+    [Theory]
+    [InlineData(0)] // Older Windows returns zero length for the complete legacy structure.
+    [InlineData(24)]
+    [InlineData(56)]
+    public void LayoutReadsCreatedAndModifiedFromReturnedExtraMetadata(int length)
+    {
+        byte[] batch = LayoutFixture.File(42, 5, "file", 1, 100, 4096);
+        int extra = batch.Length;
+        Array.Resize(ref batch, extra + 56);
+        LayoutFixture.Put32(batch, 16 + 32, (uint)(extra - 16));
+        LayoutFixture.Put32(batch, 16 + 36, (uint)length);
+        long created = new DateTime(2025, 2, 3, 12, 0, 0, DateTimeKind.Utc).ToFileTimeUtc(), modified = created + TimeSpan.TicksPerDay;
+        LayoutFixture.Put64(batch, extra, (ulong)created);
+        LayoutFixture.Put64(batch, extra + 16, (ulong)modified);
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(5), FileAttributes.Directory, 0, 0, 0));
+        LayoutParser.Parse(batch, builder);
+        var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+        var metadata = scan.GetMetadata(scan.FindEntry(@"C:\file")!.Value);
+        Assert.Equal(created, metadata.CreationFileTime); Assert.Equal(modified, metadata.LastWriteFileTime);
+        LayoutFixture.Put32(batch, 16 + 36, 16);
+        Assert.Throws<InvalidDataException>(() => LayoutParser.Parse(batch, new()));
+    }
+
     [Fact]
     public void IdentityGenerationIsNotDiscardedAndHardLinksAreCountedOnce()
     {
@@ -148,6 +172,8 @@ public sealed class ScannerTests
         string original = Path.Join(folder, "original.bin");
         byte[] content = Enumerable.Range(0, 8192).Select(i => (byte)i).ToArray();
         await File.WriteAllBytesAsync(original, content);
+        DateTime created = new(2023, 4, 6, 10, 0, 0, DateTimeKind.Utc), modified = created.AddDays(2);
+        File.SetCreationTimeUtc(original, created); File.SetLastWriteTimeUtc(original, modified);
         Assert.True(CreateHardLink(Path.Join(folder, "alias.bin"), original, 0), $"Hard link error: {Marshal.GetLastWin32Error()}");
         var diagnostics = new List<ScanDiagnostic>();
         var reports = new List<ScanProgress>();
@@ -157,6 +183,13 @@ public sealed class ScannerTests
         Assert.Equal(8192, scan.AllocatedBytes);
         Assert.Equal(4, scan.FileCount); // root, project, bin, one file object
         Assert.Equal(4, scan.NameCount); // two directories, two file names
+        foreach (string name in new[] { "original.bin", "alias.bin" })
+        {
+            var metadata = scan.GetMetadata(scan.FindEntry(Path.Join(folder, name))!.Value);
+            Assert.Equal(created.ToFileTimeUtc(), metadata.CreationFileTime);
+            Assert.Equal(modified.ToFileTimeUtc(), metadata.LastWriteFileTime);
+        }
+        Assert.True(ScanSnapshot.IsValidFileTime(scan.GetMetadata(-1).LastWriteFileTime));
         Assert.Empty(scan.Warnings);
         Assert.Contains(diagnostics, d => d.Event == "backend-selected" && d.Backend == "Standard Windows scan");
         var complete = Assert.Single(diagnostics, d => d.Event == "scanner-complete");

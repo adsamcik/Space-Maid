@@ -46,6 +46,8 @@ public static class FileTypeClassifier
         return Find(Path.GetFileName(fileName.AsSpan())).Type;
     }
 
+    public static FileType Classify(ReadOnlySpan<char> fileName) => Find(Path.GetFileName(fileName)).Type;
+
     public static FileFormatMatch Infer(string fileName)
     {
         ArgumentNullException.ThrowIfNull(fileName);
@@ -211,7 +213,7 @@ public static class FileTypeClassifier
         }
     };
 
-    private static string Label(FileType type) => type switch
+    public static string Label(FileType type) => type switch
     {
         FileType.NoExtension => "No extension", FileType.Image => "Image", FileType.RawPhoto => "RAW photo",
         FileType.Video => "Video", FileType.Audio => "Audio", FileType.SourceOrConfiguration => "Source / configuration",

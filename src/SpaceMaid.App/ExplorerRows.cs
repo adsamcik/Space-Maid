@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Specialized;
 using System.Windows;
+using System.IO;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 
@@ -11,6 +12,14 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     public string Name => Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
     public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
+    public string Type => Entry.IsDirectory ? "Folder" : FileTypeClassifier.Label(FileTypeClassifier.Classify(Name));
+    public string Extension => Entry.IsDirectory || System.IO.Path.GetExtension(Name) is not { Length: > 0 } extension ? "—" : extension;
+    public string Attributes => ((FileAttributes)Scan.GetMetadata(Entry.LinkIndex).Attributes).ToString();
+    public string Modified => FormatDate(Scan.GetMetadata(Entry.LinkIndex).LastWriteFileTime);
+    public string Created => FormatDate(Scan.GetMetadata(Entry.LinkIndex).CreationFileTime);
+    public string DateNote => Entry.IsDirectory ? "Local time · Folder timestamp, not the latest change within its contents." : "Local time";
+    internal static string FormatDate(long value) => ScanSnapshot.IsValidFileTime(value)
+        ? DateTime.FromFileTimeUtc(value).ToLocalTime().ToString("g") : "—";
     private bool Unmeasured => Scan.IsUnmeasuredDirectory(Entry.FileIndex);
     public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{FileTypeClassifier.DescribeDetails(Name)}" : Unmeasured ? $"{Path}\n{SizeNote}" : Path;
     public Thickness Indent => new(Depth * 14, 0, 0, 0);

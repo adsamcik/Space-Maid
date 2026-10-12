@@ -9,6 +9,7 @@ public partial class MainWindow
 {
     private void Tree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
+        if (e.Handled) return;
         var item = ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) as ListBoxItem;
         var row = item?.DataContext as ExplorerRow;
         // Apps / Shift+F10 can originate on the list itself. A mouse click on
