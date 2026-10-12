@@ -53,7 +53,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         _diagnostics = new ScanLog(logDirectory ?? ScanLog.DefaultDirectory);
         Opportunities = new(_diagnostics.Record, _lifetime.Token);
         _jobs = new(_diagnostics.Record);
-        _inventory = new(currentScan, isScanStale, _jobs.BeginDiscovery);
+        _inventory = new(currentScan, isScanStale, _jobs.BeginDiscovery, _lifetime.Token);
         _tools = new(_jobs.WaitForDiscoveryAsync, _diagnostics.Record, _administrator);
         _settings = ReadSettings();
     }

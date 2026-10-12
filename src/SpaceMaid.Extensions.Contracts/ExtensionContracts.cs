@@ -31,8 +31,10 @@ public sealed record InventoryCoverage(string Root, DateTime ObservedAtUtc, bool
 public sealed record InventoryBatch(InventoryCoverage Coverage, IReadOnlyList<InventoryItem> Items);
 public interface IInventoryReader
 {
-    // References are valid during the enumeration; scan replacement may
-    // invalidate earlier handles. Persist catalog identity, never this handle.
+    // References belong to this reader's current batch and expire on its next
+    // MoveNextAsync or disposal. Other readers do not invalidate them. Scan
+    // replacement may invalidate cached handles. Resolve while processing the
+    // batch; persist catalog identity and location, never this handle.
     IAsyncEnumerable<InventoryBatch> ReadAsync(string root, CancellationToken token, bool preferExistingInventory = false);
     string? ResolveLocation(InventoryReference reference);
 }
