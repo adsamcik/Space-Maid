@@ -1,0 +1,75 @@
+<UserControl x:Class="SpaceMaid.Extensions.Apps.AppsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="CompactDetails" TargetType="Expander">
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Expander">
+                <StackPanel>
+                    <ToggleButton Content="{TemplateBinding Header}" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}" HorizontalAlignment="Left" MinHeight="24" Padding="0,3" Background="Transparent" BorderThickness="0">
+                        <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><StackPanel Orientation="Horizontal" Background="Transparent"><TextBlock Text="›" Margin="0,0,7,0" /><ContentPresenter /></StackPanel></ControlTemplate></ToggleButton.Template>
+                    </ToggleButton>
+                    <ContentPresenter x:Name="Details" Visibility="Collapsed" />
+                </StackPanel>
+                <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible" /></Trigger></ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Grid Width="280" HorizontalAlignment="Left" Margin="0,0,16,0">
+                <TextBox x:Name="SearchBox" TextChanged="Search_Changed" ToolTip="Search apps, publishers and folders" AutomationProperties.Name="Search apps, publishers and folders" />
+                <TextBlock Text="Search apps" Margin="12,0" VerticalAlignment="Center" IsHitTestVisible="False" Opacity="0.6">
+                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                </TextBlock>
+            </Grid>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="AddButton" Content="Add app folder" Click="Add_Click" Padding="12,5" Margin="0,0,8,0" />
+                <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Padding="12,5" Visibility="Collapsed" Margin="0,0,8,0" />
+                <Button x:Name="RefreshButton" Content="Find apps" Click="Refresh_Click" Padding="14,5" />
+            </StackPanel>
+        </Grid>
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="4" /></Grid.RowDefinitions>
+            <TextBlock x:Name="StatusText" Text="Choose a drive to find apps." FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" Margin="0,0,0,6" />
+            <ProgressBar x:Name="WorkProgress" Grid.Row="1" Height="3" MinHeight="0" Visibility="Hidden" IsIndeterminate="True" AutomationProperties.Name="Finding and measuring apps" />
+        </Grid>
+        <Border Grid.Row="2" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <DataGrid x:Name="AppList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False"
+                          SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="Selection_Changed" BorderThickness="0" Background="Transparent" RowHeight="48" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                          EnableRowVirtualization="True" EnableColumnVirtualization="True" ScrollViewer.CanContentScroll="True" AutomationProperties.Name="Apps and install folder sizes">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="App" SortMemberPath="Name" Width="2*" MinWidth="170">
+                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                <StackPanel VerticalAlignment="Center" Margin="10,3" ToolTip="{Binding Name}"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.65" TextTrimming="CharacterEllipsis" /></StackPanel>
+                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn x:Name="SizeColumn" Header="Size" SortMemberPath="SizeBytes" Width="145" MinWidth="120">
+                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                <StackPanel VerticalAlignment="Center" Margin="10,4"><TextBlock Text="{Binding SizeText}" FontWeight="SemiBold" HorizontalAlignment="Right" /><ProgressBar Value="{Binding Share, Mode=OneWay}" Maximum="100" Height="4" MinHeight="0" Margin="0,6,0,0" Focusable="False" /></StackPanel>
+                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="Basis" Binding="{Binding Basis}" SortMemberPath="Basis" Width="155"><DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Margin" Value="10,0" /><Setter Property="FontSize" Value="12" /></Style></DataGridTextColumn.ElementStyle></DataGridTextColumn>
+                        <DataGridTextColumn Header="Install folder" Binding="{Binding PathText}" SortMemberPath="PathText" Width="3*" MinWidth="140"><DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Margin" Value="10,0" /><Setter Property="FontSize" Value="12" /><Setter Property="TextTrimming" Value="CharacterEllipsis" /><Setter Property="ToolTip" Value="{Binding PathText}" /></Style></DataGridTextColumn.ElementStyle></DataGridTextColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel x:Name="EmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" MaxWidth="440">
+                    <TextBlock x:Name="EmptyText" Text="Find installed apps and app folders on this drive." TextWrapping="Wrap" TextAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Grid x:Name="DetailsPanel" Grid.Row="3" Visibility="Collapsed" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBox Text="{Binding PathText, Mode=OneWay}" IsReadOnly="True" Background="Transparent" BorderThickness="0" Padding="0" FontSize="12" AutomationProperties.Name="Selected app folder" />
+                <Expander Header="Size details" Style="{StaticResource CompactDetails}" FontSize="12" Margin="0,5,12,0"><ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto"><TextBlock Text="{Binding Details}" TextWrapping="Wrap" Opacity="0.75" Margin="0,5,8,0" /></ScrollViewer></Expander>
+            </StackPanel>
+            <Button x:Name="OpenButton" Grid.Column="1" Content="Open folder" VerticalAlignment="Top" Click="Open_Click" Padding="12,5" Margin="8,0,0,0" />
+        </Grid>
+        <Expander Grid.Row="4" Header="Discovery details" Style="{StaticResource CompactDetails}" FontSize="12" Margin="0,8,0,0">
+            <TextBlock x:Name="CoverageText" Text="Install folders only. App data and caches elsewhere are excluded. Windows Store packages and apps outside known locations may need Add app folder." TextWrapping="Wrap" Opacity="0.7" Margin="0,5,0,0" />
+        </Expander>
+    </Grid>
+</UserControl>

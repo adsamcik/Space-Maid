@@ -547,11 +547,13 @@ public partial class MainWindow
     }
     private void View_Changed(object sender, RoutedEventArgs e)
     {
-        if (ExplorePanel is null || OpportunitiesPanel is null || PreliminaryPanel is null || PhotosPanel is null) return;
+        if (ExplorePanel is null || OpportunitiesPanel is null || PreliminaryPanel is null || PhotosPanel is null || AppsPanel is null) return;
         ExplorePanel.Visibility = ExploreTab.IsChecked == true && _preliminary is null ? Visibility.Visible : Visibility.Collapsed;
         PreliminaryPanel.Visibility = ExploreTab.IsChecked == true && _preliminary is not null ? Visibility.Visible : Visibility.Collapsed;
         OpportunitiesPanel.Visibility = OpportunitiesTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         PhotosPanel.Visibility = PhotosTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAppsDrive();
+        AppsPanel.Visibility = AppsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
     private async void ShowInTree_Click(object sender, RoutedEventArgs e)
     {

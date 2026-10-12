@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <UseWPF>true</UseWPF>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
+    <None Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
+    <InternalsVisibleTo Include="SpaceMaid.Tests" />
+  </ItemGroup>
+</Project>

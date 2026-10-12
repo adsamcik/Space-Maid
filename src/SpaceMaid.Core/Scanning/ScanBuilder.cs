@@ -133,7 +133,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         int[] first = Enumerable.Repeat(-1, files.Length).ToArray();
         int[] heads = Enumerable.Repeat(-1, files.Length).ToArray();
         int[] next = Enumerable.Repeat(-1, links.Length).ToArray();
-        byte[] flags = new byte[files.Length]; // 1 shared, 2 omission, 4 unmeasured branch, 8 direct unmeasured directory
+        byte[] flags = new byte[files.Length]; // 1 shared, 2 omission, 4 unmeasured branch, 8 direct unmeasured directory, 16 contains shared names
         foreach (var id in _incomplete)
             if (_ids.TryGetValue(id, out int index)) flags[index] |= 2;
         foreach (var id in _unmeasuredDirectories)
@@ -153,7 +153,15 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
             next[i] = heads[parent];
             heads[parent] = i;
             if (first[link.FileIndex] < 0) first[link.FileIndex] = i;
-            else flags[link.FileIndex] |= 1;
+            else
+            {
+                flags[link.FileIndex] |= 1;
+                if (!files[link.FileIndex].IsDirectory)
+                {
+                    flags[parent] |= 16;
+                    flags[links[first[link.FileIndex]].ParentIndex] |= 16;
+                }
+            }
         }
 
         // Attribute each file's allocation once, even when it has several names.
@@ -189,7 +197,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
             int parent = links[first[directory]].ParentIndex;
             logical[parent] = checked(logical[parent] + logical[directory]);
             allocated[parent] = checked(allocated[parent] + allocated[directory]);
-            flags[parent] |= (byte)(flags[directory] & 6);
+            flags[parent] |= (byte)(flags[directory] & 22);
             if (--pending[parent] == 0) ready.Enqueue(parent);
         }
         if (pending.Any(p => p > 0))

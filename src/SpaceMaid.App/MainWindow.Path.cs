@@ -69,6 +69,7 @@ public partial class MainWindow
         string title = _availableDrives.FirstOrDefault(drive => drive.RootPath.Equals(root, StringComparison.OrdinalIgnoreCase))?.Label ?? "";
         DriveRootButton.ToolTip = string.IsNullOrEmpty(title) ? $"Open {root}" : $"Open {root} · {title}";
         AutomationProperties.SetName(DriveRootButton, $"Open drive root {root}");
+        UpdateAppsDrive();
     }
 
     private async void DriveRoot_Click(object sender, RoutedEventArgs e)

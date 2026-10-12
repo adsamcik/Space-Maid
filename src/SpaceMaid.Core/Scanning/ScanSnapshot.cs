@@ -136,6 +136,12 @@ public sealed class ScanSnapshot
         return result;
     }
     public int PrimaryLink(int fileIndex) => fileIndex == RootIndex ? -1 : FirstLinks[fileIndex];
+    public bool ContainsSharedFileNames(int directoryIndex)
+    {
+        if ((uint)directoryIndex >= (uint)Records.Length || !Records[directoryIndex].IsDirectory)
+            throw new ArgumentOutOfRangeException(nameof(directoryIndex));
+        return (_entryFlags[directoryIndex] & 16) != 0;
+    }
     public bool IsUnmeasuredDirectory(int fileIndex)
     {
         if ((uint)fileIndex >= (uint)Records.Length) throw new ArgumentOutOfRangeException(nameof(fileIndex));

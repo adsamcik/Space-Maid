@@ -6,13 +6,44 @@ using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.App.Extensions;
 
-internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Func<IDisposable> beginDiscovery) : IInventoryReader
+internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Func<IDisposable> beginDiscovery) : IInventoryReader, IInventoryFolderSizes
 {
     private const int BatchSize = 512;
     private readonly object _gate = new();
     private Guid _generation;
     private ScanSnapshot? _referencedScan;
     private Dictionary<int, string> _locations = [];
+
+    public Task<InventoryFolderSize?> ReadFolderSizeAsync(string path, bool refresh, CancellationToken token) => Task.Run(async () =>
+    {
+        token.ThrowIfCancellationRequested();
+        ValidateAncestors(path);
+        if (!refresh)
+        {
+            var scan = currentScan();
+            if (scan is null || isScanStale() || scan.FindEntry(path) is not { } index) return null;
+            var entry = scan.Entry(index);
+            if (!entry.IsDirectory || scan.IsUnmeasuredDirectory(entry.FileIndex) || scan.ContainsSharedFileNames(entry.FileIndex)) return null;
+            bool complete = !entry.IsIncomplete && scan.WarningCount == 0;
+            var summary = new InventoryFolderSize(entry.LogicalBytes, scan.HasAllocationData ? entry.AllocatedBytes : null,
+                complete, scan.ScannedAtUtc, "Drive scan", SizeWarnings(scan));
+            // A replaced/stale scan must not publish apparently current sizes.
+            return ReferenceEquals(currentScan(), scan) && !isScanStale() ? summary : null;
+        }
+        using var discovery = beginDiscovery();
+        var measured = await new VolumeScanner().MeasureFolderAsync(path, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        return new InventoryFolderSize(measured.LogicalBytes, measured.HasAllocationData ? measured.AllocatedBytes : null,
+            !measured.RootEntry.IsIncomplete && measured.WarningCount == 0, measured.ScannedAtUtc, "Folder measurement", SizeWarnings(measured));
+    }, token);
+
+    private static IReadOnlyList<string> SizeWarnings(ScanSnapshot scan)
+    {
+        var warnings = scan.Warnings.Take(30).ToList();
+        if (!scan.IncludesAllDataStreams) warnings.Add("Named DATA streams are outside this measurement.");
+        if (!scan.HasCompleteVolumeLinks) warnings.Add("Files shared with locations outside this folder may also contribute to other apps' sizes.");
+        return warnings;
+    }
 
     public async IAsyncEnumerable<InventoryBatch> ReadAsync(string root, [EnumeratorCancellation] CancellationToken token, bool preferExistingInventory = false)
     {

@@ -125,12 +125,17 @@
             <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource ViewTab}" GroupName="View" IsChecked="True" Checked="View_Changed" Margin="0,0,22,0" />
               <RadioButton x:Name="OpportunitiesTab" Content="Opportunities" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" Margin="0,0,22,0" />
-              <RadioButton x:Name="PhotosTab" Content="Photos" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" />
+              <RadioButton x:Name="PhotosTab" Content="Photos" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" Margin="0,0,22,0" />
+              <RadioButton x:Name="AppsTab" Content="Apps" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" />
             </StackPanel>
           </DockPanel>
           <Grid x:Name="PhotosPanel" Grid.Row="1" Visibility="Collapsed">
               <ContentControl x:Name="PhotosContent" />
               <Border x:Name="PhotosPlaceholder" Style="{StaticResource Card}"><TextBlock x:Name="ExtensionsStatusText" Text="Loading Photos…" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" /></Border>
+          </Grid>
+          <Grid x:Name="AppsPanel" Grid.Row="1" Visibility="Collapsed">
+              <ContentControl x:Name="AppsContent" />
+              <Border x:Name="AppsPlaceholder" Style="{StaticResource Card}"><TextBlock x:Name="AppsStatusText" Text="Loading Apps…" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" /></Border>
           </Grid>
           <Grid x:Name="ExplorePanel" Grid.Row="1" PreviewKeyDown="Explore_KeyDown">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="1.1*" /></Grid.ColumnDefinitions>

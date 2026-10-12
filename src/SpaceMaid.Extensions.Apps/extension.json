@@ -1,0 +1,8 @@
+{
+  "id": "space-maid.apps",
+  "name": "Apps",
+  "version": "1.0.0",
+  "contractVersion": 1,
+  "entryAssembly": "SpaceMaid.Extensions.Apps.dll",
+  "entryType": "SpaceMaid.Extensions.Apps.AppsExtension"
+}

@@ -12,6 +12,7 @@
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
     <ProjectReference Include="../SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" ReferenceOutputAssembly="false" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>
   <Target Name="CopyScanHelper" BeforeTargets="AssignTargetPaths">
@@ -30,6 +31,15 @@
     <ItemGroup>
       <PhotosFiles Include="%(PhotosTarget.RootDir)%(PhotosTarget.Directory)**/*" Exclude="%(PhotosTarget.RootDir)%(PhotosTarget.Directory)SpaceMaid.Extensions.Contracts.*" />
       <Content Include="@(PhotosFiles)" Link="Extensions/space-maid.photos/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+  <Target Name="CopyBundledApps" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
+      <Output TaskParameter="TargetOutputs" ItemName="AppsTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <AppsFiles Include="%(AppsTarget.RootDir)%(AppsTarget.Directory)**/*" Exclude="%(AppsTarget.RootDir)%(AppsTarget.Directory)SpaceMaid.Extensions.Contracts.*" />
+      <Content Include="@(AppsFiles)" Link="Extensions/space-maid.apps/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>
 </Project>

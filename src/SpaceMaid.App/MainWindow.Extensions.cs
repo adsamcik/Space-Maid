@@ -32,12 +32,27 @@ public partial class MainWindow
                 ? "Reopen Space Maid without administrator access to use Photos and extensions."
                 : photos is null ? "Photos unavailable · Check Extensions"
                 : $"Photos · {photos.Status}\n{photos.Error}";
+            var apps = _extensions.Entries.FirstOrDefault(entry => entry.Id == "space-maid.apps");
+            if (apps?.View is { } appsView)
+            {
+                AppsContent.Content = appsView; AppsPlaceholder.Visibility = Visibility.Collapsed;
+                UpdateAppsDrive();
+            }
+            else AppsStatusText.Text = Elevation.IsAdministrator
+                ? "Reopen Space Maid without administrator access to use Apps and extensions."
+                : apps is null ? "Apps unavailable · Check Extensions" : $"Apps · {apps.Status}\n{apps.Error}";
             ExtensionsReady = true;
         }
         catch (OperationCanceledException) when (_extensionLifetime.IsCancellationRequested) { }
         catch (Exception error)
-        { if (!_closing) ExtensionsStatusText.Text = $"Extensions could not start: {error.Message}"; }
+        { if (!_closing) AppsStatusText.Text = ExtensionsStatusText.Text = $"Extensions could not start: {error.Message}"; }
         finally { ExtensionsReady = true; }
+    }
+
+    private void UpdateAppsDrive()
+    {
+        if (AppsContent?.Content is IDriveExtensionView view && Path.GetPathRoot(_currentPath) is { Length: > 0 } root)
+            view.SetDrive(root);
     }
 
     private void Extensions_Click(object sender, RoutedEventArgs e)
@@ -68,7 +83,7 @@ public partial class MainWindow
     private void RevealExtensionLocation(string path)
     {
         if (Directory.Exists(path)) { OpenFolderInExplorer(path); return; }
-        if (!File.Exists(path)) { StatusText.Text = "This photo location is no longer available. Refresh the collection."; return; }
+        if (!File.Exists(path)) { StatusText.Text = "This location is no longer available. Refresh its view."; return; }
         try
         {
             var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
@@ -76,6 +91,6 @@ public partial class MainWindow
             using var process = Process.Start(start);
             _explorerRecheckPath = Path.GetDirectoryName(path);
         }
-        catch (System.ComponentModel.Win32Exception error) { StatusText.Text = $"Could not reveal the photo: {error.Message}"; }
+        catch (System.ComponentModel.Win32Exception error) { StatusText.Text = $"Could not reveal the location: {error.Message}"; }
     }
 }

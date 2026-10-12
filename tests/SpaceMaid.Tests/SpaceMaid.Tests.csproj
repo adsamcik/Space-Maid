@@ -7,5 +7,6 @@
     <ProjectReference Include="../../src/SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.App/SpaceMaid.App.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" />
+    <ProjectReference Include="../../src/SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" />
   </ItemGroup>
 </Project>

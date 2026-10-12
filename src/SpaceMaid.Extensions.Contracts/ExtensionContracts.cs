@@ -37,6 +37,21 @@ public interface IInventoryReader
     string? ResolveLocation(InventoryReference reference);
 }
 
+// Optional API v1 capabilities. Existing extensions and inventory readers do
+// not need to implement these; no scanner types cross the extension boundary.
+public sealed record InventoryFolderSize(long LogicalBytes, long? AllocatedBytes, bool Complete,
+    DateTime ObservedAtUtc, string Source, IReadOnlyList<string> Warnings);
+public interface IInventoryFolderSizes
+{
+    // Without refresh, return a current scan summary or null without scanning.
+    // With refresh, measure this folder's metadata using the standard scanner.
+    Task<InventoryFolderSize?> ReadFolderSizeAsync(string path, bool refresh, CancellationToken token);
+}
+public interface IDriveExtensionView
+{
+    void SetDrive(string root);
+}
+
 public enum JobResource { Content, Thumbnail }
 public enum ExtensionJobState { Queued, Running, Completed, Failed, Cancelled, NeedsAttention }
 public sealed record ExtensionJobProgress(string Phase, long Completed, long? Total = null, long BytesRead = 0,

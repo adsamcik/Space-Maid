@@ -9,6 +9,16 @@ namespace SpaceMaid.Core.Scanning;
 
 public sealed class VolumeScanner
 {
+    // Scoped app-folder measurements need current stream sizes: NTFS directory
+    // entries for other hard-link names can retain earlier EOF/allocation values.
+    // Attribute-only handles also include named DATA streams, without content IO.
+    public async Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default)
+    {
+        try { return await ReadDirectoryAsync(path, recursive: true, token, allStreams: true).ConfigureAwait(false); }
+        catch (Win32Exception error) when (error.NativeErrorCode is 1 or 50 or 87)
+        { return await ReadDirectoryAsync(path, recursive: true, token, allowBasic: true).ConfigureAwait(false); }
+    }
+
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null,
         INtfsLayoutSource? layoutSource = null, string? fastUnavailableReason = null) =>
