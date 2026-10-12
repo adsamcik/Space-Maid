@@ -25,7 +25,7 @@ public partial class PhotosView : UserControl
     private long _total, _pageGeneration, _collectionGeneration, _selectionGeneration;
     private readonly ObservableCollection<PhotoDisplayCollection> _collections = [];
     private readonly ObservableCollection<PhotoDisplayRow> _rows = [];
-    private bool _applyingPage;
+    private bool _applyingPage, _suppressSort;
     private long _viewportInteraction;
     private long? _displayedCollection;
     private PhotoMode _displayedMode;
@@ -45,10 +45,16 @@ public partial class PhotosView : UserControl
         InitializeComponent();
         CollectionList.ItemsSource = _collections;
         FileList.ItemsSource = _rows;
+        PhotoGallery.ItemsSource = _rows;
         FileList.PreviewMouseWheel += (_, _) => _viewportInteraction++;
         FileList.PreviewMouseDown += (_, _) => _viewportInteraction++;
         FileList.PreviewKeyDown += (_, _) => _viewportInteraction++;
         FileList.PreviewTouchDown += (_, _) => _viewportInteraction++;
+        PhotoGallery.PreviewMouseWheel += (_, _) => _viewportInteraction++;
+        PhotoGallery.PreviewMouseDown += (_, _) => _viewportInteraction++;
+        PhotoGallery.PreviewKeyDown += (_, _) => _viewportInteraction++;
+        PhotoGallery.PreviewTouchDown += (_, _) => _viewportInteraction++;
+        PhotoGallery.IsVisibleChanged += (_, _) => { if (PhotoGallery.IsVisible) RequestDisplayedPreviews(); };
         FileList.Columns.First(column => column.SortMemberPath == "Name").SortDirection = ListSortDirection.Ascending;
         Loaded += View_Loaded;
         Unloaded += (_, _) => { if (!_shuttingDown) { _pageRequests?.Cancel(); _pageQuery?.Cancel(); } };
@@ -114,7 +120,7 @@ public partial class PhotosView : UserControl
             _rows.Clear();
             SetEmpty("Loading photos…", "", EmptyAction.Retry, "Try again");
             EmptyActionButton.Visibility = Visibility.Collapsed;
-            FileList.Visibility = Visibility.Collapsed; EmptyPanel.Visibility = Visibility.Visible;
+            FileList.Visibility = PhotoGallery.Visibility = Visibility.Collapsed; EmptyPanel.Visibility = Visibility.Visible;
             UpdateCoverageNotice(collection, null);
         }
         try
@@ -130,8 +136,7 @@ public partial class PhotosView : UserControl
             _page = result.Page; _total = result.Total;
             GroupColumn.Visibility = mode == PhotoMode.Browse ? Visibility.Collapsed : Visibility.Visible;
             ApplyPage(result, collection, mode, generation);
-            foreach (var column in FileList.Columns)
-                column.SortDirection = column.SortMemberPath == sort.ToString() ? descending ? ListSortDirection.Descending : ListSortDirection.Ascending : null;
+            UpdateSortControls();
             UpdateEmptyState(collection, lastJob);
             UpdateCoverageNotice(collection, lastJob);
             CoverageText.Text = $"{collection.Status} · Observed {DisplayDate(collection.Observed)}\n" + (_mode switch
@@ -144,8 +149,7 @@ public partial class PhotosView : UserControl
             PageText.Text = $"{_page * 100 + 1:N0}–{_page * 100 + result.Rows.Count:N0} of {_total:N0} files";
             PageText.ToolTip = $"Sorted by {_sort} ({(_descending ? "descending" : "ascending")}) · 100 rows per page";
             UpdateControls();
-            foreach (var row in _rows)
-                if (FileList.ItemContainerGenerator.ContainerFromItem(row) is DataGridRow) _ = PreviewAsync(row);
+            RequestDisplayedPreviews();
             _host.Log("photos-page", new { collection.Id, Mode = _mode.ToString(), Page = _page, Rows = result.Rows.Count, Total = result.Total, ElapsedMs = watch.ElapsedMilliseconds });
         }
         catch (OperationCanceledException) { }
@@ -159,10 +163,18 @@ public partial class PhotosView : UserControl
         var structureChanged = false;
         // Capture at publication, so scrolling or selection while the database
         // query runs is respected. Only this bounded page is reconciled.
-        var scroll = FindVisualChild<ScrollViewer>(FileList);
+        var content = ListButton.IsChecked == true ? (Control)FileList : PhotoGallery;
+        var scroll = FindVisualChild<ScrollViewer>(content);
         var vertical = scroll?.VerticalOffset ?? 0; var horizontal = scroll?.HorizontalOffset ?? 0;
-        var anchor = scroll?.CanContentScroll == true && VirtualizingPanel.GetScrollUnit(FileList) == ScrollUnit.Item && _rows.Count > 0
+        var anchor = ReferenceEquals(content, FileList) && scroll?.CanContentScroll == true && VirtualizingPanel.GetScrollUnit(FileList) == ScrollUnit.Item && _rows.Count > 0
             ? _rows[Math.Min((int)vertical, _rows.Count - 1)] : null;
+        // A wrapped gallery scrolls in pixels. Keep the first visible tile at
+        // the same position when a refreshed page gains or loses earlier rows.
+        if (ReferenceEquals(content, PhotoGallery) && scroll is not null)
+            anchor = _rows.FirstOrDefault(row => PhotoGallery.ItemContainerGenerator.ContainerFromItem(row) is FrameworkElement tile &&
+                tile.TranslatePoint(new Point(), PhotoGallery).Y + tile.ActualHeight > 0);
+        var anchorTop = anchor is not null && ReferenceEquals(content, PhotoGallery) && PhotoGallery.ItemContainerGenerator.ContainerFromItem(anchor) is FrameworkElement anchorTile
+            ? anchorTile.TranslatePoint(new Point(), PhotoGallery).Y : (double?)null;
         _applyingPage = true;
         try
         {
@@ -193,13 +205,15 @@ public partial class PhotosView : UserControl
         if (selectedChanged) _ = Track(SelectionAsync());
         if (scroll is not null && structureChanged)
         {
-            if (anchor is not null && _rows.Contains(anchor)) vertical = _rows.IndexOf(anchor) + vertical - Math.Floor(vertical);
+            if (anchor is not null && _rows.Contains(anchor) && ReferenceEquals(content, FileList)) vertical = _rows.IndexOf(anchor) + vertical - Math.Floor(vertical);
             // Let WPF process the small collection delta before restoring its
             // viewport. A later query/user scroll wins over this restoration.
             var interaction = _viewportInteraction;
             _ = Dispatcher.InvokeAsync(() =>
             {
                 if (generation != _pageGeneration || interaction != _viewportInteraction) return;
+                if (anchorTop is double earlierTop && anchor is not null && PhotoGallery.ItemContainerGenerator.ContainerFromItem(anchor) is FrameworkElement currentTile)
+                    vertical = scroll.VerticalOffset + currentTile.TranslatePoint(new Point(), PhotoGallery).Y - earlierTop;
                 scroll.ScrollToVerticalOffset(vertical); scroll.ScrollToHorizontalOffset(horizontal);
             }, DispatcherPriority.Loaded);
         }
@@ -251,7 +265,7 @@ public partial class PhotosView : UserControl
     private void UpdateEmptyState(PhotoCollection? collection, string? lastJob)
     {
         var empty = FileList.Items.Count == 0;
-        FileList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        UpdateDisplayControls();
         EmptyPanel.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         if (!empty) return;
         if (collection is null)
@@ -273,6 +287,8 @@ public partial class PhotosView : UserControl
     {
         EmptyTitle.Text = title; EmptyText.Text = message; EmptyText.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         _emptyAction = action; EmptyActionButton.Content = label;
+        LibraryIllustration.Visibility = action == EmptyAction.Add ? Visibility.Visible : Visibility.Collapsed;
+        EmptySymbol.Visibility = action == EmptyAction.Add ? Visibility.Collapsed : Visibility.Visible;
         EmptyActionButton.Visibility = Visibility.Visible;
     }
     private void UpdateCoverageNotice(PhotoCollection collection, string? lastJob)
@@ -383,9 +399,67 @@ public partial class PhotosView : UserControl
         e.Handled = true;
         if (!Enum.TryParse<PhotoSort>(e.Column.SortMemberPath, out var sort)) return;
         _descending = _sort == sort ? !_descending : sort == PhotoSort.Size; _sort = sort; _page = 0;
-        foreach (var column in FileList.Columns) column.SortDirection = null;
-        e.Column.SortDirection = _descending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        UpdateSortControls();
         await LoadPageAsync();
+    }
+    private async void Sort_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSort || !IsInitialized || FileList is null || SortChoice.SelectedItem is not ComboBoxItem { Tag: string name } ||
+            !Enum.TryParse<PhotoSort>(name, out var sort) || sort == _sort) return;
+        _sort = sort; _descending = sort == PhotoSort.Size; _page = 0;
+        UpdateSortControls(); await LoadPageAsync();
+    }
+    private async void SortDirection_Click(object sender, RoutedEventArgs e)
+    {
+        _descending = !_descending; _page = 0;
+        UpdateSortControls(); await LoadPageAsync();
+    }
+    private void UpdateSortControls()
+    {
+        _suppressSort = true;
+        try
+        {
+            SortChoice.SelectedItem = SortChoice.Items.OfType<ComboBoxItem>().First(item => Equals(item.Tag, _sort.ToString()));
+            SortDirectionButton.Content = _descending ? "↓" : "↑";
+            SortDirectionButton.ToolTip = (_descending ? "Descending" : "Ascending") + " · Click to reverse";
+            foreach (var column in FileList.Columns)
+                column.SortDirection = column.SortMemberPath == _sort.ToString() ? _descending ? ListSortDirection.Descending : ListSortDirection.Ascending : null;
+        }
+        finally { _suppressSort = false; }
+    }
+    private void Display_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized || PhotoGallery is null || FileList is null) return;
+        _viewportInteraction++;
+        UpdateDisplayControls();
+        // Switching views reuses the page, selection and decoded previews.
+        // A visible gallery's Loaded handlers request only its bounded rows.
+        var selected = FileList.SelectedItem;
+        if (ListButton.IsChecked == true && selected is not null) FileList.ScrollIntoView(selected);
+        else if (selected is not null) PhotoGallery.ScrollIntoView(selected);
+        RequestDisplayedPreviews();
+    }
+    private void UpdateDisplayControls()
+    {
+        var populated = _rows.Count > 0;
+        var list = ListButton.IsChecked == true;
+        FileList.Visibility = populated && list ? Visibility.Visible : Visibility.Collapsed;
+        PhotoGallery.Visibility = populated && !list ? Visibility.Visible : Visibility.Collapsed;
+        ColumnsButton.Visibility = list ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private async void GalleryItem_Loaded(object sender, RoutedEventArgs e)
+    { if (sender is FrameworkElement { DataContext: PhotoDisplayRow row } && PhotoGallery.Visibility == Visibility.Visible) await PreviewAsync(row); }
+    private void RequestDisplayedPreviews()
+    {
+        // New templates can be realized after the catalog query publishes.
+        // Use the existing bounded request/cache pipeline for either view.
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (_shuttingDown || _discovering) return;
+            foreach (var row in _rows)
+                if (FileList.Visibility == Visibility.Visible && FileList.ItemContainerGenerator.ContainerFromItem(row) is DataGridRow ||
+                    PhotoGallery.Visibility == Visibility.Visible && PhotoGallery.ItemContainerGenerator.ContainerFromItem(row) is ListBoxItem) _ = PreviewAsync(row);
+        }, DispatcherPriority.Loaded);
     }
     private async void Previous_Click(object sender, RoutedEventArgs e) { _page = Math.Max(0, _page - 1); await LoadPageAsync(); }
     private async void Next_Click(object sender, RoutedEventArgs e) { if ((_page + 1L) * 100 < _total) _page++; await LoadPageAsync(); }
@@ -448,7 +522,8 @@ public partial class PhotosView : UserControl
     {
         SelectedPreview.Source = row.Preview; SelectedPreview.Visibility = row.Preview is null ? Visibility.Hidden : Visibility.Visible;
         SelectedPreviewPlaceholder.Visibility = row.Preview is null ? Visibility.Visible : Visibility.Hidden;
-        PreviewStatusText.Text = row.Preview is null ? row.PreviewStatus : row.Row.Role == "RAW source" ? "RAW preview · May differ from current edits" : "Preview";
+        PreviewStatusText.Text = row.Preview is null ? row.PreviewStatus : row.Row.Role == "RAW source" ? "RAW preview · May differ from current edits" : "";
+        PreviewStatusText.Visibility = PreviewStatusText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         PreviewStatusText.ToolTip = row.PreviewStatus;
     }
     private void Retain_Click(object sender, RoutedEventArgs e)
@@ -460,7 +535,11 @@ public partial class PhotosView : UserControl
     }
     private void Reveal_Click(object sender, RoutedEventArgs e)
     { if (FileList.SelectedItem is PhotoDisplayRow row) { try { _host.RevealLocation(row.Row.Path); } catch (Exception error) { ShowFailure(error); } } }
-    private void CloseSelection_Click(object sender, RoutedEventArgs e) { FileList.SelectedItem = null; FileList.Focus(); }
+    private void CloseSelection_Click(object sender, RoutedEventArgs e)
+    {
+        FileList.SelectedItem = null;
+        if (ListButton.IsChecked == true) FileList.Focus(); else PhotoGallery.Focus();
+    }
     private void Columns_Click(object sender, RoutedEventArgs e)
     { if (sender is Button { ContextMenu: { } menu } button) { menu.PlacementTarget = button; menu.IsOpen = true; } }
     private void Column_Changed(object sender, RoutedEventArgs e)
@@ -473,7 +552,7 @@ public partial class PhotosView : UserControl
     {
         if (!IsInitialized) return;
         var hasCollection = Collection is not null;
-        CollectionHeader.Visibility = ModeBar.Visibility = CollectionDetails.Visibility = hasCollection ? Visibility.Visible : Visibility.Collapsed;
+        CollectionHeader.Visibility = ModeBar.Visibility = DisplayBar.Visibility = CollectionDetails.Visibility = hasCollection ? Visibility.Visible : Visibility.Collapsed;
         CollectionPathText.Text = Collection?.Root ?? "";
         StatusBand.Visibility = _busy || _noticeVisible ? Visibility.Visible : hasCollection ? Visibility.Hidden : Visibility.Collapsed;
         PageFooter.Visibility = FileList.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -485,6 +564,7 @@ public partial class PhotosView : UserControl
         PreviousButton.IsEnabled = _page > 0; NextButton.IsEnabled = (_page + 1L) * 100 < _total;
         BrowseTab.IsEnabled = DuplicatesTab.IsEnabled = FamiliesTab.IsEnabled = true;
         FileList.IsEnabled = true;
+        UpdateDisplayControls();
     }
     private void ShowFailure(Exception error)
     {

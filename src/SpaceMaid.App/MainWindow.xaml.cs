@@ -180,7 +180,7 @@ public partial class MainWindow : Window
                 scan.WarningCount, scan.Warnings, scan.LogicalBytes, scan.AllocatedBytes, scan.Metrics,
                 DetectionMs = _detectionElapsed.TotalMilliseconds, ExplorerMs = _presentationElapsed.TotalMilliseconds,
                 ProcessPeakBytes = diagnosticProcess.PeakWorkingSet64 });
-            _scanStatus = $"{scan.Backend} · {scan.RegularFileCount:N0} files · {scan.DirectoryCount:N0} folders · {(scan.Metrics.Acquisition + scan.Metrics.Aggregation + _detectionElapsed + _presentationElapsed).TotalSeconds:0.00}s"
+            _scanStatus = $"{scan.RegularFileCount:N0} files · {scan.DirectoryCount:N0} folders · {(scan.Metrics.Acquisition + scan.Metrics.Aggregation + _detectionElapsed + _presentationElapsed).TotalSeconds:0.00}s"
                 + (scan.WarningCount > 0 ? $" · {scan.WarningCount:N0} coverage warnings" : "");
             StatusText.Text = _scanStatus;
             DetailsButton.Visibility = Visibility.Visible;

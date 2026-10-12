@@ -121,7 +121,9 @@ public partial class MainWindow
             .ToDictionary(item => item.Path, item => item.Key, StringComparer.Ordinal);
         var matches = _matchingOpportunityRows.GroupBy(row => membership.GetValueOrDefault(row.Path) ?? "")
             .ToDictionary(group => group.Key, group => (IReadOnlyList<OpportunityRow>)group.ToArray(), StringComparer.Ordinal);
-        var groups = definitions.Where(group => matches.ContainsKey(group.Key)).Select(group => new OpportunityGroupRow(group, matches[group.Key], showChildren: cleanup && !_cleanupDrillDown));
+        var visibleGroups = definitions.Where(group => matches.ContainsKey(group.Key)).ToArray();
+        long largestGroup = visibleGroups.Select(group => group.ObservedBytes).DefaultIfEmpty().Max();
+        var groups = visibleGroups.Select(group => new OpportunityGroupRow(group, matches[group.Key], showChildren: cleanup && !_cleanupDrillDown, comparisonBytes: largestGroup));
         _opportunityGroupRows = (OpportunitySortPicker.SelectedIndex switch
         {
             1 => groups.OrderBy(group => group.Name, StringComparer.OrdinalIgnoreCase).ThenBy(group => group.Path, StringComparer.Ordinal),
@@ -149,7 +151,7 @@ public partial class MainWindow
             : _cleanupGroups.Count == 0 ? "No matching development folders found."
             : (_snapshot.HasAllocationData ? "Observed allocation" : "Logical size · Physical savings unknown")
                 + " · Groups may overlap";
-        CleanupOverviewNote.ToolTip = "Review counts nested folders once. Empty the Recycle Bin to free space.";
+        CleanupOverviewNote.ToolTip = "Bars compare each group's observed size with the largest visible group. Groups may overlap. Review counts nested folders once. Empty the Recycle Bin to free space.";
         DisplayOpportunityRows(detailPath);
     }
     private void OpportunityGroup_Changed(object sender, SelectionChangedEventArgs e)

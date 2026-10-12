@@ -26,6 +26,8 @@ internal sealed class PhotoDisplayRow(PhotoRow row, string root) : INotifyProper
     public string LocationHint => Row.Path + "\n" + Row.Status;
     public BitmapSource? Preview { get; private set; }
     public string PreviewStatus { get; private set; } = DefaultPreviewStatus(row);
+    public string PreviewLabel => Preview is not null ? "" : !Row.ContentAvailable ? "Unavailable" :
+        !Row.AnalysisCurrent ? "" : PreviewStatus == "Waiting for preview" ? "Loading…" : "Unavailable";
     public bool Requested { get; set; }
     public long PreviewVersion { get; private set; }
 
@@ -53,6 +55,7 @@ internal sealed class PhotoDisplayRow(PhotoRow row, string root) : INotifyProper
         Preview = result.Image; PreviewStatus = result.Status;
         PropertyChanged?.Invoke(this, new(nameof(Preview)));
         PropertyChanged?.Invoke(this, new(nameof(PreviewStatus)));
+        PropertyChanged?.Invoke(this, new(nameof(PreviewLabel)));
         return true;
     }
     private static string DefaultPreviewStatus(PhotoRow row) => !row.ContentAvailable ? "Offline/reparse preview unavailable" :

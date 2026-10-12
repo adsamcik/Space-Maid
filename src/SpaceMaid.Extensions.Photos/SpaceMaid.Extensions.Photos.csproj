@@ -5,6 +5,7 @@
     <AssemblyName>SpaceMaid.Extensions.Photos</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="../../assets/ui/photos-library-empty.png" Link="Assets/photos-library-empty.png" />
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />

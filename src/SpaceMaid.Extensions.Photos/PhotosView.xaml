@@ -15,6 +15,36 @@
             <Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Margin" Value="8,0" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
+        <Style x:Key="GalleryOption" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="Padding" Value="9,6" /><Setter Property="MinHeight" Value="32" />
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+                <Border x:Name="Surface" CornerRadius="5" Padding="{TemplateBinding Padding}" Background="Transparent" BorderBrush="Transparent" BorderThickness="1">
+                    <ContentPresenter VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}" TextElement.FontWeight="{TemplateBinding FontWeight}" />
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardStrokeColorDefaultBrush}" /></Trigger>
+                    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource AccentButtonBackground}" /><Setter Property="FontWeight" Value="SemiBold" /></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource WindowForeground}" /><Setter TargetName="Surface" Property="BorderThickness" Value="2" /></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+        <Style x:Key="GalleryTile" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="0,0,8,8" /><Setter Property="Padding" Value="5" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="VerticalContentAlignment" Value="Stretch" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding Row.Name}" />
+            <Setter Property="AutomationProperties.HelpText" Value="{Binding LocationHint}" />
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="Surface" Padding="{TemplateBinding Padding}" CornerRadius="7" Background="Transparent" BorderBrush="Transparent" BorderThickness="2">
+                    <ContentPresenter />
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardStrokeColorDefaultBrush}" /></Trigger>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource AccentButtonBackground}" /><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardStrokeColorDefaultBrush}" /></Trigger>
+                    <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource WindowForeground}" /></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
     </UserControl.Resources>
     <Grid Margin="0,4,0,0">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -46,7 +76,7 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14,0,14,10">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <DockPanel x:Name="ModeBar" LastChildFill="True" Visibility="Collapsed" Margin="0,4,0,8">
                         <TextBlock x:Name="ReviewOnlyLabel" Text="Review only" DockPanel.Dock="Right" FontSize="11" Opacity="0.6" VerticalAlignment="Center" Margin="12,0,0,0" ToolTip="Photo cleanup and conversion are disabled. Originals remain untouched." />
                         <TextBlock x:Name="FreshnessText" DockPanel.Dock="Right" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0,0,0" Visibility="Collapsed" />
@@ -56,7 +86,53 @@
                             <RadioButton x:Name="FamiliesTab" GroupName="PhotoMode" Content="Related files" Checked="Mode_Changed" Style="{DynamicResource ViewTab}" Margin="22,0,0,0" ToolTip="Possible RAW, image and sidecar relationships" />
                         </StackPanel>
                     </DockPanel>
-                    <Grid Grid.Row="1">
+                    <DockPanel x:Name="DisplayBar" Grid.Row="1" LastChildFill="False" Visibility="Collapsed" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                            <ComboBox x:Name="SortChoice" Width="128" SelectionChanged="Sort_Changed" SelectedIndex="0" AutomationProperties.Name="Sort photos" ToolTip="Sort photos">
+                                <ComboBoxItem Content="Name" Tag="Name" /><ComboBoxItem Content="Size" Tag="Size" /><ComboBoxItem Content="Type" Tag="Type" />
+                                <ComboBoxItem Content="Captured" Tag="Captured" /><ComboBoxItem Content="Status" Tag="Status" /><ComboBoxItem Content="Group" Tag="Group" />
+                            </ComboBox>
+                            <Button x:Name="SortDirectionButton" Content="↑" Click="SortDirection_Click" Padding="7,2" MinWidth="32" MinHeight="32" Margin="6,0,0,0" ToolTip="Ascending · Click to reverse" AutomationProperties.Name="Reverse photo sort direction" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="GalleryButton" GroupName="PhotoDisplay" IsChecked="True" Checked="Display_Changed" Style="{StaticResource GalleryOption}" ToolTip="Thumbnail gallery" AutomationProperties.Name="Photo gallery">
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE80A;" FontFamily="Segoe MDL2 Assets" Margin="0,0,6,0" VerticalAlignment="Center" /><TextBlock Text="Gallery" /></StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="ListButton" GroupName="PhotoDisplay" Checked="Display_Changed" Style="{StaticResource GalleryOption}" Margin="4,0,0,0" ToolTip="Sortable file list" AutomationProperties.Name="Photo file list">
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" Margin="0,0,6,0" VerticalAlignment="Center" /><TextBlock Text="List" /></StackPanel>
+                            </RadioButton>
+                        </StackPanel>
+                    </DockPanel>
+                    <Grid Grid.Row="2">
+                        <ListBox x:Name="PhotoGallery" SelectionMode="Single" SelectedItem="{Binding SelectedItem, ElementName=FileList, Mode=TwoWay}"
+                                 Background="Transparent" BorderThickness="0" Padding="0" ItemContainerStyle="{StaticResource GalleryTile}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="False"
+                                 Visibility="Collapsed" AutomationProperties.Name="Paged photo gallery">
+                            <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                            <ListBox.ItemTemplate><DataTemplate>
+                                <StackPanel Width="128" ToolTip="{Binding LocationHint}" Loaded="GalleryItem_Loaded">
+                                    <Border Height="108" Background="{DynamicResource CardStrokeColorDefaultBrush}" CornerRadius="4" ClipToBounds="True">
+                                        <Grid>
+                                            <Image Source="{Binding Preview}" Stretch="Uniform" />
+                                            <StackPanel x:Name="GalleryPlaceholder" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed" MaxWidth="120" ToolTip="{Binding PreviewStatus}" AutomationProperties.HelpText="{Binding PreviewStatus}">
+                                                <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="28" Opacity="0.35" HorizontalAlignment="Center" />
+                                                <TextBlock Text="{Binding PreviewLabel}" FontSize="10" Opacity="0.65" TextAlignment="Center" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding PreviewStatus}">
+                                                    <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                    <TextBlock Text="{Binding Row.Name}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,7,0,0" />
+                                    <DockPanel Margin="0,3,0,0">
+                                        <TextBlock Text="{Binding Row.SizeText}" FontSize="11" Opacity="0.65" />
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding Row.GroupText}" FontSize="10" Opacity="0.65" TextTrimming="CharacterEllipsis" Margin="0,3,0,0">
+                                        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <DataTemplate.Triggers><DataTrigger Binding="{Binding Preview}" Value="{x:Null}"><Setter TargetName="GalleryPlaceholder" Property="Visibility" Value="Visible" /></DataTrigger></DataTemplate.Triggers>
+                            </DataTemplate></ListBox.ItemTemplate>
+                        </ListBox>
                         <DataGrid x:Name="FileList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
                                   Background="Transparent" RowBackground="Transparent" BorderThickness="0" ColumnHeaderStyle="{StaticResource PhotoHeader}"
                                   SelectionMode="Single" SelectionUnit="FullRow" Sorting="Files_Sorting" SelectionChanged="File_Changed" LoadingRow="File_LoadingRow"
@@ -91,16 +167,17 @@
                         </DataGrid>
                         <Grid x:Name="EmptyPanel" Margin="20">
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420">
-                                <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="36" Opacity="0.35" HorizontalAlignment="Center" Margin="0,0,0,18" />
+                                <Image x:Name="LibraryIllustration" Source="/SpaceMaid.Extensions.Photos;component/Assets/photos-library-empty.png" Width="180" Height="112" Stretch="Uniform" Margin="0,0,0,20" Focusable="False" IsHitTestVisible="False" />
+                                <TextBlock x:Name="EmptySymbol" Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="36" Opacity="0.35" HorizontalAlignment="Center" Margin="0,0,0,18" Visibility="Collapsed" />
                                 <TextBlock x:Name="EmptyTitle" Text="Add your first photo folder" FontSize="22" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                                 <TextBlock x:Name="EmptyText" TextWrapping="Wrap" TextAlignment="Center" Opacity="0.65" Margin="0,10,0,0" Visibility="Collapsed" />
                                 <Button x:Name="EmptyActionButton" Content="Add folder" Click="EmptyAction_Click" HorizontalAlignment="Center" Padding="18,6" Margin="0,18,0,0" Style="{DynamicResource AccentButtonStyle}" />
                             </StackPanel>
                         </Grid>
                     </Grid>
-                    <DockPanel x:Name="PageFooter" Grid.Row="2" Margin="0,8,0,0" LastChildFill="True" Visibility="Collapsed">
+                    <DockPanel x:Name="PageFooter" Grid.Row="3" Margin="0,8,0,0" LastChildFill="True" Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                            <Button Content="Columns" Click="Columns_Click" Padding="8,4" MinHeight="28" ToolTip="Choose additional file columns" Margin="0,0,8,0">
+                            <Button x:Name="ColumnsButton" Content="Columns" Click="Columns_Click" Padding="8,4" MinHeight="28" ToolTip="Choose additional file columns" Margin="0,0,8,0" Visibility="Collapsed">
                                 <Button.ContextMenu><ContextMenu>
                                     <MenuItem x:Name="ShowTypeColumn" Header="Type" IsCheckable="True" Click="Column_Changed" />
                                     <MenuItem x:Name="ShowCapturedColumn" Header="Captured" IsCheckable="True" IsChecked="True" Click="Column_Changed" />

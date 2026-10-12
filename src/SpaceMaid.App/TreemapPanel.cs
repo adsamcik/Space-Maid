@@ -124,7 +124,9 @@ internal sealed class TreemapPanel : Panel
         for (int i = 0; i < InternalChildren.Count; i++)
         {
             var rect = i < rectangles.Length ? rectangles[i] : new Rect();
-            InternalChildren[i].Measure(new(Math.Max(0, rect.Width - 6), Math.Max(0, rect.Height - 6)));
+            var bounds = TileBounds(rect);
+            PrepareTile(InternalChildren[i], bounds.Size);
+            InternalChildren[i].Measure(bounds.Size);
         }
         return size;
     }
@@ -133,20 +135,50 @@ internal sealed class TreemapPanel : Panel
         var rectangles = TreemapLayout.Arrange(Weights, finalSize);
         for (int i = 0; i < InternalChildren.Count; i++)
         {
-            var rect = i < rectangles.Length ? rectangles[i] : Rect.Empty;
-            if (rect.IsEmpty) { InternalChildren[i].Arrange(new Rect()); continue; }
-            InternalChildren[i].Arrange(new(rect.X + 3, rect.Y + 3, Math.Max(0, rect.Width - 6), Math.Max(0, rect.Height - 6)));
-            if (InternalChildren[i] is FrameworkElement element && element.Tag is StackPanel text)
+            var rect = i < rectangles.Length ? rectangles[i] : new Rect();
+            var bounds = TileBounds(rect);
+            // A final viewport can differ from the measured one after resizing.
+            // Configure labels and constrain the control before arranging it.
+            PrepareTile(InternalChildren[i], bounds.Size);
+            InternalChildren[i].Measure(bounds.Size);
+            InternalChildren[i].Arrange(bounds);
+        }
+        return finalSize;
+    }
+
+    private static Rect TileBounds(Rect rect)
+    {
+        double horizontal = Math.Min(3, rect.Width / 4);
+        double vertical = Math.Min(3, rect.Height / 4);
+        return new(rect.X + horizontal, rect.Y + vertical,
+            Math.Max(0, rect.Width - horizontal * 2), Math.Max(0, rect.Height - vertical * 2));
+    }
+
+    private static void PrepareTile(UIElement child, Size size)
+    {
+        // WPF may arrange a control at its unclipped desired size when its
+        // padding/content is larger than the proportional cell. Bound its real
+        // render and hit-test area instead of only clipping it at the pane edge.
+        if (child is FrameworkElement element)
+        {
+            element.MaxWidth = size.Width;
+            element.MaxHeight = size.Height;
+            if (element.Tag is StackPanel text)
             {
-                if (element is Button button) button.Padding = rect.Height < 65 || rect.Width < 90 ? new(5) : new(10);
-                text.Children[0].Visibility = rect.Height >= 24 && rect.Width >= 24 ? Visibility.Visible : Visibility.Collapsed;
+                bool hasLabel = size.Height >= 34 && size.Width >= 24;
+                if (element is Button button)
+                {
+                    button.Padding = !hasLabel ? new(0) : size.Height < 65 || size.Width < 90 ? new(5) : new(10);
+                    button.BorderThickness = new(Math.Min(1, Math.Min(size.Width, size.Height) / 4));
+                }
+                text.Children[0].Visibility = hasLabel ? Visibility.Visible : Visibility.Collapsed;
                 for (int line = 1; line < text.Children.Count; line++)
-                    text.Children[line].Visibility = rect.Height >= (line == 1 ? 60 : 88) && rect.Width >= 90 ? Visibility.Visible : Visibility.Collapsed;
+                    text.Children[line].Visibility = size.Height >= (line == 1 ? 60 : 88) && size.Width >= 90 ? Visibility.Visible : Visibility.Collapsed;
             }
-            else if (InternalChildren[i] is Border { Child: Grid grid, Tag: TreemapPanel nested })
+            else if (element is Border { Child: Grid grid, Tag: TreemapPanel nested })
             {
-                bool show = rect.Width >= 160 && rect.Height >= 140;
-                bool compact = rect.Width < 360;
+                bool show = size.Width >= 160 && size.Height >= 140;
+                bool compact = size.Width < 360;
                 nested.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
                 grid.RowDefinitions[0].Height = show ? new GridLength(compact ? 56 : 44) : new GridLength(1, GridUnitType.Star);
                 grid.RowDefinitions[1].Height = show ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
@@ -157,12 +189,11 @@ internal sealed class TreemapPanel : Panel
                     Grid.SetRow(facts, compact ? 1 : 0);
                     facts.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
                     facts.Margin = compact ? new(0, 3, 0, 0) : new(12, 0, 0, 0);
-                    facts.Visibility = show || rect.Height >= 65 && rect.Width >= 130 ? Visibility.Visible : Visibility.Collapsed;
-                    title.Children[0].Visibility = rect.Height >= 24 && rect.Width >= 24 ? Visibility.Visible : Visibility.Collapsed;
+                    facts.Visibility = show || size.Height >= 65 && size.Width >= 130 ? Visibility.Visible : Visibility.Collapsed;
+                    title.Children[0].Visibility = size.Height >= 24 && size.Width >= 24 ? Visibility.Visible : Visibility.Collapsed;
                     header.Padding = show ? new(10, 6, 10, 6) : new(5);
                 }
             }
         }
-        return finalSize;
     }
 }

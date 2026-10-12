@@ -755,6 +755,7 @@ public sealed class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((Border)photosView.FindName("SelectionPanel")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((Grid)photosView.FindName("CollectionHeader")).Visibility);
                 Assert.Equal("Add folder", ((Button)photosView.FindName("EmptyActionButton")).Content);
+                Assert.NotNull(((Image)photosView.FindName("LibraryIllustration")).Source);
                 stage = "discovering and analyzing owned photos through the loaded extension and real tool broker";
                 PumpUntil(() => !string.IsNullOrEmpty(((TextBlock)photosView.FindName("ToolText")).Text), TimeSpan.FromSeconds(10));
                 string photoFolder = Directory.CreateDirectory(Path.Join(fixture.Path, "photo-review")).FullName;
@@ -769,6 +770,14 @@ public sealed class DesktopTests
                 PumpUntil(() => addPhotos.IsCompleted, TimeSpan.FromSeconds(10)); addPhotos.GetAwaiter().GetResult();
                 var photoFiles = (DataGrid)photosView.FindName("FileList");
                 Assert.Equal(2, photoFiles.Items.Count);
+                var photoGallery = (ListBox)photosView.FindName("PhotoGallery");
+                Assert.Same(photoFiles.ItemsSource, photoGallery.ItemsSource);
+                Assert.Equal(Visibility.Visible, photoGallery.Visibility);
+                Assert.Equal(Visibility.Collapsed, photoFiles.Visibility);
+                photoGallery.SelectedIndex = 0;
+                Assert.Same(photoGallery.SelectedItem, photoFiles.SelectedItem);
+                Assert.All(Descendants(photoGallery).OfType<Image>(), image => Assert.Null(image.Source));
+                ((Button)photosView.FindName("CloseSelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Assert.Equal(Visibility.Visible, ((Grid)photosView.FindName("CollectionHeader")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((StackPanel)photosView.FindName("PageButtons")).Visibility);
                 Assert.False(((Expander)photosView.FindName("CollectionDetails")).IsExpanded);
@@ -827,11 +836,25 @@ public sealed class DesktopTests
                 var photoPreview = Assert.IsAssignableFrom<BitmapSource>(((Image)photosView.FindName("SelectedPreview")).Source);
                 Assert.InRange(photoPreview.PixelWidth, 1, 160); Assert.InRange(photoPreview.PixelHeight, 1, 160);
                 Assert.Contains("PNG", ((TextBox)photosView.FindName("SelectionText")).Text);
+                stage = "sorting the gallery and switching views without losing selection or previews";
+                var gallerySelection = photoGallery.SelectedItem;
+                ((Button)photosView.FindName("SortDirectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => PhotoName(photoGallery.Items[0]) == "original.png", TimeSpan.FromSeconds(3));
+                Assert.Same(gallerySelection, photoGallery.SelectedItem);
+                ((Button)photosView.FindName("SortDirectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => PhotoName(photoGallery.Items[0]) == "copy.png", TimeSpan.FromSeconds(3));
+                ((RadioButton)photosView.FindName("ListButton")).IsChecked = true; window.UpdateLayout();
+                Assert.Equal(Visibility.Visible, photoFiles.Visibility); Assert.Equal(Visibility.Collapsed, photoGallery.Visibility);
+                Assert.Same(gallerySelection, photoFiles.SelectedItem);
+                ((RadioButton)photosView.FindName("GalleryButton")).IsChecked = true; window.UpdateLayout();
+                Assert.Same(gallerySelection, photoGallery.SelectedItem);
+                Assert.Same(photoPreview, ((Image)photosView.FindName("SelectedPreview")).Source);
                 stage = "refreshing the saved photo page without rebuilding selection or previews";
                 var photoPicker = (ComboBox)photosView.FindName("CollectionList");
                 var pickerSource = photoPicker.ItemsSource; var pickerSelection = photoPicker.SelectedItem;
                 var photoSource = photoFiles.ItemsSource; var photoSelection = photoFiles.SelectedItem;
                 var rowContainer = photoFiles.ItemContainerGenerator.ContainerFromItem(photoSelection);
+                var galleryContainer = photoGallery.ItemContainerGenerator.ContainerFromItem(photoSelection);
                 var changedSelection = 0; photoFiles.SelectionChanged += (_, _) => changedSelection++;
                 var collectionChanges = 0;
                 ((System.Collections.Specialized.INotifyCollectionChanged)photoSource).CollectionChanged += (_, _) => collectionChanges++;
@@ -841,6 +864,7 @@ public sealed class DesktopTests
                 Assert.Same(pickerSource, photoPicker.ItemsSource); Assert.Same(pickerSelection, photoPicker.SelectedItem);
                 Assert.Same(photoSource, photoFiles.ItemsSource); Assert.Same(photoSelection, photoFiles.SelectedItem);
                 Assert.Same(rowContainer, photoFiles.ItemContainerGenerator.ContainerFromItem(photoSelection));
+                Assert.NotNull(galleryContainer); Assert.Same(galleryContainer, photoGallery.ItemContainerGenerator.ContainerFromItem(photoSelection));
                 Assert.Same(photoPreview, ((Image)photosView.FindName("SelectedPreview")).Source);
                 Assert.Equal(0, changedSelection); Assert.Equal(0, collectionChanges);
                 onSorting.Invoke(photoFiles, [new DataGridSortingEventArgs(nameColumn)]);
@@ -888,6 +912,24 @@ public sealed class DesktopTests
                 // image decoding or ExifTool work to the existing Application.
                 for (var i = 0; i < 104; i++) File.WriteAllBytes(Path.Join(photoFolder, $"z-{i:D3}.jpg"), [1]);
                 var photosRefresh = (Button)photosView.FindName("RefreshButton");
+                photosRefresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => photosRefresh.IsEnabled && photoGallery.Items.Count == 100, TimeSpan.FromSeconds(3)); window.UpdateLayout();
+                var galleryScroll = Descendants(photoGallery).OfType<ScrollViewer>().First();
+                galleryScroll.ScrollToVerticalOffset(250); window.UpdateLayout();
+                PumpUntil(() => galleryScroll.VerticalOffset > 0, TimeSpan.FromSeconds(2));
+                var galleryOffset = galleryScroll.VerticalOffset;
+                var galleryReload = (Task)reloadPhotos.Invoke(photosView, [null])!;
+                PumpUntil(() => galleryReload.IsCompleted, TimeSpan.FromSeconds(3)); galleryReload.GetAwaiter().GetResult(); window.UpdateLayout();
+                Assert.Equal(galleryOffset, galleryScroll.VerticalOffset, 2);
+#pragma warning disable WPF0001
+                foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
+                {
+                    app.ThemeMode = theme;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"photos-gallery-page-{(theme == ThemeMode.Light ? "light" : "dark")}.png"), 1220, 940);
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"photos-gallery-page-compact-{(theme == ThemeMode.Light ? "light" : "dark")}.png"), 1020, 820);
+                }
+#pragma warning restore WPF0001
+                ((RadioButton)photosView.FindName("ListButton")).IsChecked = true; window.UpdateLayout();
                 var listTop = photoFiles.TranslatePoint(new Point(), photosView).Y;
                 photosRefresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
                 Assert.Equal(listTop, photoFiles.TranslatePoint(new Point(), photosView).Y, 2);
@@ -964,6 +1006,15 @@ public sealed class DesktopTests
                     exploreLayout.ColumnDefinitions[0].Width = new(1, GridUnitType.Star);
                 }
 #pragma warning restore WPF0001
+                stage = "keeping small overview folders inside their proportional map cells after resizing";
+                var crowdedLoad = window.InitializeExplorerAsync(CrowdedMapFixture(), [], default);
+                PumpUntil(() => crowdedLoad.IsCompleted, TimeSpan.FromSeconds(10));
+                crowdedLoad.GetAwaiter().GetResult();
+                foreach (var size in new[] { (1220, 910), (1020, 790), (1220, 910) })
+                {
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-crowded-{size.Item1}.png"), size.Item1, size.Item2);
+                    AssertTilesContained(map);
+                }
                 stage = "revealing the parent of a nested grouped tile beneath a collapsed root";
                 var groupedLoad = window.InitializeExplorerAsync(NestedLayoutFixture(smallEntries: true), [], default);
                 PumpUntil(() => groupedLoad.IsCompleted, TimeSpan.FromSeconds(10));
@@ -1022,7 +1073,9 @@ public sealed class DesktopTests
         thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), $"The WPF smoke test timed out while {stage}.");
+        // The bounded smoke now renders both photo views, a full gallery page,
+        // two themes and compact layouts alongside the existing workflows.
+        Assert.True(thread.Join(TimeSpan.FromSeconds(60)), $"The WPF smoke test timed out while {stage}.");
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
@@ -1074,6 +1127,8 @@ public sealed class DesktopTests
         Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
         var cards = (ItemsControl)window.FindName("CleanupGroupCards");
         Assert.Equal(4, cards.Items.Count); Assert.Empty(list.Items);
+        Assert.Equal(100, cards.Items.Cast<OpportunityGroupRow>().Max(group => group.RelativeSize));
+        Assert.All(cards.Items.Cast<OpportunityGroupRow>(), group => Assert.InRange(group.RelativeSize, 0, 100));
         Assert.False(cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Other worktrees").CanSelectGroup);
         Assert.Equal(1000, cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Build files").Matches.Count);
         window.UpdateLayout();
@@ -1678,6 +1733,66 @@ public sealed class DesktopTests
         var legend = layout.Children.OfType<WrapPanel>().Single();
         double gap = legend.TranslatePoint(new Point(), layout).Y - map.TranslatePoint(new Point(0, map.ActualHeight), layout).Y;
         Assert.InRange(gap, 0, 12); // A small legend gutter, with no unused map space.
+    }
+
+    private static void AssertTilesContained(TreemapPanel map)
+    {
+        var cells = TreemapLayout.Arrange(map.Weights, map.RenderSize);
+        for (int i = 0; i < map.Children.Count; i++)
+        {
+            var tile = (FrameworkElement)map.Children[i];
+            var bounds = tile.TransformToAncestor(map).TransformBounds(new Rect(tile.RenderSize));
+            var cell = cells[i];
+            Assert.True(bounds.Left >= -.5 && bounds.Top >= -.5
+                && bounds.Right <= map.ActualWidth + .5 && bounds.Bottom <= map.ActualHeight + .5,
+                $"A map tile extends outside its pane: {bounds}, pane {map.RenderSize}.");
+            Assert.True(bounds.Left >= cell.Left - .5 && bounds.Top >= cell.Top - .5
+                && bounds.Right <= cell.Right + .5 && bounds.Bottom <= cell.Bottom + .5,
+                $"A map tile overlaps a sibling cell: {bounds}, cell {cell}.");
+            if (tile is Button button)
+            {
+                var surface = (Border)button.Template.FindName("TileSurface", button);
+                Assert.True(surface.ActualWidth <= button.ActualWidth + .5 && surface.ActualHeight <= button.ActualHeight + .5,
+                    "A tile surface is cropped instead of fitting its proportional cell.");
+            }
+            if (tile is Border { Child: Grid grid, Tag: TreemapPanel nested } && nested.IsVisible)
+            {
+                var nestedBounds = nested.TransformToAncestor(tile).TransformBounds(new Rect(nested.RenderSize));
+                Assert.True(nestedBounds.Left >= -.5 && nestedBounds.Top >= -.5
+                    && nestedBounds.Right <= tile.ActualWidth + .5 && nestedBounds.Bottom <= tile.ActualHeight + .5,
+                    "A child map extends outside its folder frame.");
+                var header = (Button)grid.Children[0];
+                Assert.True(header.TranslatePoint(new Point(0, header.ActualHeight), tile).Y <= nestedBounds.Top + .5,
+                    "A folder header overlaps its child map.");
+                AssertTilesContained(nested);
+            }
+        }
+    }
+
+    private static ScanSnapshot CrowdedMapFixture()
+    {
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        Folder(2, "Games"); Folder(3, "Cloud"); Folder(4, "Tools");
+        File(20, 2, "Call of Duty- Black Ops Cold War", 220.99);
+        File(21, 2, "World of Warcraft", 125.56);
+        File(22, 2, "Indiana Jones and the Great Circle", 86.7);
+        File(23, 2, "The Alters", 63.84); File(24, 2, "Warcraft III", 32.92);
+        File(25, 2, "Voidtrain", 18); File(26, 2, "More games", 10.4);
+        File(30, 3, "Proton", 230.76); File(31, 3, "OneDrive", 81.64);
+        File(40, 4, "tools.bin", 5); File(50, 1, "Other entries", 1.62);
+        return builder.Build(@"G:\", "Layout fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+
+        void Folder(ulong id, string name)
+        {
+            int index = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0));
+            builder.AddLink(index, new(1), name);
+        }
+        void File(ulong id, ulong parent, string name, double size)
+        {
+            int index = builder.AddFile(new(new(id), FileAttributes.Normal, GiB(size), GiB(size), 0));
+            builder.AddLink(index, new(parent), name);
+        }
     }
 
     private static ScanSnapshot NestedLayoutFixture(bool smallEntries = false)

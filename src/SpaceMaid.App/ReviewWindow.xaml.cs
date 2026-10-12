@@ -25,7 +25,7 @@ public partial class ReviewWindow : Window
         if (preview.ExcludedSharedBytes > 0)
             EstimateCaption.Text += $" · {SizeText.Format(preview.ExcludedSharedBytes)} shared allocation excluded";
         CautionText.Text = string.Join("\n\n", preview.Cautions);
-        _locations = preview.Locations.Select(location => new CleanupReviewRow(location)).ToList();
+        _locations = preview.Locations.Select(location => new CleanupReviewRow(location, !preview.UsesLogicalSize)).ToList();
         LocationList.ItemsSource = _locations;
         ResultText.Text = "Preview only · Review cleanup in Opportunities to check these folders.";
     }
@@ -34,7 +34,7 @@ public partial class ReviewWindow : Window
         Func<IProgress<CleanupProgress>, CancellationToken, Task<CleanupBatchResult>> execute) : this(plan.Preview, validationNote)
     {
         _execute = execute;
-        _locations.AddRange(plan.BlockedLocations.Select(item => new CleanupReviewRow(item.Opportunity) { Status = "Blocked: " + item.Reason }));
+        _locations.AddRange(plan.BlockedLocations.Select(item => new CleanupReviewRow(item.Opportunity, !plan.Preview.UsesLogicalSize) { Status = "Blocked: " + item.Reason }));
         LocationList.Items.Refresh();
         CleanupButton.IsEnabled = plan.CanExecute;
         ResultText.Text = $"{plan.Targets.Count:N0} {(plan.Targets.Count == 1 ? "folder" : "folders")} ready"
@@ -94,10 +94,11 @@ public partial class ReviewWindow : Window
     }
 }
 
-internal sealed class CleanupReviewRow(Opportunity location) : INotifyPropertyChanged
+internal sealed class CleanupReviewRow(Opportunity location, bool hasAllocation = true) : INotifyPropertyChanged
 {
     public Opportunity Location { get; } = location;
     public string Title => Location.Title;
+    public string Size => SizeText.Format(Location.DisplayBytes(hasAllocation));
     public string Path => Location.Path;
     public string Reason => Location.Reason;
     public string Caution => Location.Caution;
