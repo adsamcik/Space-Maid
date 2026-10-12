@@ -1,11 +1,11 @@
-using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.Analysis;
 
-namespace SpaceMaid.Core.Analysis;
+namespace SpaceMaid.Extensions.Developer.Analysis;
 
 // A small task-oriented checklist; project/path lists remain a drill-down.
 public static class CleanupGrouping
 {
-    public static IReadOnlyList<OpportunityGroup> Build(ScanSnapshot scan, IReadOnlyList<Opportunity> locations,
+    public static IReadOnlyList<OpportunityGroup> Build(IOpportunityInventory scan, IReadOnlyList<Opportunity> locations,
         IReadOnlySet<string>? oldIntegratedWorktrees = null, CancellationToken token = default,
         WorktreeCleanupPolicy? worktreePolicy = null)
     {
@@ -48,13 +48,26 @@ public static class CleanupGrouping
                 {
                     int link = scan.PrimaryLink(parent);
                     if (link < 0) break;
-                    parent = scan.Entry(link).ParentIndex;
+                    parent = scan.LinkParent(link);
                     if (parent < 0) break;
                     if (roots.Contains(parent)) { nested = true; break; }
                 }
                 if (!nested) bytes = checked(bytes + item.DisplayBytes(scan.HasAllocationData));
             }
-            groups.Add(new("cleanup:" + key, name, "", kind, Array.AsReadOnly(findings), bytes, summary));
+            groups.Add(new("cleanup:" + key, name, "", kind, Array.AsReadOnly(findings), bytes, summary)
+            {
+                Caption = Caption(key),
+                Glyph = Glyph(key),
+                StatusLabel = Status(key, kind),
+                CanSelectGroup = key != "worktrees",
+                Role = key switch
+                {
+                    "worktrees" => OpportunityGroupRole.Worktrees,
+                    "old-worktrees" => OpportunityGroupRole.MatchedWorktrees,
+                    _ => OpportunityGroupRole.General
+                },
+                BreakdownHeading = key == "build" ? "By language and project" : "By tool and project"
+            });
         }
         return groups.AsReadOnly();
 
@@ -73,4 +86,38 @@ public static class CleanupGrouping
             _ => "other"
         };
     }
+
+    private static string Caption(string key) => key switch
+    {
+        "build" => "Build output · Stop builds first",
+        "cache" => "Package downloads · Keep what you need offline",
+        "tools" => "Build, test and analysis caches · Stop tools first",
+        "tests" => "Reports and recordings · Keep useful evidence",
+        "downloads" => "Build and test tools · Downloads may be needed again",
+        "editor" => "Close Visual Studio · Local settings may be lost",
+        "dependencies" => "Installed packages · Keep local changes",
+        "old-worktrees" => "Clean checkouts · Includes ignored files · Branches kept",
+        "environments" => "Keep interpreter and dependency records",
+        "agent" => "Sessions and logs · Keep recovery information",
+        "worktrees" => "Check activity and upstream status before cleanup",
+        _ => "Inspect contents before cleanup"
+    };
+
+    private static string Glyph(string key) => key switch
+    {
+        "build" => "\uE7C1", "cache" => "\uE8B7", "tools" => "\uE713",
+        "tests" => "\uE73E", "downloads" => "\uE896", "editor" => "\uE70F",
+        "dependencies" => "\uE8EC", "old-worktrees" or "worktrees" => "\uE8AD",
+        "environments" => "\uE943", "agent" => "\uE8F2", _ => "\uE8B7"
+    };
+
+    private static string Status(string key, string kind) => key switch
+    {
+        "build" => "Stop builds first", "cache" => "Keep offline packages",
+        "tools" => "Stop tools first", "tests" => "Keep useful reports",
+        "downloads" => "Downloads needed again", "editor" => "Local settings may be lost",
+        "dependencies" => "Keep local changes", "old-worktrees" => "Includes ignored files · Branches kept",
+        "environments" => "Keep dependency records", "agent" => "Keep recovery history",
+        "worktrees" => "Check before selecting", _ => kind
+    };
 }

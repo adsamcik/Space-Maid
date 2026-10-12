@@ -45,20 +45,21 @@ public partial class MainWindow
         ApplyOpportunityFilters();
     }
     private void PublishOpportunities(ScanSnapshot scan, IReadOnlyList<Opportunity> locations, OpportunityGroupSet groups,
-        IReadOnlySet<string>? selectedPaths = null, string? detailPath = null, bool preserveScope = false)
+        IReadOnlySet<(string Provider, string Path, string Rule)>? selectedLocations = null, string? detailPath = null, bool preserveScope = false)
     {
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
+        bool wasMatchedWorktrees = _cleanupGroups.FirstOrDefault(group => group.Key == _activeOpportunityGroup)?.Role == OpportunityGroupRole.MatchedWorktrees;
         _rows.Clear(); _opportunityGroups = groups;
         if (!preserveScope) _worktreesRequiringCheck.Clear();
-        else foreach (string path in _worktreesRequiringCheck.Keys.Where(path => selectedPaths is null || !selectedPaths.Any(selected => GitWorktreeGuard.Covers(selected, path))).ToArray())
+        else foreach (string path in _worktreesRequiringCheck.Keys.Where(path => selectedLocations is null || !selectedLocations.Any(selected => GitWorktreeGuard.Covers(selected.Path, path))).ToArray())
             _worktreesRequiringCheck.Remove(path);
         _worktreeAssessments.Clear();
-        var owners = groups.Projects.SelectMany(group => group.Locations.Select(item => (item.DirectoryIndex, Group: group)))
-            .DistinctBy(item => item.DirectoryIndex).ToDictionary(item => item.DirectoryIndex, item => item.Group);
+        var owners = groups.Projects.SelectMany(group => group.Locations.Select(item => (Identity: (item.ProviderId, item.DirectoryIndex, item.RuleId), Group: group)))
+            .DistinctBy(item => item.Identity).ToDictionary(item => item.Identity, item => item.Group);
         foreach (var location in locations)
         {
-            var row = new OpportunityRow(location, scan.HasAllocationData, owners.GetValueOrDefault(location.DirectoryIndex), scan.IsUnmeasuredDirectory(location.DirectoryIndex))
-                { Selected = selectedPaths?.Contains(location.Path) == true };
+            var row = new OpportunityRow(location, scan.HasAllocationData, owners.GetValueOrDefault((location.ProviderId, location.DirectoryIndex, location.RuleId)), scan.IsUnmeasuredDirectory(location.DirectoryIndex))
+                { Selected = selectedLocations?.Contains((location.ProviderId, location.Path, location.RuleId)) == true };
             row.PropertyChanged += Row_Changed; _rows.Add(row);
         }
         RebuildWorktreeGroups();
@@ -79,7 +80,8 @@ public partial class MainWindow
             _activeOpportunityGroup = OpportunityGroupingPicker.SelectedIndex == 0 ? null
                 : (OpportunityGroupingPicker.SelectedIndex == 2 ? groups.Types : groups.Projects).FirstOrDefault()?.Key;
         }
-        else if (_activeOpportunityGroup == "cleanup:old-worktrees") _activeOpportunityGroup = "cleanup:worktrees";
+        else if (wasMatchedWorktrees && !_cleanupGroups.Any(group => group.Key == _activeOpportunityGroup))
+            _activeOpportunityGroup = _cleanupGroups.FirstOrDefault(group => group.Role == OpportunityGroupRole.Worktrees)?.Key;
         ApplyOpportunityFilters(detailPath);
     }
     private void OpportunitySearch_Changed(object sender, TextChangedEventArgs e)
@@ -110,17 +112,18 @@ public partial class MainWindow
         bool cleanup = OpportunityGroupingPicker.SelectedIndex == 0;
         var detail = _cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey);
         bool detailScope = cleanup && _cleanupDetailKey is not null;
-        var detailPaths = detailScope ? (detail?.Locations ?? []).Select(item => item.Path).ToHashSet(StringComparer.Ordinal) : null;
-        _matchingOpportunityRows = _rows.Where(row => (detailPaths is null || detailPaths.Contains(row.Path)) && (type is null or "All types" || row.Category == type)
+        var detailMembers = detailScope ? (detail?.Locations ?? []).Select(item => (item.ProviderId, item.DirectoryIndex, item.RuleId)).ToHashSet() : null;
+        _matchingOpportunityRows = _rows.Where(row => (detailMembers is null || detailMembers.Contains(row.Identity)) && (type is null or "All types" || row.Category == type)
             && (query.Length == 0 || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.Path.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Category.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.GroupName.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
         bool byType = OpportunityGroupingPicker.SelectedIndex == 2;
         var definitions = detailScope ? detail?.Children ?? [] : cleanup ? _cleanupGroups : byType ? _opportunityGroups.Types : _opportunityGroups.Projects;
-        var membership = definitions.SelectMany(group => group.Locations.Select(item => (item.Path, group.Key)))
-            .ToDictionary(item => item.Path, item => item.Key, StringComparer.Ordinal);
-        var matches = _matchingOpportunityRows.GroupBy(row => membership.GetValueOrDefault(row.Path) ?? "")
-            .ToDictionary(group => group.Key, group => (IReadOnlyList<OpportunityRow>)group.ToArray(), StringComparer.Ordinal);
+        var byIdentity = _matchingOpportunityRows.ToDictionary(row => row.Identity);
+        var matches = definitions.ToDictionary(group => group.Key, group => (IReadOnlyList<OpportunityRow>)group.Locations
+            .Select(item => byIdentity.GetValueOrDefault((item.ProviderId, item.DirectoryIndex, item.RuleId)))
+            .OfType<OpportunityRow>().ToArray(), StringComparer.Ordinal);
+        foreach (string key in matches.Where(pair => pair.Value.Count == 0).Select(pair => pair.Key).ToArray()) matches.Remove(key);
         var visibleGroups = definitions.Where(group => matches.ContainsKey(group.Key)).ToArray();
         long largestGroup = visibleGroups.Select(group => group.ObservedBytes).DefaultIfEmpty().Max();
         var groups = visibleGroups.Select(group => new OpportunityGroupRow(group, matches[group.Key], showChildren: cleanup && !_cleanupDrillDown, comparisonBytes: largestGroup));
@@ -148,7 +151,8 @@ public partial class MainWindow
         CleanupScopeText.Visibility = detailScope ? Visibility.Visible : Visibility.Collapsed;
         CleanupScopeText.Text = detailScope ? _cleanupDetailParentName + " › " + _cleanupDetailName : "";
         CleanupOverviewNote.Text = _snapshot is null ? "Scan a drive to find cleanup groups."
-            : _cleanupGroups.Count == 0 ? "No matching development folders found."
+            : _extensions is not null && OpportunityExtensions.Status(_snapshot) is { Length: > 0 } status ? status
+            : _cleanupGroups.Count == 0 ? "No cleanup groups found."
             : (_snapshot.HasAllocationData ? "Observed allocation" : "Logical size · Physical savings unknown")
                 + " · Groups may overlap";
         CleanupOverviewNote.ToolTip = "Bars compare each group's observed size with the largest visible group. Groups may overlap. Review counts nested folders once. Empty the Recycle Bin to free space.";
@@ -228,7 +232,7 @@ public partial class MainWindow
         var group = recommendation.GroupKey is { } key
             ? _cleanupGroups.FirstOrDefault(item => item.Key == key)
             : _cleanupGroups.FirstOrDefault(item => item.Name == recommendation.Name
-                || recommendation.Name == "Worktrees to review" && item.Key == "cleanup:worktrees");
+                || recommendation.Name == "Worktrees to review" && item.Role == OpportunityGroupRole.Worktrees);
         _opportunitySearchTimer.Stop();
         OpportunityGroupingPicker.SelectedIndex = 0;
         ClearOpportunityFilters();
@@ -298,8 +302,8 @@ public partial class MainWindow
         ReviewButton.IsEnabled = selected > 0 && _work is null;
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && _work is null;
-        CheckWorktreesButton.IsEnabled = _work is null && _rows.Any(row => row.Category == "Git worktrees");
-        int worktrees = _rows.Count(row => row.Category == "Git worktrees");
+        CheckWorktreesButton.IsEnabled = _work is null && _rows.Any(row => row.Item.IsWorktree);
+        int worktrees = _rows.Count(row => row.Item.IsWorktree);
         CheckWorktreesButton.Content = _worktreeAssessments.Count == 0 ? "Check worktrees"
             : _worktreeAssessments.Count < worktrees ? "Check remaining worktrees" : "Recheck worktrees";
         foreach (var group in _opportunityGroupRows) group.SetSelectedCount(group.Matches.Count(row => row.Selected));

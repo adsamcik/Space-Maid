@@ -158,19 +158,23 @@ public partial class MainWindow : Window
             if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
             PreliminaryCaption.Text = "Preparing results…";
             BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : $" · {scan.FallbackReason}");
-            StatusText.Text = "Finding development clutter…";
+            StatusText.Text = "Finding cleanup opportunities…";
+            await InitializeExtensionsAsync().WaitAsync(work.Token);
             log.Record("detection-start", new { scan.FileCount, scan.DirectoryCount });
             var result = await Task.Run(() =>
             {
                 var timer = Stopwatch.StartNew();
-                var opportunities = OpportunityDetector.Find(scan, work.Token);
+                var analysis = OpportunityExtensions.Analyze(scan, work.Token);
+                var opportunities = analysis.Findings;
                 var total = CleanupPlanner.Create(scan, opportunities, work.Token);
-                return (Opportunities: opportunities, Total: total, Groups: OpportunityGrouping.Build(scan, opportunities, work.Token), Elapsed: timer.Elapsed);
+                return (Opportunities: opportunities, Total: total, Groups: analysis.Groups, Elapsed: timer.Elapsed);
             }, work.Token);
             if (_closing) return false;
             work.Token.ThrowIfCancellationRequested();
             _snapshot = scan;
             _detectionElapsed = result.Elapsed;
+            log.Record("opportunity-extensions", new { Providers = _extensions?.Entries.Select(entry => new { entry.Id, entry.Status }),
+                Status = OpportunityExtensions.Status(scan), ExtensionLog = _extensions?.LogPath });
             log.Record("detection-complete", new { ElapsedMs = result.Elapsed.TotalMilliseconds, Opportunities = result.Opportunities.Count, result.Total.EstimatedBytes });
             var presentation = Stopwatch.StartNew();
             log.Record("explorer-start", new { Root = scan.RootPath });
@@ -191,6 +195,8 @@ public partial class MainWindow : Window
                 ProcessPeakBytes = diagnosticProcess.PeakWorkingSet64 });
             _scanStatus = $"{scan.RegularFileCount:N0} files · {scan.DirectoryCount:N0} folders · {(scan.Metrics.Acquisition + scan.Metrics.Aggregation + _detectionElapsed + _presentationElapsed).TotalSeconds:0.00}s"
                 + (scan.WarningCount > 0 ? $" · {scan.WarningCount:N0} coverage warnings" : "");
+            string extensionStatus = OpportunityExtensions.Status(scan);
+            if (extensionStatus.Length > 0) _scanStatus += " · " + extensionStatus;
             StatusText.Text = _scanStatus;
             DetailsButton.Visibility = Visibility.Visible;
             RefreshPathDriveSpace();
@@ -322,14 +328,14 @@ public partial class MainWindow : Window
         try
         {
             log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale, WorktreePolicies = checkedWorktrees });
-            var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record);
+            var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record, DiscoverOpportunities);
             var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
                 new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking worktree… " + path; }));
             _worktreeCheckTask = gitCheck;
             IReadOnlyDictionary<string, string> gitBlocks;
             try { gitBlocks = await gitCheck; }
             finally { if (ReferenceEquals(_worktreeCheckTask, gitCheck)) _worktreeCheckTask = null; }
-            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks), work.Token);
+            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks, DiscoverOpportunities), work.Token);
             work.Token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             if (validation.CanMergeInventory)
@@ -344,8 +350,9 @@ public partial class MainWindow : Window
             // A replacement at the same path is a new target, never a retained
             // checkbox selection. Missing/no-longer-matching rows are excluded too.
             var excluded = validation.ExcludedPaths.ToHashSet(StringComparer.Ordinal);
+            var retained = validation.ValidatedLocations.Select(location => (location.ProviderId, location.Path, location.RuleId)).ToHashSet();
             _changingOpportunitySelection = true;
-            try { foreach (var row in _rows) if (excluded.Contains(row.Path)) row.Selected = false; }
+            try { foreach (var row in _rows) if (row.Selected && !retained.Contains(row.SelectionIdentity)) row.Selected = false; }
             finally { _changingOpportunitySelection = false; }
             UpdateSelection();
             string note = $"Selected locations checked at {DateTime.Now:HH:mm:ss}. "

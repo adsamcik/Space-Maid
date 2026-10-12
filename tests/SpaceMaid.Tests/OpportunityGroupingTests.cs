@@ -170,7 +170,8 @@ public sealed class OpportunityGroupingTests
     }
 
     internal static Opportunity Finding(ScanSnapshot scan, int folder, string category) => new(folder, category, category,
-        scan.PathForFile(folder)!, scan.DirectoryLogical[folder], scan.DirectoryAllocated[folder], "Fixture evidence", "Review contents first.", "Read-only review.", true);
+        scan.PathForFile(folder)!, scan.DirectoryLogical[folder], scan.DirectoryAllocated[folder], "Fixture evidence", "Review contents first.", "Read-only review.", true)
+    { ProviderId = DeveloperOpportunityFixture.ProviderId, RuleId = category, IsWorktree = category == "Git worktrees" };
 
     [Fact]
     public void SpecificBuildSystemsWinOverIncidentalMarkers()

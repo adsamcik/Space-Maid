@@ -72,12 +72,12 @@ public partial class MainWindow
         var kinds = new Dictionary<int, SpaceKind>();
         foreach (var opportunity in opportunities)
         {
-            var kind = opportunity.Category switch
+            var kind = opportunity.Appearance switch
             {
-                "Agent files" => SpaceKind.Agent,
-                "Git worktrees" => SpaceKind.Project,
-                "Test artifacts" or "Editor workspace data" => SpaceKind.Other,
-                _ => SpaceKind.Cache
+                OpportunityAppearance.Agent => SpaceKind.Agent,
+                OpportunityAppearance.Project => SpaceKind.Project,
+                OpportunityAppearance.Cache => SpaceKind.Cache,
+                _ => SpaceKind.Other
             };
             kinds[opportunity.DirectoryIndex] = kind;
         }

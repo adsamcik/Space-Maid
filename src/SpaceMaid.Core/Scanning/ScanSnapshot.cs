@@ -36,7 +36,7 @@ public readonly record struct ScanEntry(int LinkIndex, int FileIndex, int Parent
         ? hasAllocation ? AllocatedBytes : LogicalBytes : 0;
 }
 
-public sealed class ScanSnapshot
+public sealed class ScanSnapshot : IOpportunityInventory
 {
     internal FileRecord[] Records { get; }
     internal NameLink[] Links { get; }
@@ -235,6 +235,15 @@ public sealed class ScanSnapshot
         for (int link = ChildHeads[directoryIndex]; link >= 0; link = NextLinks[link])
             yield return link;
     }
+
+    bool IOpportunityInventory.IsDirectory(int index) => Records[index].IsDirectory;
+    int IOpportunityInventory.LinkObject(int index) => Links[index].FileIndex;
+    int IOpportunityInventory.LinkParent(int index) => Links[index].ParentIndex;
+    ReadOnlySpan<char> IOpportunityInventory.Name(int index) => Name(index);
+    IEnumerable<int> IOpportunityInventory.Children(int index) => EnumerateChildren(index);
+    string? IOpportunityInventory.PathForFile(int index) => PathForFile(index);
+    long IOpportunityInventory.LogicalSize(int index) => DirectoryLogical[index];
+    long IOpportunityInventory.AllocatedSize(int index) => DirectoryAllocated[index];
 
     internal string? PathForFile(int fileIndex) => fileIndex == RootIndex
         ? RootPath : FirstLinks[fileIndex] >= 0 ? PathForLink(FirstLinks[fileIndex]) : null;

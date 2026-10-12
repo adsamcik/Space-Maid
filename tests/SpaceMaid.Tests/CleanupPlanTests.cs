@@ -15,7 +15,7 @@ public sealed class CleanupPlanTests
         var locations = OpportunityDetector.Find(scan).ToList(); DateTime written = File.GetLastWriteTimeUtc(project.File);
         CleanupPlan plan;
         using (var locked = File.Open(project.File, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-            plan = CleanupPlanner.Prepare(scan, locations);
+            plan = CleanupPlanner.Prepare(scan, locations, discover: DeveloperOpportunityFixture.Find);
         var target = Assert.Single(plan.Targets); Assert.Equal(project.Output, target.Path); target.ValidateCurrent();
         Assert.Same(scan, plan.Snapshot); Assert.True(plan.CanExecute); Assert.Empty(plan.BlockedLocations);
         Assert.Equal(8192, plan.Preview.EstimatedBytes); Assert.Single(plan.Preview.Locations);
@@ -49,7 +49,7 @@ public sealed class CleanupPlanTests
         Directory.CreateDirectory(replaced.Output); File.WriteAllBytes(Path.Join(replaced.Output, "new.dll"), new byte[32768]);
         var forged = validLocation with { DirectoryIndex = scan.Entry(scan.FindEntry(generic)!.Value).FileIndex, Path = generic };
         var malformed = validLocation with { Title = "Pretend cache" };
-        var plan = CleanupPlanner.Prepare(scan, [validLocation, missingLocation, replacedLocation, forged, malformed]);
+        var plan = CleanupPlanner.Prepare(scan, [validLocation, missingLocation, replacedLocation, forged, malformed], discover: DeveloperOpportunityFixture.Find);
         Assert.True(plan.CanExecute); Assert.Equal(valid.Output, Assert.Single(plan.Targets).Path);
         Assert.Equal(4096, plan.Preview.EstimatedBytes); Assert.Single(plan.Preview.Locations);
         Assert.Equal(4, plan.BlockedLocations.Count);
@@ -61,7 +61,7 @@ public sealed class CleanupPlanTests
         Assert.Equal(16384, new FileInfo(Path.Join(old, "result.dll")).Length);
         Assert.Equal(32768, new FileInfo(Path.Join(replaced.Output, "new.dll")).Length);
         Assert.Equal(4096, new FileInfo(valid.File).Length);
-        var allBlocked = CleanupPlanner.Prepare(scan, [missingLocation, forged]);
+        var allBlocked = CleanupPlanner.Prepare(scan, [missingLocation, forged], discover: DeveloperOpportunityFixture.Find);
         Assert.False(allBlocked.CanExecute); Assert.Empty(allBlocked.Targets); Assert.Empty(allBlocked.Preview.Locations);
     }
 
@@ -75,7 +75,7 @@ public sealed class CleanupPlanTests
         string file = Path.Join(cache, "module.pyc"); File.WriteAllBytes(file, new byte[4096]);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var selected = OpportunityDetector.Find(scan); Assert.Equal(2, selected.Count);
-        var plan = CleanupPlanner.Prepare(scan, selected);
+        var plan = CleanupPlanner.Prepare(scan, selected, discover: DeveloperOpportunityFixture.Find);
         Assert.True(plan.CanExecute); Assert.Empty(plan.BlockedLocations);
         Assert.Equal(env, Assert.Single(plan.Targets).Path); Assert.Equal(env, Assert.Single(plan.Preview.Locations).Path);
         Assert.Equal(scan.Entry(scan.FindEntry(env)!.Value).AllocatedBytes, plan.Preview.EstimatedBytes);
@@ -88,7 +88,7 @@ public sealed class CleanupPlanTests
         using var fixture = new TestDirectory(); var project = CreateProject(fixture.Path, "project", 12345);
         var native = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var logical = AsLogical(native);
-        var plan = CleanupPlanner.Prepare(logical, OpportunityDetector.Find(logical));
+        var plan = CleanupPlanner.Prepare(logical, OpportunityDetector.Find(logical), discover: DeveloperOpportunityFixture.Find);
         Assert.True(plan.CanExecute); Assert.True(plan.Preview.UsesLogicalSize); Assert.Equal(12345, plan.Preview.EstimatedBytes);
         var target = Assert.Single(plan.Targets); Assert.False(target.HasAllocationData); target.ValidateCurrent();
         var metadata = logical.GetMetadata(logical.FindEntry(project.Output)!.Value);
@@ -101,9 +101,9 @@ public sealed class CleanupPlanTests
         int linkedMarker = builder.AddFile(new(new(4), FileAttributes.Normal, 0, 0, 0)); builder.AddLink(linkedMarker, new(3), "pyvenv.cfg");
         var guarded = builder.Build(@"C:\", "fixture", TimeSpan.Zero, 0, default);
         var found = OpportunityDetector.Find(guarded);
-        var rootPlan = CleanupPlanner.Prepare(guarded, found.Where(value => value.DirectoryIndex == guarded.RootIndex));
+        var rootPlan = CleanupPlanner.Prepare(guarded, found.Where(value => value.DirectoryIndex == guarded.RootIndex), discover: DeveloperOpportunityFixture.Find);
         Assert.False(rootPlan.CanExecute); Assert.Contains("Drive roots", Assert.Single(rootPlan.BlockedLocations).Reason);
-        var linkPlan = CleanupPlanner.Prepare(guarded, found.Where(value => value.DirectoryIndex != guarded.RootIndex));
+        var linkPlan = CleanupPlanner.Prepare(guarded, found.Where(value => value.DirectoryIndex != guarded.RootIndex), discover: DeveloperOpportunityFixture.Find);
         Assert.False(linkPlan.CanExecute); Assert.Contains("reparse", Assert.Single(linkPlan.BlockedLocations).Reason);
         Assert.Equal(12345, new FileInfo(project.File).Length);
     }
@@ -115,7 +115,7 @@ public sealed class CleanupPlanTests
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var selected = Assert.Single(OpportunityDetector.Find(scan));
         using var cancellation = new CancellationTokenSource();
-        Assert.ThrowsAny<OperationCanceledException>(() => CleanupPlanner.Prepare(scan, CancelSelection(), cancellation.Token));
+        Assert.ThrowsAny<OperationCanceledException>(() => CleanupPlanner.Prepare(scan, CancelSelection(), cancellation.Token, discover: DeveloperOpportunityFixture.Find));
         Assert.Equal(4096, new FileInfo(project.File).Length); Assert.True(Directory.Exists(project.Output));
 
         IEnumerable<Opportunity> CancelSelection()

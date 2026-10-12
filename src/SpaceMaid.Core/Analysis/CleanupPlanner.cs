@@ -24,15 +24,16 @@ public sealed record CleanupPreview
 public static class CleanupPlanner
 {
     public static CleanupPlan Prepare(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default,
-        IReadOnlyDictionary<string, string>? blockedPaths = null)
+        IReadOnlyDictionary<string, string>? blockedPaths = null, OpportunityDiscovery? discover = null)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
+        ArgumentNullException.ThrowIfNull(discover);
         token.ThrowIfCancellationRequested();
-        var actual = new Dictionary<(int Directory, string Title, string Category, string Path), Opportunity>();
-        foreach (var finding in OpportunityDetector.Find(scan, token))
+        var actual = new Dictionary<(int Directory, string Provider, string Rule, string Title, string Category, string Path), Opportunity>();
+        foreach (var finding in discover(scan, token))
         {
             token.ThrowIfCancellationRequested();
-            actual.TryAdd((finding.DirectoryIndex, finding.Title, finding.Category, finding.Path), finding);
+            actual.TryAdd((finding.DirectoryIndex, finding.ProviderId, finding.RuleId, finding.Title, finding.Category, finding.Path), finding);
         }
         var valid = new List<Opportunity>(); var blocked = new List<CleanupBlockedLocation>();
         var originals = new Dictionary<int, Opportunity>();
@@ -41,7 +42,7 @@ public static class CleanupPlanner
             token.ThrowIfCancellationRequested();
             if (blockedPaths?.TryGetValue(choice.Path, out string? reason) == true)
             { blocked.Add(new(choice, reason)); continue; }
-            if (actual.TryGetValue((choice.DirectoryIndex, choice.Title, choice.Category, choice.Path), out var finding))
+            if (actual.TryGetValue((choice.DirectoryIndex, choice.ProviderId, choice.RuleId, choice.Title, choice.Category, choice.Path), out var finding))
             { valid.Add(finding); originals.TryAdd(choice.DirectoryIndex, choice); }
             else blocked.Add(new(choice, "This location does not match an opportunity detected in the current inventory. Recheck it before cleanup."));
         }

@@ -26,15 +26,16 @@ internal static class CleanupBatch
 {
     internal static async Task<CleanupBatchResult> ExecuteAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
-        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null)
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null)
     {
+        ArgumentNullException.ThrowIfNull(discover);
         var results = plan.BlockedLocations.Select(item => new CleanupLocationResult(item.Opportunity,
             CleanupOutcome.Skipped, item.Reason)).ToList();
         OpportunityReviewValidation? validation;
         try
         {
             progress.Report(new(0, plan.Targets.Count, "", "Checking confirmed folders again…"));
-            validation = await OpportunityReviewValidator.ValidateAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic);
+            validation = await OpportunityReviewValidator.ValidateAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic, discover);
         }
         catch (Exception error) when (IsExpected(error))
         {

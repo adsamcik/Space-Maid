@@ -25,7 +25,7 @@ public sealed class OpportunityReviewValidatorTests
         // A data read cannot open this file while validation runs. Directory
         // metadata can still report its new length and native identity.
         using (var locked = File.Open(project.File, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-            result = await OpportunityReviewValidator.ValidateAsync(scan, [selected], diagnostic: (name, _) => events.Add(name));
+            result = await OpportunityReviewValidator.ValidateAsync(scan, [selected], diagnostic: (name, _) => events.Add(name), discover: DeveloperOpportunityFixture.Find);
         var fresh = Assert.Single(result.ValidatedLocations);
         Assert.Equal(20000, fresh.LogicalBytes); Assert.Equal(selected.Title, fresh.Title);
         Assert.True(result.CanMergeInventory); Assert.Empty(result.ExcludedPaths);
@@ -58,7 +58,7 @@ public sealed class OpportunityReviewValidatorTests
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var selected = Assert.Single(OpportunityDetector.Find(scan));
         File.Delete(project.Marker);
-        var result = await OpportunityReviewValidator.ValidateAsync(scan, [selected]);
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, [selected], discover: DeveloperOpportunityFixture.Find);
         Assert.Empty(result.ValidatedLocations); Assert.Contains(project.Output, result.ExcludedPaths);
         Assert.DoesNotContain(result.Findings, opportunity => opportunity.Path == project.Output);
         Assert.NotNull(scan.FindEntry(project.Marker)); Assert.Null(result.Snapshot.FindEntry(project.Marker));
@@ -76,7 +76,7 @@ public sealed class OpportunityReviewValidatorTests
         Directory.Delete(project.Output, recursive: true);
         string moved = Path.Join(project.Root, "retained-old-obj"); Directory.Move(obj, moved);
         Directory.CreateDirectory(obj); File.WriteAllBytes(Path.Join(obj, "replacement.dat"), new byte[16384]);
-        var result = await OpportunityReviewValidator.ValidateAsync(scan, selected);
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, selected, discover: DeveloperOpportunityFixture.Find);
         Assert.Empty(result.ValidatedLocations);
         Assert.Contains(project.Output, result.ExcludedPaths); Assert.Contains(obj, result.ExcludedPaths);
         Assert.Contains(result.Findings, opportunity => opportunity.Path == obj && opportunity.LogicalBytes == 16384);
@@ -96,7 +96,7 @@ public sealed class OpportunityReviewValidatorTests
         string sibling = Directory.CreateDirectory(Path.Join(fixture.Path, "new-repository")).FullName;
         string nested = Directory.CreateDirectory(Path.Join(sibling, "nested")).FullName;
         File.WriteAllBytes(Path.Join(nested, "data.bin"), new byte[8192]);
-        var result = await OpportunityReviewValidator.ValidateAsync(scan, [selected]);
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, [selected], discover: DeveloperOpportunityFixture.Find);
         var scope = Assert.Single(result.RecheckedScopes);
         Assert.Equal(Path.TrimEndingDirectorySeparator(fixture.Path), scope.Path); Assert.False(scope.Recursive);
         Assert.Empty(result.ValidatedLocations); Assert.Contains(project.Output, result.ExcludedPaths);
@@ -114,7 +114,7 @@ public sealed class OpportunityReviewValidatorTests
         var scan = AsLogical(native);
         var selected = Assert.Single(OpportunityDetector.Find(scan)); long originalBytes = scan.LogicalBytes;
         File.WriteAllBytes(project.File, new byte[12345]); File.WriteAllBytes(siblingFile, new byte[8888]);
-        var result = await OpportunityReviewValidator.ValidateAsync(scan, [selected]);
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, [selected], discover: DeveloperOpportunityFixture.Find);
         Assert.False(result.CanMergeInventory); Assert.False(result.Snapshot.HasAllocationData);
         Assert.False(result.Snapshot.IncludesAllDataStreams); Assert.False(result.Snapshot.HasCompleteVolumeLinks);
         var metadata = result.Snapshot.GetMetadata(result.Snapshot.FindEntry(project.Output)!.Value);
@@ -138,7 +138,7 @@ public sealed class OpportunityReviewValidatorTests
         File.WriteAllBytes(project.File, new byte[20000]);
         using var cancellation = new CancellationTokenSource(); int completed = 0;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => OpportunityReviewValidator.ValidateAsync(scan, [selected], cancellation.Token,
-            (name, _) => { if (name == "opportunity-validation-read-complete") { completed++; cancellation.Cancel(); } }));
+            (name, _) => { if (name == "opportunity-validation-read-complete") { completed++; cancellation.Cancel(); } }, discover: DeveloperOpportunityFixture.Find));
         Assert.Equal(1, completed); Assert.Null(scan.LastRecheckUtc);
         Assert.Equal(4096, scan.Entry(scan.FindEntry(project.File)!.Value).LogicalBytes);
         Assert.Equal(20000, new FileInfo(project.File).Length);

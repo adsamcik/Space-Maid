@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using SpaceMaid.App.Extensions;
 using SpaceMaid.Extensions.Contracts;
+using SpaceMaid.Core.Analysis;
 
 namespace SpaceMaid.App;
 
@@ -14,8 +15,15 @@ public partial class MainWindow
     private int _jobsUpdateQueued;
     internal string? ExtensionDataRoot { get; set; }
     internal bool ExtensionsReady { get; private set; }
+    private Task? _extensionStartup;
+    private OpportunityCatalog OpportunityExtensions => _extensions?.Opportunities
+        ?? throw new InvalidOperationException("Cleanup extensions are unavailable. Reopen Space Maid.");
+    private IReadOnlyList<Opportunity> DiscoverOpportunities(SpaceMaid.Core.Scanning.ScanSnapshot scan, CancellationToken token)
+        => OpportunityExtensions.Find(scan, token);
 
-    private async Task InitializeExtensionsAsync()
+    private Task InitializeExtensionsAsync() => _extensionStartup ??= InitializeExtensionsCoreAsync();
+
+    private async Task InitializeExtensionsCoreAsync()
     {
         try
         {

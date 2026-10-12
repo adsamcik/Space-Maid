@@ -11,22 +11,23 @@ public sealed record OpportunityReviewValidation(ScanSnapshot Snapshot, IReadOnl
 public static class OpportunityReviewValidator
 {
     public static Task<OpportunityReviewValidation> ValidateAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
-        CancellationToken token = default, Action<string, object>? diagnostic = null)
+        CancellationToken token = default, Action<string, object>? diagnostic = null, OpportunityDiscovery? discover = null)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
+        ArgumentNullException.ThrowIfNull(discover);
         var captured = selected.ToArray();
-        return Task.Run(() => ValidateCoreAsync(scan, captured, token, diagnostic), token);
+        return Task.Run(() => ValidateCoreAsync(scan, captured, token, diagnostic, discover), token);
     }
 
     private static async Task<OpportunityReviewValidation> ValidateCoreAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
-        CancellationToken token, Action<string, object>? diagnostic)
+        CancellationToken token, Action<string, object>? diagnostic, OpportunityDiscovery discover)
     {
         token.ThrowIfCancellationRequested();
         if (selected.Count == 0) throw new ArgumentException("Select at least one opportunity to validate.", nameof(selected));
         var timer = Stopwatch.StartNew();
         var choices = new List<Choice>();
         var requests = new Dictionary<string, bool>(StringComparer.Ordinal);
-        foreach (var opportunity in selected.DistinctBy(value => value.Path, StringComparer.Ordinal))
+        foreach (var opportunity in selected.DistinctBy(value => (value.Path, value.ProviderId, value.RuleId)))
         {
             token.ThrowIfCancellationRequested();
             string path = Normalize(opportunity.Path);
@@ -72,12 +73,12 @@ public static class OpportunityReviewValidator
         ScanSnapshot updated = scan.HasAllocationData
             ? ScanRechecker.Merge(scan, replacements, token, uncheckedDirectories.Identities)
             : BuildLogicalSelection(scan, replacements, sourceIndex, childIndexes, token, timer.Elapsed);
-        var findings = OpportunityDetector.Find(updated, token);
-        var findingIndex = new Dictionary<(int Directory, string Title, string Category), Opportunity>();
+        var findings = discover(updated, token);
+        var findingIndex = new Dictionary<(int Directory, string Provider, string Rule, string Title, string Category), Opportunity>();
         foreach (var finding in findings)
         {
             token.ThrowIfCancellationRequested();
-            findingIndex.TryAdd((finding.DirectoryIndex, finding.Title, finding.Category), finding);
+            findingIndex.TryAdd((finding.DirectoryIndex, finding.ProviderId, finding.RuleId, finding.Title, finding.Category), finding);
         }
         var validated = new List<Opportunity>(); var excluded = new List<string>();
         foreach (var choice in choices)
@@ -87,7 +88,7 @@ public static class OpportunityReviewValidator
             if (link is { } current && updated.Entry(current).IsDirectory
                 && (!scan.HasAllocationData || updated.Records[updated.Entry(current).FileIndex].Identity == choice.Identity))
             {
-                if (findingIndex.TryGetValue((updated.Entry(current).FileIndex, choice.Original.Title, choice.Original.Category), out var finding))
+                if (findingIndex.TryGetValue((updated.Entry(current).FileIndex, choice.Original.ProviderId, choice.Original.RuleId, choice.Original.Title, choice.Original.Category), out var finding))
                 { validated.Add(finding); continue; }
             }
             excluded.Add(choice.Original.Path);

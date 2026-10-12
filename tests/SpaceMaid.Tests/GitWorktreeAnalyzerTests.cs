@@ -134,7 +134,7 @@ public sealed class GitWorktreeAnalyzerTests
         var selected = new[] { Finding(fresh, repo.Checkout), Finding(fresh, repo.Parent) };
         var blocked = await GitWorktreeGuard.CheckAsync(fresh, selected, [repo.Checkout]);
         Assert.Contains(repo.Checkout, blocked.Keys); Assert.Contains(repo.Parent, blocked.Keys);
-        var plan = CleanupPlanner.Prepare(fresh, selected, blockedPaths: blocked);
+        var plan = CleanupPlanner.Prepare(fresh, selected, blockedPaths: blocked, discover: DeveloperOpportunityFixture.Find);
         Assert.False(plan.CanExecute); Assert.Empty(plan.Targets); Assert.Equal(2, plan.BlockedLocations.Count);
         Assert.Equal("preserve fresh work", File.ReadAllText(local));
         // A stale cached scan is also refused using current source metadata.

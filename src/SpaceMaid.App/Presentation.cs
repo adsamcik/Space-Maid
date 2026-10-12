@@ -20,6 +20,8 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
     private bool _selected;
     private string? _scope;
     public Opportunity Item { get; } = opportunity;
+    public (string Provider, int Directory, string Rule) Identity => (Item.ProviderId, Item.DirectoryIndex, Item.RuleId);
+    public (string Provider, string Path, string Rule) SelectionIdentity => (Item.ProviderId, Item.Path, Item.RuleId);
     public string Title => Item.Title;
     public string Category => Item.Category;
     public string Path => Item.Path;
@@ -53,48 +55,19 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public string Size => Matches.Any(row => row.IsUnmeasured)
         ? Group.ObservedBytes == 0 ? "Not checked" : SizeText.Format(Group.ObservedBytes) + " +"
         : SizeText.Format(Group.ObservedBytes);
-    public string Summary => Group.Key switch
-    {
-        "cleanup:build" => "Build output · Stop builds first",
-        "cleanup:cache" => "Package downloads · Keep what you need offline",
-        "cleanup:tools" => "Build, test and analysis caches · Stop tools first",
-        "cleanup:tests" => "Reports and recordings · Keep useful evidence",
-        "cleanup:downloads" => "Build and test tools · Downloads may be needed again",
-        "cleanup:editor" => "Close Visual Studio · Local settings may be lost",
-        "cleanup:dependencies" => "Installed packages · Keep local changes",
-        "cleanup:old-worktrees" => "Clean checkouts · Includes ignored files · Branches kept",
-        "cleanup:environments" => "Keep interpreter and dependency records",
-        "cleanup:agent" => "Sessions and logs · Keep recovery information",
-        "cleanup:worktrees" => "Check activity and upstream status before cleanup",
-        "cleanup:other" => "Inspect contents before cleanup",
-        _ => Group.Summary
-    };
+    public string Summary => Group.Caption.Length > 0 ? Group.Caption : Group.Summary;
     public string Kind => Group.Kind;
     public double RelativeSize => comparisonBytes > 0 ? Math.Clamp(100d * Group.ObservedBytes / comparisonBytes, 0, 100) : 0;
     public string SizeComparison => $"{Size} · Compared with the largest visible group. Groups may overlap.";
-    public string Glyph => Group.Key switch
-    {
-        "cleanup:build" => "\uE7C1", "cleanup:cache" => "\uE8B7", "cleanup:tools" => "\uE713",
-        "cleanup:tests" => "\uE73E", "cleanup:downloads" => "\uE896", "cleanup:editor" => "\uE70F",
-        "cleanup:dependencies" => "\uE8EC", "cleanup:old-worktrees" or "cleanup:worktrees" => "\uE8AD",
-        "cleanup:environments" => "\uE943", "cleanup:agent" => "\uE8F2", _ => "\uE8B7"
-    };
-    public string DecisionHint => Group.Key switch
-    {
-        "cleanup:build" => "Stop builds first", "cleanup:cache" => "Keep offline packages",
-        "cleanup:tools" => "Stop tools first", "cleanup:tests" => "Keep useful reports",
-        "cleanup:downloads" => "Downloads needed again", "cleanup:editor" => "Local settings may be lost",
-        "cleanup:dependencies" => "Keep local changes", "cleanup:old-worktrees" => "Includes ignored files · Branches kept",
-        "cleanup:environments" => "Keep dependency records", "cleanup:agent" => "Keep recovery history",
-        "cleanup:worktrees" => "Check before selecting", _ => Group.Kind
-    };
+    public string Glyph => Group.Glyph;
+    public string DecisionHint => Group.StatusLabel.Length > 0 ? Group.StatusLabel : Group.Kind;
     public IReadOnlyList<OpportunityGroupRow> Children { get; } = showChildren ? CreateChildren(group, matches) : [];
     public bool HasChildren => Children.Count > 0;
-    public string BreakdownHeading => Group.Key == "cleanup:build" ? "By language and project" : "By tool and project";
+    public string BreakdownHeading => Group.BreakdownHeading;
     public string ProjectCount => $"{Group.Children?.Count ?? 0:N0} {(Group.Children?.Count == 1 ? "project" : "projects")}";
-    public bool CanSelectGroup => Group.Key != "cleanup:worktrees";
+    public bool CanSelectGroup => Group.CanSelectGroup;
     public string SelectionHint => CanSelectGroup ? "Check and review this group."
-        : "Check worktrees to find clean matches, or view folders to inspect them.";
+        : Group.Summary;
     public bool? Checked => _selected == 0 ? false : _selected == Matches.Count ? true : null;
     public string Count => $"{Matches.Count:N0}" + (Matches.Count == Group.Locations.Count ? "" : $" of {Group.Locations.Count:N0}")
         + $" {(Group.Locations.Count == 1 ? "location" : "locations")}"
@@ -108,13 +81,13 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     }
     private static IReadOnlyList<OpportunityGroupRow> CreateChildren(OpportunityGroup group, IReadOnlyList<OpportunityRow> matches)
     {
-        var matchingPaths = matches.Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
-        var children = (group.Children ?? []).Where(child => child.Locations.Any(item => matchingPaths.Contains(item.Path))).ToArray();
+        var identities = matches.Select(row => row.Identity).ToHashSet();
+        var children = (group.Children ?? []).Where(child => child.Locations.Any(item => identities.Contains((item.ProviderId, item.DirectoryIndex, item.RuleId)))).ToArray();
         long largest = children.Select(child => child.ObservedBytes).DefaultIfEmpty().Max();
         return children.Select(child =>
         {
-            var paths = child.Locations.Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
-            return new OpportunityGroupRow(child, matches.Where(row => paths.Contains(row.Path)).ToArray(), comparisonBytes: largest);
+            var members = child.Locations.Select(item => (item.ProviderId, item.DirectoryIndex, item.RuleId)).ToHashSet();
+            return new OpportunityGroupRow(child, matches.Where(row => members.Contains(row.Identity)).ToArray(), comparisonBytes: largest);
         }).Where(child => child.Matches.Count > 0).OrderByDescending(child => child.Group.ObservedBytes).ThenBy(child => child.Name).ToArray();
     }
     public event PropertyChangedEventHandler? PropertyChanged;

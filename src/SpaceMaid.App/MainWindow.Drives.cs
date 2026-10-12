@@ -118,7 +118,7 @@ public partial class MainWindow
         if (identity is null || !identity.Equals(originalVolume, StringComparison.OrdinalIgnoreCase) || _closing) return null;
         _driveHistory!.RememberSelection(identity, root, scan.RootPath);
         _driveHistory.RecordScan(identity, root, scan.RootPath, scan.ScannedAtUtc, scan.HasAllocationData, scan.WarningCount > 0,
-            _cleanupGroups.Select(group => new DriveRecommendation(group.Key == "cleanup:worktrees" ? "Worktrees to review" : group.Name, group.ObservedBytes, group.Key)));
+            _cleanupGroups.Select(group => new DriveRecommendation(group.Role == SpaceMaid.Core.Analysis.OpportunityGroupRole.Worktrees ? "Worktrees to review" : group.Name, group.ObservedBytes, group.Key)));
         await _driveHistory.SaveAsync();
         if (!_closing) DisplayDriveChoices();
         return identity;

@@ -29,19 +29,20 @@ flowchart TD
 
 | Owner | Responsibility |
 | --- | --- |
-| Existing `SpaceMaid.Core` | Fast/standard metadata discovery, compact inventory, hard-link accounting, coverage, existing development detection. |
+| Existing `SpaceMaid.Core` | Fast/standard metadata discovery, compact inventory, hard-link accounting, coverage and shared cleanup safety. |
 | Existing `SpaceMaid.App` | Fluent shell, extension loading, inventory adapter, bounded job runner, tool process ownership, diagnostics, navigation and review presentation. |
 | New `SpaceMaid.Extensions.Contracts` | Small versioned shared API targeting .NET 10 Windows/WPF. No scanner internals or Photos schema. |
 | New `SpaceMaid.Extensions.Photos` | Photo views, local catalog/schema, relationships, analysis algorithms, thumbnails and durable job checkpoints. References Contracts, not App or Core. |
+| `SpaceMaid.Extensions.Developer` | Metadata-only development detection, project/tool/language breakdowns and cleanup groups through the optional Opportunities capability. No separate tab. |
 | New `SpaceMaid.ScanHelper` | Privileged NTFS metadata acquisition using the existing backend. References Core only; loads no extensions or media tools. |
 
-Keep extension runtime code inside App initially. A separate platform project, generic database service, event bus, marketplace, and hot reload are unnecessary for this first workflow. Existing development findings remain built in; adapting them to the same extension contract can follow only when another workflow needs that change.
+Keep extension runtime code inside App. A separate platform project, generic database service, event bus, marketplace, and hot reload are unnecessary. Development findings now ship as a bundled, independently enabled extension. See [Opportunities extension API](opportunity-extensions.md) for adding groups without changing the app.
 
 ## Loading and trust
 
 An extension consists of a manifest, an entry DLL, its `.deps.json`, and dependencies in its own directory. The manifest supplies a stable ID, name, version, contract version, entry assembly/type, and declared tools. Bundled Photos ships in the app's `Extensions` directory. Additional trusted local extension directories are explicitly enabled by the user; opening a scanned folder never loads a DLL from it.
 
-Validate manifest compatibility and entry paths before loading. Load each extension with its own `AssemblyLoadContext` and `AssemblyDependencyResolver`; resolve the shared Contracts assembly from the host's default context. WPF/framework assemblies also remain shared. This avoids duplicate contract types and allows private managed dependencies, following the [Microsoft plugin pattern](https://learn.microsoft.com/en-us/dotnet/core/tutorials/creating-app-with-plugin-support).
+Validate manifest compatibility and entry paths before loading. Load each extension with its own `AssemblyLoadContext` and `AssemblyDependencyResolver`; resolve shared Contracts and Core model assemblies from the host's default context. WPF/framework assemblies also remain shared. App implementation references are rejected. This avoids duplicate contract types and allows private managed dependencies, following the [Microsoft plugin pattern](https://learn.microsoft.com/en-us/dotnet/core/tutorials/creating-app-with-plugin-support).
 
 Enable, disable, and update take effect after restart. A disabled extension is not loaded, and its catalog is retained. There is no live-unload mechanism in the first version. Loading or job exceptions produce an extension-specific failure and diagnostics; exceptions in trusted UI/native code can still terminate the app.
 
@@ -59,7 +60,7 @@ If the application is launched manually as administrator, do not load extensions
 
 ## Minimal extension API
 
-The initial contract needs an extension descriptor, initialization/disposal, creation of a WPF workflow view, and the following host services. It does not expose `MainWindow`, mutable `ScanSnapshot` arrays, raw volume handles, or the current folder deletion service.
+The contract supplies an extension descriptor, initialization/disposal, an optional WPF workflow view, and the following host services. `IOpportunityExtension` optionally contributes metadata findings and groups to the shared Opportunities view. It receives `IOpportunityInventory`, an indexed read-only adapter, not `MainWindow`, mutable `ScanSnapshot` arrays, raw volume handles, or a deletion service.
 
 | Service | Required behavior |
 | --- | --- |

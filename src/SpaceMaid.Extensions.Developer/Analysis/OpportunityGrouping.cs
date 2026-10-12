@@ -1,18 +1,13 @@
-using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.Analysis;
+using System.IO;
 
-namespace SpaceMaid.Core.Analysis;
-
-public sealed record OpportunityGroup(string Key, string Name, string Path, string Kind,
-    IReadOnlyList<Opportunity> Locations, long ObservedBytes, string Summary = "", IReadOnlyList<OpportunityGroup>? Children = null);
-public sealed record OpportunityGroupSet(IReadOnlyList<OpportunityGroup> Projects, IReadOnlyList<OpportunityGroup> Types,
-    IReadOnlyList<OpportunityGroup>? BuildLanguages = null,
-    IReadOnlyDictionary<string, IReadOnlyList<OpportunityGroup>>? CleanupBreakdowns = null);
+namespace SpaceMaid.Extensions.Developer.Analysis;
 
 // Uses the existing inventory only. Git markers establish folder context,
 // not repository identity, clean status, branch integration or abandonment.
 public static class OpportunityGrouping
 {
-    public static OpportunityGroupSet Build(ScanSnapshot scan, IReadOnlyList<Opportunity> locations, CancellationToken token = default)
+    public static OpportunityGroupSet Build(IOpportunityInventory scan, IReadOnlyList<Opportunity> locations, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         var markers = new Dictionary<int, int>();
@@ -23,7 +18,7 @@ public static class OpportunityGrouping
         {
             token.ThrowIfCancellationRequested();
             int directory = location.DirectoryIndex;
-            if (directory < 0 || directory >= scan.FileCount || !scan.Records[directory].IsDirectory)
+            if (directory < 0 || directory >= scan.FileCount || !scan.IsDirectory(directory))
                 throw new ArgumentException("A finding must reference a scanned folder.", nameof(locations));
             var owner = FindOwner(directory);
             string path = scan.PathForFile(owner.Directory) ?? scan.RootPath;
@@ -32,7 +27,8 @@ public static class OpportunityGrouping
             if (!projectBuckets.TryGetValue(key, out var bucket))
             {
                 string name = other ? location.Category == "Agent files" ? "Coding-agent files" : "Other package caches"
-                    : owner.Directory == scan.RootIndex ? scan.RootPath : scan.Entry(scan.PrimaryLink(owner.Directory)).Name;
+                    : owner.Directory == scan.RootIndex || scan.PrimaryLink(owner.Directory) < 0 ? scan.RootPath
+                        : scan.Name(scan.PrimaryLink(owner.Directory)).ToString();
                 bucket = (name, other ? scan.RootPath : path, other ? "Outside detected projects" : owner.Kind, []);
                 projectBuckets.Add(key, bucket);
             }
@@ -173,8 +169,8 @@ public static class OpportunityGrouping
             int parent = Parent(directory);
             return owners[directory] = (parent >= 0 ? parent : directory, "Containing folder");
         }
-        int Parent(int directory) => directory == scan.RootIndex || scan.FirstLinks[directory] < 0
-            ? -1 : scan.Links[scan.FirstLinks[directory]].ParentIndex;
+        int Parent(int directory) => directory == scan.RootIndex || scan.PrimaryLink(directory) < 0
+            ? -1 : scan.LinkParent(scan.PrimaryLink(directory));
         int Marker(int directory)
         {
             if (markers.TryGetValue(directory, out int value)) return value;
@@ -183,7 +179,7 @@ public static class OpportunityGrouping
             {
                 if ((visited++ & 1023) == 0) token.ThrowIfCancellationRequested();
                 var name = scan.Name(link);
-                bool isDirectory = scan.Records[scan.Links[link].FileIndex].IsDirectory;
+                bool isDirectory = scan.IsDirectory(scan.LinkObject(link));
                 if (name.Equals(".git", StringComparison.OrdinalIgnoreCase)) value |= isDirectory ? 1 : 2;
                 if (!isDirectory)
                 {
@@ -216,7 +212,7 @@ public static class OpportunityGrouping
                 bool covered = false;
                 for (int parent = Parent(directory); parent >= 0 && visited.Add(parent); parent = Parent(parent))
                 { token.ThrowIfCancellationRequested(); if (selected.Contains(parent)) { covered = true; break; } }
-                if (!covered) bytes = checked(bytes + (scan.HasAllocationData ? scan.DirectoryAllocated[directory] : scan.DirectoryLogical[directory]));
+                if (!covered) bytes = checked(bytes + (scan.HasAllocationData ? scan.AllocatedSize(directory) : scan.LogicalSize(directory)));
             }
             return bytes;
         }

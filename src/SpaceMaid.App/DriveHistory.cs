@@ -162,7 +162,7 @@ internal sealed class DriveHistoryStore(string filePath)
     private static bool ValidId(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 256 && !value.Any(char.IsControl);
     private static bool ValidName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 && !value.Any(char.IsControl);
     private static bool ValidGroupKey(string? value) => value is null
-        || value.StartsWith("cleanup:", StringComparison.Ordinal) && value.Length <= 80 && !value.Any(char.IsControl);
+        || value.StartsWith("cleanup:", StringComparison.Ordinal) && value.Length <= 192 && !value.Any(char.IsControl);
 
     private static bool TryRoot(string? input, out string root)
     {

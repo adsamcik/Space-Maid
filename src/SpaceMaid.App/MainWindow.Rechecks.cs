@@ -52,7 +52,7 @@ public partial class MainWindow
         string note, CancellationToken token, ScanLog log, ScanSnapshot? prechecked = null,
         IReadOnlyList<Opportunity>? findings = null)
     {
-        var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
+        var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
         string? detailPath = (OpportunityGrid.SelectedItem as OpportunityRow)?.Path;
         StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
@@ -61,9 +61,11 @@ public partial class MainWindow
         var updated = prechecked ?? await ScanRechecker.RefreshAsync(scan, requests, token, log.Record);
         var analysis = await Task.Run(() =>
         {
-            var opportunities = findings ?? OpportunityDetector.Find(updated, token);
-            return (Opportunities: opportunities, Total: CleanupPlanner.Create(updated, opportunities, token), Groups: OpportunityGrouping.Build(updated, opportunities, token));
+            var classified = OpportunityExtensions.Analyze(updated, token);
+            var opportunities = findings ?? classified.Findings;
+            return (Opportunities: opportunities, Total: CleanupPlanner.Create(updated, opportunities, token), Groups: classified.Groups);
         }, token);
+        log.Record("opportunity-extensions", new { Status = OpportunityExtensions.Status(updated), ExtensionLog = _extensions?.LogPath });
         token.ThrowIfCancellationRequested();
         if (_closing || !ReferenceEquals(_snapshot, scan)) return;
         string[] expanded = _explorer?.ExpandedPaths() ?? [];
@@ -94,6 +96,8 @@ public partial class MainWindow
                 ? request.Path : request.Path + Path.DirectorySeparatorChar, StringComparison.Ordinal)));
         _scanStale = _staleScopes.Count > 0;
         _scanStatus = note + $" Updated {updated.RecheckedPaths.Count:N0} locations in {timer.Elapsed.TotalSeconds:0.00}s; other folders retain earlier scan data.";
+        string extensionStatus = OpportunityExtensions.Status(updated);
+        if (extensionStatus.Length > 0) _scanStatus += " " + extensionStatus;
         StatusText.Text = _scanStatus;
         log.Record("recheck-published", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, updated.RecheckedPaths, updated.AllocatedBytes, updated.LogicalBytes, Opportunities = _rows.Count });
         if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");

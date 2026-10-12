@@ -6,6 +6,7 @@
     <Project Path="src/SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" />
+    <Project Path="src/SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SpaceMaid.Tests/SpaceMaid.Tests.csproj" />

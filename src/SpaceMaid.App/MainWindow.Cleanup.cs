@@ -20,7 +20,7 @@ public partial class MainWindow
         try
         {
             log.Record("cleanup-confirmed", new { Locations = plan.Preview.Locations.Select(location => location.Path).ToArray(), Blocked = plan.BlockedLocations.Count });
-            result = await CleanupBatch.ExecuteAsync(plan, new WindowInteropHelper(this).Handle, progress, work.Token, log.Record, checkedWorktrees);
+            result = await CleanupBatch.ExecuteAsync(plan, new WindowInteropHelper(this).Handle, progress, work.Token, log.Record, checkedWorktrees, DiscoverOpportunities);
             if (_closing || !ReferenceEquals(_snapshot, displayed)) return result;
             if (result.Validation is not { } validation)
             {

@@ -1,29 +1,41 @@
-using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.Analysis;
+using System.IO;
 
-namespace SpaceMaid.Core.Analysis;
+namespace SpaceMaid.Extensions.Developer.Analysis;
 
 public static class OpportunityDetector
 {
-    public static IReadOnlyList<Opportunity> Find(ScanSnapshot scan, CancellationToken token = default)
+    public static IReadOnlyList<Opportunity> Find(IOpportunityInventory scan, CancellationToken token = default)
     {
         var found = new List<Opportunity>();
         var evidence = new MarkerEvidence(scan, token);
-        for (int directory = 0; directory < scan.Records.Length; directory++)
+        for (int directory = 0; directory < scan.FileCount; directory++)
         {
             if ((directory & 1023) == 0) token.ThrowIfCancellationRequested();
-            if (!scan.Records[directory].IsDirectory) continue;
-            int link = scan.FirstLinks[directory];
+            if (!scan.IsDirectory(directory)) continue;
+            int link = scan.PrimaryLink(directory);
             // The selected folder itself can be a cache or project artifact.
             string? rootName = directory == scan.RootIndex ? Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.RootPath)) : null;
             ReadOnlySpan<char> name = rootName is not null ? rootName : link >= 0 ? scan.Name(link) : [];
-            int parent = link >= 0 ? scan.Links[link].ParentIndex : -1;
+            int parent = link >= 0 ? scan.LinkParent(link) : -1;
             Rule? rule = Classify(scan, directory, parent, name, evidence);
             if (rule is null) continue;
             string? path = scan.PathForFile(directory);
             if (path is null) continue;
             found.Add(new(directory, rule.Title, rule.Category, path,
-                scan.DirectoryLogical[directory], scan.DirectoryAllocated[directory],
-                rule.Reason, rule.Caution, rule.Action, rule.Manual));
+                scan.LogicalSize(directory), scan.AllocatedSize(directory),
+                rule.Reason, rule.Caution, rule.Action, rule.Manual)
+            {
+                RuleId = rule.Title,
+                Appearance = rule.Category switch
+                {
+                    "Agent files" => OpportunityAppearance.Agent,
+                    "Git worktrees" => OpportunityAppearance.Project,
+                    "Test artifacts" or "Editor workspace data" => OpportunityAppearance.Other,
+                    _ => OpportunityAppearance.Cache
+                },
+                IsWorktree = rule.Category == "Git worktrees"
+            });
         }
         return found.OrderByDescending(o => o.DisplayBytes(scan.HasAllocationData))
             .ThenBy(o => o.Path, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -31,7 +43,7 @@ public static class OpportunityDetector
 
     private sealed record Rule(string Title, string Category, string Reason, string Caution, string Action, bool Manual = false);
 
-    private static Rule? Classify(ScanSnapshot scan, int directory, int parent, ReadOnlySpan<char> name, MarkerEvidence evidence)
+    private static Rule? Classify(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name, MarkerEvidence evidence)
     {
         if ((Is(name, "bin") || Is(name, "obj")) && evidence.Has(parent, Markers.DotNetProject))
             return new(".NET build output", "Build output", "A bin/obj directory beside a .NET project file.",
@@ -76,7 +88,7 @@ public static class OpportunityDetector
         return Additional(scan, directory, parent, name, direct, evidence);
     }
 
-    private static Rule? Additional(ScanSnapshot scan, int directory, int parent, ReadOnlySpan<char> name,
+    private static Rule? Additional(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name,
         Markers direct, MarkerEvidence evidence)
     {
         if (Is(name, "target"))
@@ -159,9 +171,9 @@ public static class OpportunityDetector
     }
 
     private static bool Is(ReadOnlySpan<char> value, string expected) => value.Equals(expected, StringComparison.OrdinalIgnoreCase);
-    private static int Parent(ScanSnapshot scan, int directory) => directory < 0 || directory == scan.RootIndex || scan.FirstLinks[directory] < 0
-        ? -1 : scan.Links[scan.FirstLinks[directory]].ParentIndex;
-    private static bool LocalAppData(ScanSnapshot scan, int directory) => ParentNamed(scan, directory, "Local")
+    private static int Parent(IOpportunityInventory scan, int directory) => directory < 0 || directory == scan.RootIndex || scan.PrimaryLink(directory) < 0
+        ? -1 : scan.LinkParent(scan.PrimaryLink(directory));
+    private static bool LocalAppData(IOpportunityInventory scan, int directory) => ParentNamed(scan, directory, "Local")
         && ParentNamed(scan, Parent(scan, directory), "AppData");
 
     [Flags]
@@ -181,7 +193,7 @@ public static class OpportunityDetector
     // One compact record per actual candidate or its immediate parent. General
     // directories only get an uncached scan for the existing venv/Git rules and
     // arbitrary-named CMake output. No child-name dictionaries or disk reads.
-    private sealed class MarkerEvidence(ScanSnapshot scan, CancellationToken token)
+    private sealed class MarkerEvidence(IOpportunityInventory scan, CancellationToken token)
     {
         private readonly Dictionary<int, CandidateMarkers> _candidates = [];
         private readonly record struct CandidateMarkers(Markers Flags, int Debug = -1, int Release = -1, int Deps = -1);
@@ -200,8 +212,8 @@ public static class OpportunityDetector
             foreach (int link in scan.Children(directory))
             {
                 if ((count++ & 1023) == 0) token.ThrowIfCancellationRequested();
-                int child = scan.Links[link].FileIndex;
-                if (scan.Records[child].IsDirectory && Has(child, Markers.CrateArchive)) return true;
+                int child = scan.LinkObject(link);
+                if (scan.IsDirectory(child) && Has(child, Markers.CrateArchive)) return true;
             }
             return false;
         }
@@ -212,7 +224,7 @@ public static class OpportunityDetector
             foreach (int link in scan.Children(directory))
             {
                 if ((count++ & 1023) == 0) token.ThrowIfCancellationRequested();
-                if (scan.Records[scan.Links[link].FileIndex].IsDirectory) continue;
+                if (scan.IsDirectory(scan.LinkObject(link))) continue;
                 var name = scan.Name(link);
                 if (Is(name, "pyvenv.cfg")) flags |= Markers.PythonEnvironment;
                 if (Is(name, ".git")) flags |= Markers.GitPointer;
@@ -229,8 +241,8 @@ public static class OpportunityDetector
             foreach (int link in scan.Children(directory))
             {
                 if ((count++ & 1023) == 0) token.ThrowIfCancellationRequested();
-                int file = scan.Links[link].FileIndex; var name = scan.Name(link);
-                if (scan.Records[file].IsDirectory)
+                int file = scan.LinkObject(link); var name = scan.Name(link);
+                if (scan.IsDirectory(file))
                 {
                     if (Is(name, "debug")) debug = file;
                     if (Is(name, "release")) release = file;
@@ -289,17 +301,17 @@ public static class OpportunityDetector
         }
         private static readonly string[] BrowserPrefixes = ["chromium-", "chromium_headless_shell-", "firefox-", "webkit-"];
     }
-    private static bool ParentNamed(ScanSnapshot scan, int parent, string name) => parent >= 0 &&
+    private static bool ParentNamed(IOpportunityInventory scan, int parent, string name) => parent >= 0 &&
         (parent == scan.RootIndex ? Is(Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.RootPath)), name)
-            : scan.FirstLinks[parent] >= 0 && Is(scan.Name(scan.FirstLinks[parent]), name));
-    private static bool AncestorNamed(ScanSnapshot scan, int directory, string name)
+            : scan.PrimaryLink(parent) >= 0 && Is(scan.Name(scan.PrimaryLink(parent)), name));
+    private static bool AncestorNamed(IOpportunityInventory scan, int directory, string name)
     {
         int remaining = scan.FileCount;
         while (directory >= 0 && remaining-- > 0)
         {
             if (ParentNamed(scan, directory, name)) return true;
-            if (directory == scan.RootIndex || scan.FirstLinks[directory] < 0) break;
-            directory = scan.Links[scan.FirstLinks[directory]].ParentIndex;
+            if (directory == scan.RootIndex || scan.PrimaryLink(directory) < 0) break;
+            directory = scan.LinkParent(scan.PrimaryLink(directory));
         }
         return false;
     }

@@ -4,6 +4,7 @@ using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
+using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 using SpaceMaid.Extensions.Contracts;
 
@@ -38,6 +39,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     internal string? LogPath => _diagnostics.FilePath;
     internal string? SettingsError { get; private set; }
     internal bool IsAdministrator => _administrator;
+    internal OpportunityCatalog Opportunities { get; }
     internal event Action? JobsChanged { add => _jobs.Changed += value; remove => _jobs.Changed -= value; }
 
     internal ExtensionRuntime(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Action<string> reveal,
@@ -49,6 +51,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         _settingsPath = Path.Combine(_dataRoot, "extensions.json");
         _reveal = reveal;
         _diagnostics = new ScanLog(logDirectory ?? ScanLog.DefaultDirectory);
+        Opportunities = new(_diagnostics.Record, _lifetime.Token);
         _jobs = new(_diagnostics.Record);
         _inventory = new(currentScan, isScanStale, _jobs.BeginDiscovery);
         _tools = new(_jobs.WaitForDiscoveryAsync, _diagnostics.Record, _administrator);
@@ -93,8 +96,8 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
                 var context = new ExtensionLoadContext(assemblyPath);
                 _contexts.Add(context);
                 Assembly assembly = context.LoadFromAssemblyPath(assemblyPath);
-                if (assembly.GetReferencedAssemblies().Any(reference => reference.Name is "SpaceMaid.Core" or "SpaceMaid.App"))
-                    throw new InvalidDataException("Extensions must reference the shared Contracts API instead of App or Core.");
+                if (assembly.GetReferencedAssemblies().Any(reference => reference.Name is "SpaceMaid.App"))
+                    throw new InvalidDataException("Extensions must reference the shared Contracts API instead of App implementation types.");
                 Type type = assembly.GetType(manifest.EntryType, throwOnError: true)!;
                 if (!type.IsPublic || type.IsAbstract || !typeof(ISpaceMaidExtension).IsAssignableFrom(type))
                     throw new InvalidDataException("The entry type does not implement the supported extension API.");
@@ -107,7 +110,8 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
-                FrameworkElement view = instance.CreateView();
+                FrameworkElement? view = instance.CreateView();
+                if (instance is IOpportunityExtension opportunities) Opportunities.Register(id, opportunities);
                 _loaded.Add(instance); instance = null;
                 _entries.Add(new(id, name, directory, "Loaded", view));
                 _diagnostics.Record("extension-loaded", new { Id = id, manifest.Version, manifest.ContractVersion });
@@ -207,7 +211,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
             catch (OperationCanceledException) { }
             catch (Exception ex) { _diagnostics.Record("extension-initialization-failed-during-disposal", new { Type = ex.GetType().Name, Error = ex.Message }); }
         // Stop owned work before plugin/catalog disposal.
-        await _jobs.DisposeAsync(); await _tools.DisposeAsync();
+        await _jobs.DisposeAsync(); await _tools.DisposeAsync(); await Opportunities.DisposeAsync();
         foreach (var extension in _loaded)
             try { await extension.DisposeAsync(); } catch (Exception ex) { _diagnostics.Record("extension-dispose-failed", new { Error = ex.Message }); }
         _loaded.Clear(); _diagnostics.Dispose(); _lifetime.Dispose();
@@ -229,6 +233,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         protected override Assembly? Load(AssemblyName assemblyName)
         {
             if (assemblyName.Name == typeof(ISpaceMaidExtension).Assembly.GetName().Name) return typeof(ISpaceMaidExtension).Assembly;
+            if (assemblyName.Name == typeof(IOpportunityInventory).Assembly.GetName().Name) return typeof(IOpportunityInventory).Assembly;
             if (assemblyName.Name is { } name && FrameworkAssemblies.Contains(name))
                 return Default.LoadFromAssemblyName(assemblyName);
             string? path = _resolver.ResolveAssemblyToPath(assemblyName);

@@ -8,7 +8,7 @@ public interface ISpaceMaidExtension : IAsyncDisposable
 {
     ExtensionDescriptor Descriptor { get; }
     Task InitializeAsync(IExtensionHost host, CancellationToken token);
-    FrameworkElement CreateView();
+    FrameworkElement? CreateView();
 }
 
 public interface IExtensionHost
@@ -38,7 +38,7 @@ public interface IInventoryReader
 }
 
 // Optional API v1 capabilities. Existing extensions and inventory readers do
-// not need to implement these; no scanner types cross the extension boundary.
+// not need to implement these; mutable scanner storage stays inside the host.
 public sealed record InventoryFolderSize(long LogicalBytes, long? AllocatedBytes, bool Complete,
     DateTime ObservedAtUtc, string Source, IReadOnlyList<string> Warnings);
 public interface IInventoryFolderSizes

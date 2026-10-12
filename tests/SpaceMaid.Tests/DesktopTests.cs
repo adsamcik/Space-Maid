@@ -749,6 +749,10 @@ public sealed class DesktopTests
 
                 stage = "loading the bundled Photos extension into its own assembly context";
                 PumpUntil(() => window.ExtensionsReady, TimeSpan.FromSeconds(10));
+                var extensionRuntime = Assert.IsType<SpaceMaid.App.Extensions.ExtensionRuntime>(typeof(MainWindow)
+                    .GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                var developerExtension = Assert.Single(extensionRuntime.Entries, value => value.Id == "space-maid.developer");
+                Assert.Equal("Loaded", developerExtension.Status); Assert.Null(developerExtension.View);
                 var photosView = Assert.IsAssignableFrom<FrameworkElement>(((ContentControl)window.FindName("PhotosContent")).Content);
                 Assert.NotSame(System.Runtime.Loader.AssemblyLoadContext.Default,
                     System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(photosView.GetType().Assembly));
@@ -1062,6 +1066,8 @@ public sealed class DesktopTests
                 CheckOpportunityValidation(window, app, artifactRoot);
                 stage = "confirming batch cleanup and refreshing its affected folders";
                 CheckOpportunityCleanup(window, app, artifactRoot);
+                stage = "keeping overlapping extension groups and selections separate";
+                CheckOverlappingOpportunityExtensions(window, app, artifactRoot);
                 stage = "retaining one helper across app scans and closing it with the window";
                 var helperStart = HelperLayoutSource.CreateAsync(false);
                 PumpUntil(() => helperStart.IsCompleted, TimeSpan.FromSeconds(10));
@@ -1232,6 +1238,126 @@ public sealed class DesktopTests
 
     private static long GiB(double value) => (long)(value * 1024 * 1024 * 1024);
 
+    private static void CheckOverlappingOpportunityExtensions(MainWindow window, Application app, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        var runtime = Assert.IsType<SpaceMaid.App.Extensions.ExtensionRuntime>(typeof(MainWindow)
+            .GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+        var provider = new OverlappingOpportunityProvider(fixture.Path);
+        runtime.Opportunities.Register("test.previews", provider);
+        string project = Directory.CreateDirectory(Path.Join(fixture.Path, "project")).FullName;
+        string bin = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
+        File.WriteAllText(Path.Join(project, "sample.csproj"), "<Project />");
+        string file = Path.Join(bin, "sample.dll"); File.WriteAllBytes(file, new byte[5000]);
+        var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(5)); var scan = scanning.GetAwaiter().GetResult();
+        var analysis = runtime.Opportunities.Analyze(scan, CancellationToken.None);
+        Assert.Equal(2, analysis.Findings.Count);
+        Assert.Single(analysis.Findings.Select(item => item.Path).Distinct());
+        ((TextBox)window.FindName("OpportunitySearch")).Text = "";
+        ((ComboBox)window.FindName("OpportunityTypeFilter")).SelectedIndex = 0;
+        var load = window.InitializeExplorerAsync(scan, analysis.Findings, default);
+        PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+        typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [scan, analysis.Findings, analysis.Groups, null, null, false]);
+        ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        var grouping = (ComboBox)window.FindName("OpportunityGroupingPicker");
+        grouping.SelectedIndex = 0;
+        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
+        var list = (ListBox)window.FindName("OpportunityGrid");
+        var groups = cards.Items.Cast<OpportunityGroupRow>().ToArray();
+        Assert.Equal(3, groups.Length);
+        var developer = Assert.Single(groups, group => group.Group.ProviderId == DeveloperOpportunityFixture.ProviderId);
+        var previewGroups = groups.Where(group => group.Group.ProviderId == "test.previews").ToArray();
+        Assert.Equal(2, previewGroups.Length);
+        Assert.All(groups, group => Assert.Equal(group.Group.ProviderId, Assert.Single(group.Matches).Item.ProviderId));
+        Assert.Same(previewGroups[0].Matches[0], previewGroups[1].Matches[0]);
+        Assert.NotSame(developer.Matches[0], previewGroups[0].Matches[0]);
+        window.UpdateLayout();
+        var previewContainer = cards.ItemContainerGenerator.ContainerFromItem(previewGroups[0]);
+        Descendants(previewContainer).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, previewGroups[0]))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(previewGroups[0].Checked); Assert.True(previewGroups[1].Checked); Assert.False(developer.Checked);
+        Assert.False(developer.Matches[0].Selected);
+        var refresh = window.RecheckFolderAsync(bin);
+        PumpUntil(() => refresh.IsCompleted, TimeSpan.FromSeconds(5)); refresh.GetAwaiter().GetResult();
+        groups = cards.Items.Cast<OpportunityGroupRow>().ToArray();
+        developer = Assert.Single(groups, group => group.Group.ProviderId == DeveloperOpportunityFixture.ProviderId);
+        previewGroups = groups.Where(group => group.Group.ProviderId == "test.previews").ToArray();
+        Assert.Equal(2, previewGroups.Length);
+        Assert.True(previewGroups[0].Checked); Assert.True(previewGroups[1].Checked); Assert.False(developer.Checked);
+        Assert.False(developer.Matches[0].Selected); // Same path never transfers consent between providers.
+        window.UpdateLayout();
+        previewContainer = cards.ItemContainerGenerator.ContainerFromItem(previewGroups[0]);
+        Descendants(previewContainer).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, previewGroups[0]))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("test.previews", Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>())).Item.ProviderId);
+        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        grouping.SelectedIndex = 1;
+        var navigation = (ListBox)window.FindName("OpportunityGroupList");
+        Assert.Equal(3, navigation.Items.Count); // One developer project plus two overlapping extension project groups.
+        foreach (var group in navigation.Items.Cast<OpportunityGroupRow>().ToArray())
+        {
+            navigation.SelectedItem = group;
+            var row = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
+            Assert.Equal(group.Group.ProviderId, row.Item.ProviderId);
+            Assert.Same(row, Assert.Single(group.Matches));
+            Assert.False(row.Selected);
+        }
+        grouping.SelectedIndex = 0;
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-extension-overlap.png"), 1220, 910);
+        grouping.SelectedIndex = 1;
+        ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(2, list.Items.Count);
+        foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
+        provider.Enabled = false; // Only this provider's rule disappears during fresh review.
+        Exception? failure = null; bool reviewed = false;
+        var closeReview = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+        {
+            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+            if (dialog is null) return;
+            try
+            {
+                reviewed = true;
+                var reviewedLocation = Assert.IsType<CleanupReviewRow>(Assert.Single(((ListBox)dialog.FindName("LocationList")).Items.Cast<object>()));
+                Assert.Equal(DeveloperOpportunityFixture.ProviderId, reviewedLocation.Location.ProviderId);
+                Assert.Equal(bin, reviewedLocation.Path);
+            }
+            catch (Exception error) { failure = error; }
+            finally { dialog.Close(); }
+        }, Dispatcher.CurrentDispatcher);
+        try
+        {
+            var review = window.ReviewSelectionAsync();
+            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10)); review.GetAwaiter().GetResult();
+            if (failure is not null) throw failure;
+            Assert.True(reviewed);
+            var retained = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
+            Assert.Equal(DeveloperOpportunityFixture.ProviderId, retained.Item.ProviderId);
+            Assert.True(retained.Selected); // Excluding another provider at this path must retain this valid selection.
+            Assert.Equal(5000, new FileInfo(file).Length);
+        }
+        finally { closeReview.Stop(); }
+    }
+
+    private sealed class OverlappingOpportunityProvider(string rootPath) : IOpportunityExtension
+    {
+        internal bool Enabled { get; set; } = true;
+        public OpportunityAnalysis Analyze(IOpportunityInventory inventory, CancellationToken token)
+        {
+            if (!Enabled || inventory.RootPath != rootPath) return new([], new([], []));
+            int directory = Enumerable.Range(0, inventory.FileCount).Single(index => inventory.IsDirectory(index)
+                && inventory.PrimaryLink(index) is >= 0 and var link && inventory.Name(link).SequenceEqual("bin"));
+            var finding = new Opportunity(directory, "Generated previews", "Preview cache", inventory.PathForFile(directory)!,
+                inventory.LogicalSize(directory), inventory.AllocatedSize(directory), "Generated fixture previews", "Review custom files", "Recycle", true)
+            { RuleId = "previews" };
+            OpportunityGroup Group(string key, string name) => new(key, name, inventory.RootPath, "Review", [finding], finding.AllocatedBytes);
+            return new([finding], new([Group("project:first", "Preview project"), Group("project:second", "Media project")], [],
+                Cleanup: [Group("cleanup:previews", "Preview cache"), Group("cleanup:review", "Previews to review")]));
+        }
+    }
+
     private static void CheckOpportunityBrowser(MainWindow window, Application app, string artifactRoot)
     {
         var builder = new ScanBuilder();
@@ -1329,7 +1455,8 @@ public sealed class DesktopTests
         ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         grouping.SelectedIndex = 2; filter.SelectedItem = "Build output"; navigation.SelectedIndex = 0;
         Assert.Equal(5, list.Items.Count); Assert.Contains("35 outside this view", selection.Text);
-        var selected = locations.Where(location => location.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || location.Path.Contains("good-shit", StringComparison.Ordinal)).Select(location => location.Path).ToHashSet(StringComparer.Ordinal);
+        var selected = locations.Where(location => location.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || location.Path.Contains("good-shit", StringComparison.Ordinal))
+            .Select(location => (location.ProviderId, location.Path, location.RuleId)).ToHashSet();
         publish.Invoke(window, [scan, locations, groups, selected, ((OpportunityRow)list.SelectedItem).Path, true]);
         Assert.Equal("Build output", ((TextBlock)window.FindName("OpportunityHeading")).Text);
         Assert.Equal("good-shit", search.Text); Assert.Equal("Build output", filter.SelectedItem);
@@ -1339,7 +1466,7 @@ public sealed class DesktopTests
         Assert.Equal(Visibility.Visible, ((StackPanel)window.FindName("EmptyState")).Visibility);
         Assert.Contains("40 outside this view", selection.Text);
         // This inventory is illustrative and must never be rechecked on disk.
-        var preview = new ReviewWindow(CleanupPlanner.Create(scan, locations.Where(location => selected.Contains(location.Path))));
+        var preview = new ReviewWindow(CleanupPlanner.Create(scan, locations.Where(location => selected.Contains((location.ProviderId, location.Path, location.RuleId)))));
         Assert.Equal(40, ((ListBox)preview.FindName("LocationList")).Items.Count);
         Assert.False(Descendants(preview.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Move to Recycle Bin")).IsEnabled);
         preview.Close();
@@ -1412,11 +1539,11 @@ public sealed class DesktopTests
             Assert.Equal(2, list.Items.Count); Assert.Contains("398 outside this view", selection.Text);
             Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
             // Retain language/project scope and existing selections through refreshed metadata publication.
-            var chosen = csharp.Matches.Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
+            var chosen = csharp.Matches.Select(row => row.SelectionIdentity).ToHashSet();
             publish.Invoke(window, [scan, locations, groups, chosen, ((OpportunityRow)list.SelectedItem).Path, true]);
             Assert.Equal(2, list.Items.Count); Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
             Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
-            var withoutProject = locations.Where(item => !item.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || !chosen.Contains(item.Path)).ToArray();
+            var withoutProject = locations.Where(item => !item.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || !chosen.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
             publish.Invoke(window, [scan, withoutProject, OpportunityGrouping.Build(scan, withoutProject), chosen, null, true]);
             Assert.Empty(list.Items); Assert.Equal(199, navigation.Items.Count);
             Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
@@ -1441,7 +1568,7 @@ public sealed class DesktopTests
             PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3)); // Never escape the selected build-language scope.
             ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Contains("400 outside this view", selection.Text);
-            var remaining = locations.Where(item => !chosen.Contains(item.Path)).ToArray();
+            var remaining = locations.Where(item => !chosen.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
             publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), chosen, null, true]);
             Assert.Empty(navigation.Items); Assert.Empty(list.Items);
             Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
@@ -1508,7 +1635,8 @@ public sealed class DesktopTests
             selectMatches.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.All(MatchingGroup().Matches, row => Assert.True(row.Selected));
             var retained = Capture([worktrees[0], worktrees[2]]);
-            var selectedWorktrees = retained.Keys.ToHashSet(StringComparer.Ordinal);
+            var selectedWorktrees = locations.Where(item => retained.ContainsKey(item.Path))
+                .Select(item => (item.ProviderId, item.Path, item.RuleId)).ToHashSet();
             publish.Invoke(window, [scan, locations, groups, selectedWorktrees, worktrees[0].Path, true]);
             Assert.Empty(facts); // Refresh invalidates displayed checks, while selected paths retain their guard policy.
             Assert.Equal(2, Capture([worktrees[0], worktrees[2]]).Count);
@@ -1628,9 +1756,9 @@ public sealed class DesktopTests
             Assert.Equal(name + " › " + tool, scope.Text); Assert.Equal(2, navigation.Items.Count);
             int perProject = tool == "Playwright" ? 2 : 1;
             Assert.Equal(perProject, list.Items.Count); Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
-            var selected = child.Matches.Select(row => row.Path).ToHashSet(StringComparer.Ordinal);
+            var selected = child.Matches.Select(row => row.SelectionIdentity).ToHashSet();
             string projectPath = ((OpportunityGroupRow)navigation.SelectedItem).Path;
-            var remaining = locations.Where(item => !selected.Contains(item.Path) || !item.Path.StartsWith(projectPath + "\\", StringComparison.Ordinal)).ToArray();
+            var remaining = locations.Where(item => !selected.Contains((item.ProviderId, item.Path, item.RuleId)) || !item.Path.StartsWith(projectPath + "\\", StringComparison.Ordinal)).ToArray();
             publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), selected, null, true]);
             Assert.Empty(list.Items); Assert.Single(navigation.Items.Cast<object>());
             Assert.Contains("No matching folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);

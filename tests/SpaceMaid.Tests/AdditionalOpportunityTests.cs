@@ -88,7 +88,7 @@ public sealed class AdditionalOpportunityTests
         var selected = OpportunityDetector.Find(original);
         Assert.Equal(2, selected.Count);
         File.Delete(manifest); File.Delete(tag); // Only owned fixture markers.
-        var validated = await OpportunityReviewValidator.ValidateAsync(original, selected);
+        var validated = await OpportunityReviewValidator.ValidateAsync(original, selected, discover: DeveloperOpportunityFixture.Find);
         Assert.Empty(validated.ValidatedLocations); Assert.Equal(2, validated.ExcludedPaths.Count);
         Assert.Contains(target, validated.ExcludedPaths); Assert.Contains(cache, validated.ExcludedPaths);
         Assert.Equal("preserve output", File.ReadAllText(output)); Assert.Equal("preserve source", File.ReadAllText(source));

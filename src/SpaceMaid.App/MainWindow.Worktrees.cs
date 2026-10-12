@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Windows.Controls;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.App;
 
@@ -27,11 +28,11 @@ public partial class MainWindow
     private void SelectWorktreeMatches_Click(object sender, RoutedEventArgs e)
     {
         if (_work is not null) return;
-        var paths = _cleanupGroups.FirstOrDefault(group => group.Key == "cleanup:old-worktrees")?.Locations
-            .Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
-        if (paths is null) return;
+        var members = _cleanupGroups.Where(group => group.Role == OpportunityGroupRole.MatchedWorktrees).SelectMany(group => group.Locations)
+            .Select(item => (item.ProviderId, item.DirectoryIndex, item.RuleId)).ToHashSet();
+        if (members.Count == 0) return;
         _changingOpportunitySelection = true;
-        try { foreach (var row in _rows) if (paths.Contains(row.Path)) row.Selected = true; }
+        try { foreach (var row in _rows) if (members.Contains(row.Identity)) row.Selected = true; }
         finally { _changingOpportunitySelection = false; }
         UpdateSelection();
     }
@@ -45,7 +46,7 @@ public partial class MainWindow
         _changingOpportunitySelection = true;
         try
         {
-            foreach (var row in _rows.Where(row => row.Selected && row.Category == "Git worktrees"))
+            foreach (var row in _rows.Where(row => row.Selected && row.Item.IsWorktree))
             {
                 if (!_worktreeAssessments.TryGetValue(row.Path, out var assessment) || !policy.Matches(assessment, DateTime.UtcNow))
                     row.Selected = false;
@@ -61,10 +62,9 @@ public partial class MainWindow
         var policy = CurrentWorktreePolicy;
         var matching = _worktreeAssessments.Values.Where(item => policy.Matches(item, DateTime.UtcNow))
             .Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
-        _cleanupGroups = _snapshot is { } scan ? CleanupGrouping.Build(scan, _rows.Select(row => row.Item).ToArray(), matching, worktreePolicy: policy) : [];
-        _cleanupGroups = _cleanupGroups.Select(group => group with { Children = group.Key == "cleanup:build"
-            ? _opportunityGroups.BuildLanguages : _opportunityGroups.CleanupBreakdowns?.GetValueOrDefault(group.Key) }).ToArray();
-        int total = _rows.Count(row => row.Category == "Git worktrees");
+        _cleanupGroups = _snapshot is { } scan && _extensions is not null ? OpportunityExtensions.BuildCleanupGroups(scan,
+            _rows.Select(row => row.Item).ToArray(), _opportunityGroups, new OpportunityGroupContext(matching, policy)) : [];
+        int total = _rows.Count(row => row.Item.IsWorktree);
         WorktreeOptionsToggle.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
         WorktreeOptionsToggle.Content = $"Worktrees · {total:N0}";
         if (total == 0) WorktreeOptionsToggle.IsChecked = false;
@@ -80,11 +80,11 @@ public partial class MainWindow
         WorktreeRuleHint.Text = policy.Mode == WorktreeCleanupMode.Old
             ? "Local changes protected · Branches kept"
             : "Cached upstream refs · Local changes protected · Branches kept";
-        var group = _cleanupGroups.FirstOrDefault(item => item.Key == "cleanup:old-worktrees");
-        SelectWorktreeMatchesButton.IsEnabled = group is { Locations.Count: > 0 };
+        var matchedGroups = _cleanupGroups.Where(item => item.Role == OpportunityGroupRole.MatchedWorktrees).ToArray();
+        SelectWorktreeMatchesButton.IsEnabled = matchedGroups.Any(group => group.Locations.Count > 0);
         WorktreeCheckSummary.Text = _worktreeAssessments.Count == 0
             ? $"{total:N0} worktrees · Not checked"
-            : $"{matching.Count:N0} {(matching.Count == 1 ? "worktree matches" : "worktrees match")} · {SizeText.Format(group?.ObservedBytes ?? 0)} observed · {_worktreeAssessments.Count:N0} of {total:N0} checked";
+            : $"{matching.Count:N0} {(matching.Count == 1 ? "worktree matches" : "worktrees match")} · {SizeText.Format(matchedGroups.Sum(group => group.ObservedBytes))} observed · {_worktreeAssessments.Count:N0} of {total:N0} checked";
     }
 
     private async void CheckWorktrees_Click(object sender, RoutedEventArgs e)
@@ -97,7 +97,7 @@ public partial class MainWindow
     internal async Task CheckWorktreesAsync()
     {
         if (_snapshot is not { } scan || _work is not null) return;
-        var locations = _rows.Where(row => row.Category == "Git worktrees").Select(row => row.Item).ToArray();
+        var locations = _rows.Where(row => row.Item.IsWorktree).Select(row => row.Item).DistinctBy(item => item.Path).ToArray();
         if (locations.Length == 0) return;
         using var work = new CancellationTokenSource();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(work.Token);
@@ -141,7 +141,7 @@ public partial class MainWindow
 
     private IReadOnlyDictionary<string, WorktreeCleanupPolicy> SelectedCheckedWorktrees(IReadOnlyList<Opportunity> selected)
     {
-        foreach (var row in _rows.Where(row => row.Category == "Git worktrees"))
+        foreach (var row in _rows.Where(row => row.Item.IsWorktree))
             if (selected.Any(location => GitWorktreeGuard.Covers(location.Path, row.Path)))
                 _worktreesRequiringCheck.TryAdd(row.Path, CurrentWorktreePolicy);
         var captured = _worktreesRequiringCheck.Where(item => selected.Any(location => GitWorktreeGuard.Covers(location.Path, item.Key)))
