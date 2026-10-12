@@ -24,7 +24,7 @@ public sealed record CleanupPreview
 public static class CleanupPlanner
 {
     public static CleanupPlan Prepare(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default,
-        IReadOnlyDictionary<string, string>? blockedPaths = null, OpportunityDiscovery? discover = null)
+        IReadOnlyDictionary<string, string>? blockedPaths = null, OpportunityDiscovery? discover = null, BuildCleanupPolicy? buildPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
         ArgumentNullException.ThrowIfNull(discover);
@@ -35,6 +35,22 @@ public static class CleanupPlanner
             token.ThrowIfCancellationRequested();
             actual.TryAdd((finding.DirectoryIndex, finding.ProviderId, finding.RuleId, finding.Title, finding.Category, finding.Path), finding);
         }
+        var policy = buildPolicy ?? BuildCleanupPolicy.Default;
+        var assessments = BuildCleanupProtection.Assess(scan, actual.Values.ToArray(), policy, token);
+        var protectedDirectories = new Dictionary<int, string>();
+        foreach (var finding in actual.Values.Where(finding => finding.IsBuildOutput))
+        {
+            if (assessments[finding.DirectoryIndex].State != CleanupReadiness.Protected) continue;
+            int directory = finding.DirectoryIndex, remaining = scan.FileCount;
+            protectedDirectories.TryAdd(directory, assessments[directory].Reason);
+            while (directory != scan.RootIndex && remaining-- > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                int link = scan.PrimaryLink(directory);
+                if (link < 0 || (directory = scan.Links[link].ParentIndex) < 0) break;
+                protectedDirectories.TryAdd(directory, "Contains protected build files · Kept");
+            }
+        }
         var valid = new List<Opportunity>(); var blocked = new List<CleanupBlockedLocation>();
         var originals = new Dictionary<int, Opportunity>();
         foreach (var choice in selected)
@@ -42,6 +58,8 @@ public static class CleanupPlanner
             token.ThrowIfCancellationRequested();
             if (blockedPaths?.TryGetValue(choice.Path, out string? reason) == true)
             { blocked.Add(new(choice, reason)); continue; }
+            if (protectedDirectories.TryGetValue(choice.DirectoryIndex, out string? protection))
+            { blocked.Add(new(choice, protection)); continue; }
             if (actual.TryGetValue((choice.DirectoryIndex, choice.ProviderId, choice.RuleId, choice.Title, choice.Category, choice.Path), out var finding))
             { valid.Add(finding); originals.TryAdd(choice.DirectoryIndex, choice); }
             else blocked.Add(new(choice, "This location does not match an opportunity detected in the current inventory. Recheck it before cleanup."));
@@ -62,7 +80,28 @@ public static class CleanupPlanner
         }
         token.ThrowIfCancellationRequested();
         var preview = eligible.Count == collapsed.Locations.Count ? collapsed : Create(scan, eligible, token);
-        return new(scan, preview, targets, blocked);
+        return new(scan, preview, targets, blocked, policy, assessments);
+    }
+
+    // A review can narrow consent, never add a target or recapture a replacement.
+    public static CleanupPlan Restrict(CleanupPlan plan, IEnumerable<Opportunity> selected, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan); ArgumentNullException.ThrowIfNull(selected);
+        var allowed = plan.Preview.Locations.Select((item, index) => (Item: item, Target: plan.Targets[index]))
+            .ToDictionary(pair => (pair.Item.ProviderId, pair.Item.Path, pair.Item.RuleId));
+        var keys = new HashSet<(string, string, string)>();
+        foreach (var item in selected)
+        {
+            token.ThrowIfCancellationRequested();
+            var key = (item.ProviderId, item.Path, item.RuleId);
+            if (!allowed.TryGetValue(key, out var pair)) throw new ArgumentException("Review can only keep previously checked folders.", nameof(selected));
+            keys.Add(key);
+        }
+        // Preserve original execution order and exact captured native targets.
+        var ordered = plan.Preview.Locations.Where(item => keys.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
+        return new(plan.Snapshot, Create(plan.Snapshot, ordered, token),
+            ordered.Select(item => allowed[(item.ProviderId, item.Path, item.RuleId)].Target),
+            plan.BlockedLocations, plan.BuildPolicy, plan.BuildAssessments);
     }
 
     public static CleanupPreview Create(ScanSnapshot scan, IEnumerable<Opportunity> selected,

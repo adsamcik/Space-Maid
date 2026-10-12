@@ -9,6 +9,58 @@ namespace SpaceMaid.Tests;
 public sealed class CleanupBatchTests
 {
     [Fact]
+    public async Task AReadyBuildThatBecomesUncertainAfterConfirmationIsSkippedWithoutRecycling()
+    {
+        using var fixture = new TestDirectory();
+        var project = CreateProject(fixture.Path, "changed-rebuildability", 'r', 4096);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var plan = CleanupPlanner.Prepare(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        var captured = Assert.Single(plan.Preview.Locations);
+        Assert.Equal(CleanupReadiness.Ready, plan.BuildAssessments[captured.DirectoryIndex].State);
+        IReadOnlyList<Opportunity> Discover(ScanSnapshot current, CancellationToken token) =>
+            DeveloperOpportunityFixture.Find(current, token).Select(finding => finding with { IsRegeneratable = false }).ToArray();
+        var result = await CleanupBatch.ExecuteAsync(plan, 0, new InlineProgress(_ => { }), default,
+            (_, _) => { }, discover: Discover);
+        var skipped = Assert.Single(result.Locations);
+        Assert.Equal(CleanupOutcome.Skipped, skipped.Outcome);
+        Assert.False(skipped.Attempted); Assert.Null(skipped.Recycle);
+        Assert.Equal(0, result.RecycledCount);
+        Assert.Equal(project.Content, File.ReadAllText(project.File));
+        Assert.Equal(project.SourceContent, File.ReadAllText(project.Source));
+        Assert.True(Directory.Exists(project.Output));
+    }
+
+    [Fact]
+    public async Task RecentlyTouchedBuildsAreSkippedBothAfterConfirmationAndAfterTheInitialFreshCheck()
+    {
+        foreach (bool touchAfterFreshCheck in new[] { false, true })
+        {
+            using var fixture = new TestDirectory();
+            var project = CreateProject(fixture.Path, "active-build", 'x', 4096);
+            var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+            var plan = CleanupPlanner.Prepare(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+            Assert.True(plan.CanExecute);
+            if (!touchAfterFreshCheck) File.SetLastWriteTimeUtc(project.File, DateTime.UtcNow);
+            int discoveryCalls = 0;
+            IReadOnlyList<Opportunity> Discover(ScanSnapshot current, CancellationToken token)
+            {
+                var found = DeveloperOpportunityFixture.Find(current, token);
+                if (touchAfterFreshCheck && ++discoveryCalls == 1)
+                    File.SetLastWriteTimeUtc(project.File, DateTime.UtcNow);
+                return found;
+            }
+            var result = await CleanupBatch.ExecuteAsync(plan, 0, new InlineProgress(_ => { }), default,
+                (_, _) => { }, discover: Discover);
+            var skipped = Assert.Single(result.Locations);
+            Assert.Equal(CleanupOutcome.Skipped, skipped.Outcome);
+            Assert.False(skipped.Attempted); Assert.Null(skipped.Recycle);
+            Assert.Equal(0, result.RecycledCount);
+            Assert.Equal(project.Content, File.ReadAllText(project.File));
+            Assert.Equal(project.SourceContent, File.ReadAllText(project.Source));
+        }
+    }
+
+    [Fact]
     public async Task ChangedRulesAndReplacedNativeFoldersAreSkippedBeforeRecycling()
     {
         using var fixture = new TestDirectory();
@@ -117,6 +169,7 @@ public sealed class CleanupBatchTests
         File.WriteAllText(source, sourceContent);
         string output = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
         string file = Path.Join(output, "result.dll"), contents = new(content, bytes); File.WriteAllText(file, contents);
+        BuildActivityFixture.AgeProject(project);
         return new(marker, source, sourceContent, output, file, contents);
     }
     private static ScanSnapshot AsLogical(ScanSnapshot scan) => new(scan.RootPath, "Basic folder scan", scan.Records,

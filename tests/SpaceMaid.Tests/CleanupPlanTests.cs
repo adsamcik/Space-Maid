@@ -73,6 +73,7 @@ public sealed class CleanupPlanTests
         string marker = Path.Join(env, "pyvenv.cfg"); File.WriteAllText(marker, "home = fixture");
         string cache = Directory.CreateDirectory(Path.Join(env, "__pycache__")).FullName;
         string file = Path.Join(cache, "module.pyc"); File.WriteAllBytes(file, new byte[4096]);
+        BuildActivityFixture.AgeProject(fixture.Path);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var selected = OpportunityDetector.Find(scan); Assert.Equal(2, selected.Count);
         var plan = CleanupPlanner.Prepare(scan, selected, discover: DeveloperOpportunityFixture.Find);
@@ -128,6 +129,7 @@ public sealed class CleanupPlanTests
         File.WriteAllText(Path.Join(project, "app.csproj"), "<Project />");
         string output = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
         string file = Path.Join(output, "result.dll"); File.WriteAllBytes(file, new byte[bytes]);
+        BuildActivityFixture.AgeProject(project);
         return (output, file);
     }
     private static ScanSnapshot AsLogical(ScanSnapshot scan) => new(scan.RootPath, "Basic folder scan", scan.Records,

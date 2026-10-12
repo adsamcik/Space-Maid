@@ -47,6 +47,7 @@ public partial class MainWindow
         using var log = StartActionLog("recycle", scan.EntryPath(link) ?? scan.RootPath);
         _work = work;
         bool started = false;
+        RecycleResult? outcome = null;
         try
         {
             SetBusy(true);
@@ -59,7 +60,8 @@ public partial class MainWindow
             { log.Record("recycle-confirmation-cancelled", new { target.Path }); return null; }
             StatusText.Text = $"Moving to Recycle Bin: {target.Path} · Windows shows progress and cancellation.";
             started = true;
-            var result = await FolderRecycler.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token);
+            var result = await FolderRecycler.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
+            outcome = result;
             if (!_closing)
             {
                 log.Record("recycle-result", result);
@@ -84,20 +86,23 @@ public partial class MainWindow
         }
         catch (OperationCanceledException)
         {
-            if (!_closing && started) MarkScanStale("Recycling cancelled. Some contents may already have moved. Recheck or rescan to refresh the results.");
-            return null;
+            if (!_closing && started) MarkScanStale(outcome is { Cancelled: false }
+                ? "Folder moved. Refresh cancelled; recheck to update results."
+                : "Recycling cancelled. Some contents may already have moved. Recheck or rescan to refresh the results.");
+            return outcome;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or UnauthorizedAccessException
             or Win32Exception or COMException or InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {
             if (!_closing)
             {
-                string message = $"Could not recycle the folder: {ex.Message}";
+                string message = outcome is { Cancelled: false } ? "Folder moved. Refresh failed; recheck to update results."
+                    : $"Could not recycle the folder: {ex.Message}";
                 if (started) MarkScanStale(message + " Results may be out of date. Rescan to check current contents.");
                 else StatusText.Text = message;
-                log.Record("recycle-or-recheck-failed", new { Error = ex.ToString(), started });
+                log.Record(outcome is { Cancelled: false } ? "recycle-refresh-failed" : "recycle-or-recheck-failed", new { Error = ex.ToString(), started });
             }
-            return null;
+            return outcome;
         }
         finally
         {

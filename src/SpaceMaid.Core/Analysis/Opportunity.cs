@@ -11,6 +11,8 @@ public sealed record Opportunity(
     public string RuleId { get; init; } = "";
     public OpportunityAppearance Appearance { get; init; } = OpportunityAppearance.Other;
     public bool IsWorktree { get; init; }
+    public bool IsBuildOutput { get; init; }
+    public bool IsRegeneratable { get; init; }
     public long DisplayBytes(bool hasAllocationData) => hasAllocationData ? AllocatedBytes : LogicalBytes;
 }
 

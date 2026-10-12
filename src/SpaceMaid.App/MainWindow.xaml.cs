@@ -40,6 +40,7 @@ public partial class MainWindow : Window
         if (_startupOffered) return;
         _startupOffered = true;
         LoadColumnLayout();
+        LoadBuildCleanupSettings();
         _ = RefreshDriveChoicesAsync();
         if (!Elevation.IsAdministrator)
         {
@@ -248,6 +249,8 @@ public partial class MainWindow : Window
         UpdateFastScanButton(busy);
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        ScanProgressBar.IsIndeterminate = true;
+        BuildKeepRecentDaysBox.IsEnabled = !busy;
         OpportunityGrid.IsEnabled = !busy;
         GroupBrowserControls.IsEnabled = !busy;
         OpportunityFilters.IsEnabled = !busy;
@@ -319,6 +322,14 @@ public partial class MainWindow : Window
         var selected = _rows.Where(r => r.Selected).Select(r => r.Item).ToArray();
         var checkedWorktrees = SelectedCheckedWorktrees(selected);
         if (selected.Length == 0) return;
+        if (_cleanupSettingsUnavailable)
+        {
+            ViewOptionsToggle.IsChecked = true;
+            StatusText.Text = "Set build retention in View options before reviewing.";
+            return;
+        }
+        if (!SaveBuildRetention()) return;
+        var buildPolicy = CurrentBuildPolicy;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("validate-review", scan.RootPath);
         _work = work;
@@ -328,14 +339,22 @@ public partial class MainWindow : Window
         try
         {
             log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale, WorktreePolicies = checkedWorktrees });
-            var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record, DiscoverOpportunities);
+            var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record, DiscoverOpportunities,
+                new Progress<OpportunityValidationProgress>(update =>
+                {
+                    if (_closing || !ReferenceEquals(_work, work)) return;
+                    StatusText.Text = $"Checking folders · {update.Completed:N0} / {update.Total:N0}";
+                    ScanProgressBar.IsIndeterminate = false;
+                    ScanProgressBar.Maximum = Math.Max(1, update.Total);
+                    ScanProgressBar.Value = update.Completed;
+                }));
             var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
                 new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking worktree… " + path; }));
             _worktreeCheckTask = gitCheck;
             IReadOnlyDictionary<string, string> gitBlocks;
             try { gitBlocks = await gitCheck; }
             finally { if (ReferenceEquals(_worktreeCheckTask, gitCheck)) _worktreeCheckTask = null; }
-            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks, DiscoverOpportunities), work.Token);
+            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks, DiscoverOpportunities, buildPolicy), work.Token);
             work.Token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             if (validation.CanMergeInventory)
@@ -374,11 +393,11 @@ public partial class MainWindow : Window
             if (plan.Preview.Locations.Count + plan.BlockedLocations.Count > 0)
             {
                 var displayed = _snapshot!;
-                new ReviewWindow(plan, note, (progress, token) =>
+                new ReviewWindow(plan, note, (chosenPlan, progress, token) =>
                 {
-                    var cleanup = ExecuteCleanupAsync(plan, displayed, progress, token, work, log, checkedWorktrees);
+                    var cleanup = ExecuteCleanupAsync(chosenPlan, displayed, progress, token, work, log, checkedWorktrees);
                     _cleanupTask = cleanup; return cleanup;
-                }) { Owner = this }.ShowDialog();
+                }, _cleanupGroups) { Owner = this }.ShowDialog();
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or Win32Exception

@@ -68,6 +68,30 @@ public sealed class FolderDeletionTarget
             throw new InvalidOperationException("This folder has been replaced since confirmation. Rescan before deleting it.");
     }
 
+    // Check only the exact destination reported by Windows. No Recycle Bin
+    // traversal is needed, and a successful callback cannot substitute a child
+    // or unrelated recycled folder for the confirmed root.
+    public void ValidateRecycledIdentity(string recycledPath)
+    {
+        string root = System.IO.Path.GetPathRoot(Path)!;
+        if (!System.IO.Path.IsPathFullyQualified(recycledPath)
+            || !recycledPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Windows returned an unexpected Recycle Bin destination.");
+        string[] parts = recycledPath[root.Length..].Split('\\');
+        if (parts.Length != 3 || !parts[0].Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)
+            || !parts[1].StartsWith("S-1-", StringComparison.OrdinalIgnoreCase)
+            || !parts[2].StartsWith("$R", StringComparison.OrdinalIgnoreCase)
+            || parts.Any(p => p is "." or ".." || p.Contains('/') || p.EndsWith('.') || p.EndsWith(' ')))
+            throw new IOException("Windows returned an unexpected Recycle Bin destination.");
+
+        var live = ReadIdentity(recycledPath);
+        if (live.Identity != _identity || live.Volume != _volume)
+            throw new IOException("Windows did not recycle the confirmed folder. Recheck this folder before trying again.");
+        try { File.GetAttributes(Path); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
+        throw new IOException("The original folder is still present. Recheck this folder before trying again.");
+    }
+
     internal static string ValidatePath(string path)
     {
         if (!System.IO.Path.IsPathFullyQualified(path) || path.StartsWith("\\", StringComparison.Ordinal))

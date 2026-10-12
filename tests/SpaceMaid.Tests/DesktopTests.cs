@@ -37,6 +37,7 @@ public sealed class DesktopTests
                 File.WriteAllText(Path.Join(project, "sample.csproj"), "<Project />");
                 string bin = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
                 File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[8192]);
+                BuildActivityFixture.AgeProject(project);
                 stage = "loading application resources";
                 app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
 #pragma warning disable WPF0001
@@ -49,6 +50,8 @@ public sealed class DesktopTests
                 window.ExtensionDataRoot = Path.Join(fixture.Path, "extensions");
                 window.DriveHistoryPath = Path.Join(fixture.Path, "drive-history.json");
                 window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
+                window.CleanupSettingsPath = Path.Join(fixture.Path, "cleanup-settings.json");
+                window.LoadBuildCleanupSettings();
                 string fixtureRoot = Path.GetPathRoot(fixture.Path)!;
                 window.DriveProvider = () => [new(fixtureRoot, "Development", DriveDiscovery.VolumeId(fixtureRoot), true, GiB(500), GiB(20)),
                     new(@"R:\", "", null, false, UnavailableReason: "Not available"), new(@"S:\", "Network drive", null, true)];
@@ -64,6 +67,22 @@ public sealed class DesktopTests
                     foreach (var choice in app.Windows.OfType<StartupWindow>().ToArray()) choice.Close();
                 }));
                 window.Show();
+                stage = "keeping the build retention preference bounded and persistent";
+                var buildRetention = (TextBox)window.FindName("BuildKeepRecentDaysBox");
+                Assert.Equal("3", buildRetention.Text);
+                File.WriteAllText(window.CleanupSettingsPath, "{invalid");
+                window.LoadBuildCleanupSettings();
+                Assert.Contains("unavailable", ((TextBlock)window.FindName("StatusText")).Text, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("{invalid", File.ReadAllText(window.CleanupSettingsPath));
+                buildRetention.Text = "7";
+                Assert.True(window.SaveBuildRetention());
+                Assert.Equal(7, window.CurrentBuildPolicy.KeepRecentDays);
+                Assert.Equal(7, BuildCleanupSettings.Load(window.CleanupSettingsPath).KeepRecentDays);
+                buildRetention.Text = "0";
+                Assert.False(window.SaveBuildRetention()); Assert.Equal(7, window.CurrentBuildPolicy.KeepRecentDays);
+                buildRetention.Text = "3";
+                Assert.True(window.SaveBuildRetention()); Assert.Equal(3, window.CurrentBuildPolicy.KeepRecentDays);
+                ((ToggleButton)window.FindName("ViewOptionsToggle")).IsChecked = false;
                 stage = "choosing a drive without starting a scan";
                 var drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
@@ -1064,6 +1083,8 @@ public sealed class DesktopTests
                 CheckAdditionalCleanupCategories(window, app, artifactRoot);
                 stage = "validating stale selections before cleanup review";
                 CheckOpportunityValidation(window, app, artifactRoot);
+                stage = "reviewing a thousand cleanup folders with bounded pages and bulk exclusions";
+                CheckBulkCleanupReview(app, artifactRoot);
                 stage = "confirming batch cleanup and refreshing its affected folders";
                 CheckOpportunityCleanup(window, app, artifactRoot);
                 stage = "keeping overlapping extension groups and selections separate";
@@ -1249,6 +1270,7 @@ public sealed class DesktopTests
         string bin = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
         File.WriteAllText(Path.Join(project, "sample.csproj"), "<Project />");
         string file = Path.Join(bin, "sample.dll"); File.WriteAllBytes(file, new byte[5000]);
+        BuildActivityFixture.AgeProject(project);
         var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(5)); var scan = scanning.GetAwaiter().GetResult();
         var analysis = runtime.Opportunities.Analyze(scan, CancellationToken.None);
@@ -1467,7 +1489,8 @@ public sealed class DesktopTests
         Assert.Contains("40 outside this view", selection.Text);
         // This inventory is illustrative and must never be rechecked on disk.
         var preview = new ReviewWindow(CleanupPlanner.Create(scan, locations.Where(location => selected.Contains((location.ProviderId, location.Path, location.RuleId)))));
-        Assert.Equal(40, ((ListBox)preview.FindName("LocationList")).Items.Count);
+        Assert.Equal(40, ((ListBox)preview.FindName("GroupList")).Items.Cast<CleanupReviewGroup>().Single(group => group.Key == "all").Rows.Count);
+        Assert.InRange(((ListBox)preview.FindName("LocationList")).Items.Count, 0, 40);
         Assert.False(Descendants(preview.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Move to Recycle Bin")).IsEnabled);
         preview.Close();
         search.Text = ""; filter.SelectedIndex = 0; grouping.SelectedIndex = 1;
@@ -1792,6 +1815,7 @@ public sealed class DesktopTests
         string output = Path.Join(bin, "sample.dll"), removed = Path.Join(obj, "sample.o");
         File.WriteAllBytes(output, new byte[4096]); File.WriteAllBytes(removed, new byte[8192]);
         File.WriteAllBytes(Path.Join(other, "old.dat"), new byte[512]);
+        BuildActivityFixture.AgeProject(fixture.Path);
         var scanTask = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
         var scan = scanTask.GetAwaiter().GetResult();
@@ -1799,12 +1823,22 @@ public sealed class DesktopTests
         var list = (ListBox)window.FindName("OpportunityGrid");
         Assert.Equal(2, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
+        File.WriteAllText(window.CleanupSettingsPath, "{invalid");
+        window.LoadBuildCleanupSettings();
+        var blockedReview = window.ReviewSelectionAsync();
+        Assert.True(blockedReview.IsCompletedSuccessfully);
+        Assert.DoesNotContain(app.Windows.OfType<ReviewWindow>(), review => review.IsVisible);
+        Assert.Equal("{invalid", File.ReadAllText(window.CleanupSettingsPath));
+        ((TextBox)window.FindName("BuildKeepRecentDaysBox")).Text = "3";
+        Assert.True(window.SaveBuildRetention());
+        ((ToggleButton)window.FindName("ViewOptionsToggle")).IsChecked = false;
         var search = (TextBox)window.FindName("OpportunitySearch");
         search.Text = "bin";
         PumpUntil(() => list.Items.Count == 1, TimeSpan.FromSeconds(3));
         File.WriteAllBytes(output, new byte[16384]);
         File.Delete(removed); Directory.Delete(obj);
         File.WriteAllBytes(Path.Join(other, "old.dat"), new byte[20000]);
+        BuildActivityFixture.AgeProject(fixture.Path);
         window.MarkScanStale("Unrelated fixture data is out of date.", [new(other)]);
         Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
         Assert.True(((Button)window.FindName("SelectListedButton")).IsEnabled);
@@ -1829,6 +1863,7 @@ public sealed class DesktopTests
         Publish(basic);
         Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>())).Selected = true;
         File.WriteAllBytes(output, new byte[32768]);
+        BuildActivityFixture.AgeProject(fixture.Path);
         window.MarkScanStale("Logical-only fixture data is out of date.");
         ReviewAndAssert(32768, "Other folders retain", "review-validated-logical.png", logical: true);
         Assert.Same(basic, Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan);
@@ -1904,7 +1939,7 @@ public sealed class DesktopTests
                     var location = Assert.IsType<CleanupReviewRow>(Assert.Single(((ListBox)dialog.FindName("LocationList")).Items.Cast<object>()));
                     Assert.Equal(bin, location.Path); Assert.Equal(expectedBytes, location.Location.LogicalBytes);
                     Assert.Contains(note, ((TextBlock)dialog.FindName("ValidationText")).Text);
-                    Assert.Equal(logical, ((TextBlock)dialog.FindName("EstimateCaption")).Text.Contains("physical saving unknown", StringComparison.Ordinal));
+                    Assert.Equal(logical, ((TextBlock)dialog.FindName("EstimateCaption")).Text.Contains("Logical size", StringComparison.Ordinal));
                     Assert.True(((Button)dialog.FindName("CleanupButton")).IsEnabled);
                     Assert.True(((Button)dialog.FindName("CloseButton")).IsDefault);
                     Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", render), 860, 740);
@@ -1933,6 +1968,7 @@ public sealed class DesktopTests
         string obj = Directory.CreateDirectory(Path.Join(fixture.Path, "obj")).FullName;
         File.WriteAllText(Path.Join(bin, "sample.dll"), "rebuildable fixture");
         File.WriteAllText(Path.Join(obj, "sample.o"), "rebuildable fixture");
+        BuildActivityFixture.AgeProject(fixture.Path);
         var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(5)); var scan = scanning.GetAwaiter().GetResult();
         var findings = OpportunityDetector.Find(scan);
@@ -1973,7 +2009,7 @@ public sealed class DesktopTests
                     result = completed;
                     Assert.Equal(2, result.RecycledCount); Assert.False(result.Cancelled);
                     Assert.All(result.Locations, item => Assert.Equal(CleanupOutcome.Recycled, item.Outcome));
-                    Assert.Contains("Affected folders refreshed", ((TextBlock)dialog.FindName("ResultText")).Text);
+                    Assert.Contains("Affected folders refreshed", ((TextBlock)dialog.FindName("ResultDetailText")).Text);
                     Assert.Contains("Space stays occupied", ((TextBlock)dialog.FindName("ResultText")).Text);
                     Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-results.png"), 860, 740);
                     dialog.Close();
@@ -2004,6 +2040,103 @@ public sealed class DesktopTests
                 foreach (var item in result.Locations)
                     if (item.Recycle?.RecycledPath is { } destination) DeletionTests.RestoreFixture(destination, item.Location.Path);
         }
+    }
+
+    private static void CheckBulkCleanupReview(Application app, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        var recentFiles = new List<string>();
+        for (int index = 0; index < 1000; index++)
+        {
+            string project = Directory.CreateDirectory(Path.Join(fixture.Path, $"project-{index:0000}")).FullName;
+            bool cargo = index is >= 700 and < 800, generic = index is >= 800 and < 900;
+            File.WriteAllText(Path.Join(project, cargo ? "Cargo.toml" : generic ? "package.json" : "app.csproj"), "owned fixture");
+            string output = Directory.CreateDirectory(Path.Join(project, cargo ? "target" : generic ? "dist" : "bin")).FullName;
+            string file = Path.Join(output, cargo ? "result.rlib" : generic ? "result.js" : "result.dll");
+            File.WriteAllBytes(file, new byte[1024]);
+            if (cargo) File.WriteAllText(Path.Join(output, ".rustc_info.json"), "owned fixture");
+            if (index >= 900) recentFiles.Add(file);
+        }
+        BuildActivityFixture.AgeProject(fixture.Path);
+        foreach (string file in recentFiles) File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+        var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(10)); var scan = scanning.GetAwaiter().GetResult();
+        var findings = DeveloperOpportunityFixture.Find(scan);
+        Assert.Equal(1000, findings.Count);
+        var plan = CleanupPlanner.Prepare(scan, findings, discover: DeveloperOpportunityFixture.Find);
+        Assert.Equal(900, plan.Targets.Count); Assert.Equal(100, plan.BlockedLocations.Count);
+        Assert.Equal(800, plan.BuildAssessments.Values.Count(item => item.State == CleanupReadiness.Ready));
+        Assert.Equal(100, plan.BuildAssessments.Values.Count(item => item.State == CleanupReadiness.NeedsReview));
+        var groups = findings.GroupBy(item => item.Title).Select(group => new OpportunityGroup(group.Key, group.Key,
+            fixture.Path, "Build files", group.ToArray(), group.Sum(item => item.AllocatedBytes))).ToArray();
+        CleanupPlan? confirmed = null;
+        var dialog = new ReviewWindow(plan, "Owned illustrative inventory · No files will move.", (chosen, _, _) =>
+        {
+            confirmed = chosen;
+            return Task.FromResult(new CleanupBatchResult(chosen.Preview.Locations.Select(item =>
+                new CleanupLocationResult(item, CleanupOutcome.NotProcessed, "Fixture preview only")).ToArray(), null));
+        }, groups);
+        dialog.ShowActivated = false; dialog.ShowInTaskbar = false; dialog.WindowStartupLocation = WindowStartupLocation.Manual;
+        dialog.Left = -10000; dialog.Top = -10000; dialog.Show();
+        try
+        {
+            var locations = (ListBox)dialog.FindName("LocationList");
+            var navigation = (ListBox)dialog.FindName("GroupList");
+            var search = (TextBox)dialog.FindName("SearchBox");
+            var cleanup = (Button)dialog.FindName("CleanupButton");
+            var estimate = (TextBlock)dialog.FindName("EstimateCaption");
+            var all = navigation.Items.Cast<CleanupReviewGroup>().Single(group => group.Key == "all");
+            var rows = all.Rows;
+            Assert.Equal(1000, rows.Count); Assert.Equal(800, rows.Count(row => row.Selected));
+            Assert.All(rows.Where(row => row.Assessment.State == CleanupReadiness.NeedsReview), row => Assert.False(row.Selected));
+            Assert.All(rows.Where(row => row.Assessment.State == CleanupReadiness.Protected), row => Assert.False(row.CanSelect));
+            Assert.Equal(100, locations.Items.Count);
+            Assert.Contains("of 800", ((TextBlock)dialog.FindName("PageText")).Text);
+            ((Button)dialog.FindName("NextPage")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.StartsWith("101–200", ((TextBlock)dialog.FindName("PageText")).Text);
+            Assert.Equal(100, locations.Items.Count);
+            search.Text = "project-0012";
+            var excluded = Assert.IsType<CleanupReviewRow>(Assert.Single(locations.Items.Cast<object>()));
+            excluded.Selected = false;
+            PumpUntil(() => cleanup.IsEnabled && estimate.Text.Contains("799 folders", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+            search.Text = "";
+            Assert.False(rows.Single(row => row.Path.Contains("project-0012", StringComparison.Ordinal)).Selected);
+            var cargo = navigation.Items.Cast<CleanupReviewGroup>().Single(group => group.Name == "Cargo build output");
+            navigation.SelectedItem = cargo; cargo.Checked = false;
+            PumpUntil(() => cleanup.IsEnabled && estimate.Text.Contains("699 folders", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+            ((RadioButton)dialog.FindName("ManualFilter")).IsChecked = true;
+            var manualGroup = navigation.Items.Cast<CleanupReviewGroup>().Single(group => group.Name == "Possible Node build output");
+            navigation.SelectedItem = manualGroup; Assert.Equal(100, locations.Items.Count);
+            Assert.All(locations.Items.Cast<CleanupReviewRow>(), row => Assert.False(row.Selected));
+            manualGroup.Checked = true;
+            PumpUntil(() => cleanup.IsEnabled && estimate.Text.Contains("799 folders", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+            ((RadioButton)dialog.FindName("KeptFilter")).IsChecked = true;
+            Assert.Equal(100, locations.Items.Count);
+            Assert.All(locations.Items.Cast<CleanupReviewRow>(), row => { row.Selected = true; Assert.False(row.Selected); Assert.False(row.CanSelect); });
+            ((RadioButton)dialog.FindName("ReadyFilter")).IsChecked = true;
+            navigation.SelectedItem = navigation.Items.Cast<CleanupReviewGroup>().Single(group => group.Key == "all");
+            locations.SelectedIndex = 0;
+#pragma warning disable WPF0001
+            foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
+            {
+                app.ThemeMode = theme;
+                string suffix = theme == ThemeMode.Light ? "light" : "dark";
+                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"bulk-cleanup-review-{suffix}.png"), 980, 720);
+                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"bulk-cleanup-review-compact-{suffix}.png"), 760, 520);
+            }
+#pragma warning restore WPF0001
+            Assert.InRange(Descendants(locations).OfType<ListBoxItem>().Count(), 1, 30);
+            cleanup.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => dialog.Result is not null, TimeSpan.FromSeconds(5));
+            Assert.NotNull(confirmed); Assert.Equal(799, confirmed.Preview.Locations.Count);
+            Assert.Equal(plan.BuildPolicy, confirmed.BuildPolicy);
+            Assert.DoesNotContain(confirmed.Preview.Locations, item => item.Path.Contains("project-0012", StringComparison.Ordinal));
+            Assert.DoesNotContain(confirmed.Preview.Locations, item => item.Title == "Cargo build output");
+            Assert.DoesNotContain(confirmed.Preview.Locations, item => recentFiles.Any(file => file.StartsWith(item.Path + Path.DirectorySeparatorChar, StringComparison.Ordinal)));
+            Assert.All(confirmed.Targets, target => Assert.Same(plan.Targets.Single(item => item.Path == target.Path), target));
+            Assert.All(findings, finding => Assert.True(Directory.Exists(finding.Path)));
+        }
+        finally { dialog.Close(); }
     }
 
     private static void AssertMapFillsPane(MainWindow window, TreemapPanel map)

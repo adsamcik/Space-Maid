@@ -282,6 +282,12 @@
                         <StackPanel><TextBlock Text="Sort" FontSize="12" Opacity="0.65" Margin="0,0,0,6" />
                             <ComboBox x:Name="OpportunitySortPicker" Width="150" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Sort opportunity groups and locations"><ComboBoxItem Content="Largest first" /><ComboBoxItem Content="Name A–Z" /><ComboBoxItem Content="Most locations" /></ComboBox>
                         </StackPanel>
+                        <StackPanel Margin="18,0,0,0"><TextBlock Text="Keep recent builds" FontSize="12" Opacity="0.65" Margin="0,0,0,6" />
+                            <StackPanel Orientation="Horizontal" ToolTip="Keeps outputs with recent file changes or creation, including direct project files. Actual last use is not tracked. Unknown activity is kept. Stop builds before cleanup.">
+                                <TextBox x:Name="BuildKeepRecentDaysBox" Text="3" Width="64" MaxLength="3" KeyDown="BuildRetention_KeyDown" LostFocus="BuildRetention_LostFocus" AutomationProperties.Name="Keep builds active within this many days" />
+                                <TextBlock Text="days" VerticalAlignment="Center" Margin="8,0,0,0" />
+                            </StackPanel>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
                 <Border x:Name="WorktreeCleanupControls" Grid.Row="1" Margin="0,12,0,0">

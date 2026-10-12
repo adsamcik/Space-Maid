@@ -34,7 +34,10 @@ public static class OpportunityDetector
                     "Test artifacts" or "Editor workspace data" => OpportunityAppearance.Other,
                     _ => OpportunityAppearance.Cache
                 },
-                IsWorktree = rule.Category == "Git worktrees"
+                IsWorktree = rule.Category == "Git worktrees",
+                IsBuildOutput = rule.Category == "Build output",
+                IsRegeneratable = rule.Title is ".NET build output" or "Python bytecode cache" or "Cargo build output"
+                    or "SvelteKit build output" or "Nuxt build output" || rule.Category == "Build output" && Is(name, ".next")
             });
         }
         return found.OrderByDescending(o => o.DisplayBytes(scan.HasAllocationData))

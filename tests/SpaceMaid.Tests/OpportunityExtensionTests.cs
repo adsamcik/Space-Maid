@@ -127,6 +127,7 @@ public sealed class OpportunityExtensionTests
         File.WriteAllText(Path.Join(project, "app.csproj"), "<Project />");
         string output = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
         string file = Path.Join(output, "result.dll"); File.WriteAllBytes(file, new byte[4096]);
+        BuildActivityFixture.AgeProject(project);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var selected = Assert.Single(DeveloperOpportunityFixture.Find(scan));
         Assert.Throws<ArgumentNullException>(() => CleanupPlanner.Prepare(scan, [selected]));

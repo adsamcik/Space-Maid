@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
@@ -75,11 +76,29 @@ public sealed class DeletionTests
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "recycle-" + Guid.NewGuid().ToString("N"))).FullName;
         string content = "Space Maid owned fixture " + Guid.NewGuid().ToString("N");
         File.WriteAllText(Path.Join(folder, "keep.txt"), content);
+        string nested = Directory.CreateDirectory(Path.Join(folder, "one", "two")).FullName;
+        byte[] bytes = Enumerable.Range(0, 8192).Select(index => (byte)(index % 251)).ToArray();
+        File.WriteAllBytes(Path.Join(nested, "nested.bin"), bytes);
+        string outside = Directory.CreateDirectory(Path.Join(fixture.Path, "outside-target")).FullName;
+        string outsideFile = Path.Join(outside, "keep-outside.txt"); File.WriteAllText(outsideFile, content);
+        string junction = Path.Join(folder, "linked-folder");
+        string ownedRoot = Path.GetFullPath(fixture.Path) + Path.DirectorySeparatorChar;
+        Assert.StartsWith(ownedRoot, Path.GetFullPath(outside), StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(ownedRoot, Path.GetFullPath(junction), StringComparison.OrdinalIgnoreCase);
+        var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Arguments = $"/c mklink /J \"{junction}\" \"{outside}\"";
+        using (var process = Process.Start(start)!)
+        {
+            string output = await process.StandardOutput.ReadToEndAsync(), error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync(); Assert.True(process.ExitCode == 0, output + error);
+        }
+        Assert.True((File.GetAttributes(junction) & FileAttributes.ReparsePoint) != 0);
         var scan = await new VolumeScanner().ScanAsync(folder, preferFast: false);
         var target = FolderDeletionTarget.FromScan(scan, -1);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => FolderRecycler.RecycleAsync(target, 0, new(true)));
         Assert.True(Directory.Exists(folder));
-        var result = await FolderRecycler.RecycleAsync(target, 0, default);
+        var events = new List<string>();
+        var result = await FolderRecycler.RecycleAsync(target, 0, default, (name, _) => events.Add(name));
         Assert.False(result.Cancelled);
         string recycled = Assert.IsType<string>(result.RecycledPath);
         string root = Path.GetPathRoot(folder)!;
@@ -87,8 +106,52 @@ public sealed class DeletionTests
         Assert.StartsWith("$R", Path.GetFileName(recycled), StringComparison.Ordinal);
         Assert.False(Directory.Exists(folder));
         Assert.Equal(content, File.ReadAllText(Path.Join(recycled, "keep.txt")));
-        RestoreFixture(recycled, folder);
+        try
+        {
+            Assert.Equal(bytes, File.ReadAllBytes(Path.Join(recycled, "one", "two", "nested.bin")));
+            Assert.Equal(content, File.ReadAllText(outsideFile));
+            Assert.True((File.GetAttributes(Path.Join(recycled, "linked-folder")) & FileAttributes.ReparsePoint) != 0);
+            Assert.Contains("recycle-verified", events);
+        }
+        finally { RestoreFixture(recycled, folder); }
         Assert.Equal(content, File.ReadAllText(Path.Join(folder, "keep.txt")));
+        Assert.Equal(bytes, File.ReadAllBytes(Path.Join(folder, "one", "two", "nested.bin")));
+        Assert.Equal(content, File.ReadAllText(outsideFile));
+        Directory.Delete(junction); // Only the owned junction; its target stays intact.
+    }
+
+    [Fact]
+    public async Task LockedFixtureFilesCannotReportRecycledSuccessAndCanBeRetriedAfterClosing()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "locked-folder")).FullName;
+        string file = Path.Join(folder, "keep.txt"), content = "Owned locked fixture " + Guid.NewGuid().ToString("N");
+        File.WriteAllText(file, content);
+        var scan = await new VolumeScanner().ScanAsync(folder, preferFast: false);
+        var target = FolderDeletionTarget.FromScan(scan, -1);
+        var events = new List<string>(); RecycleResult? unexpectedResult = null;
+        try
+        {
+            using (var locked = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                var failure = await Record.ExceptionAsync(async () =>
+                    unexpectedResult = await FolderRecycler.RecycleAsync(target, 0, default, (name, _) => events.Add(name)));
+                Assert.NotNull(failure);
+                Assert.DoesNotContain("recycle-verified", events);
+                Assert.True(Directory.Exists(folder)); Assert.True(File.Exists(file));
+            }
+        }
+        finally
+        {
+            if (unexpectedResult?.RecycledPath is { } destination && !Directory.Exists(folder))
+                RestoreFixture(destination, folder);
+        }
+        Assert.Equal(content, File.ReadAllText(file));
+        var result = await FolderRecycler.RecycleAsync(target, 0, default);
+        string recycled = Assert.IsType<string>(result.RecycledPath);
+        try { Assert.False(result.Cancelled); Assert.Equal(content, File.ReadAllText(Path.Join(recycled, "keep.txt"))); }
+        finally { RestoreFixture(recycled, folder); }
+        Assert.Equal(content, File.ReadAllText(file));
     }
 
     internal static void RestoreFixture(string recycled, string folder)
