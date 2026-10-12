@@ -41,6 +41,7 @@ public partial class MainWindow : Window
         _startupOffered = true;
         LoadColumnLayout();
         LoadBuildCleanupSettings();
+        _ = RefreshRecycleBinAsync();
         _ = RefreshDriveChoicesAsync();
         if (!Elevation.IsAdministrator)
         {
@@ -251,6 +252,8 @@ public partial class MainWindow : Window
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;
         BuildKeepRecentDaysBox.IsEnabled = !busy;
+        RecycleBinRow.IsEnabled = !busy;
+        EmptyRecycleBinButton.IsEnabled = !busy && _recycleBin?.Items > 0;
         OpportunityGrid.IsEnabled = !busy;
         GroupBrowserControls.IsEnabled = !busy;
         OpportunityFilters.IsEnabled = !busy;
@@ -259,7 +262,7 @@ public partial class MainWindow : Window
         WorktreeCleanupControls.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
-        if (!busy) DrainExplorerRecheck();
+        if (!busy) { DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
     }
 
     private void UpdateFastScanButton(bool busy)

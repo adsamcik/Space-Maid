@@ -59,7 +59,8 @@ public partial class MainWindow
             Breadcrumbs.Children.Add(button);
         }
         PathBar.ToolTip = path;
-        if (!string.Equals(previousRoot, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase)) RefreshPathDriveSpace();
+        if (!string.Equals(previousRoot, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase))
+        { RefreshPathDriveSpace(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
     }
 
     private void UpdateDriveLocation()
