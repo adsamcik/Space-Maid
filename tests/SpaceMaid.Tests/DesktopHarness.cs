@@ -19,6 +19,8 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    [ThreadStatic] private static CancellationToken _desktopCancellation;
+
     private static long GiB(double value) => (long)(value * 1024 * 1024 * 1024);
 
     private static void PumpUntil(Func<bool> completed, TimeSpan timeout)
@@ -27,10 +29,11 @@ public sealed partial class DesktopTests
         var timer = Stopwatch.StartNew();
         var pulse = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
         {
-            if (completed() || timer.Elapsed > timeout) frame.Continue = false;
+            if (_desktopCancellation.IsCancellationRequested || completed() || timer.Elapsed > timeout) frame.Continue = false;
         }, Dispatcher.CurrentDispatcher);
-        Dispatcher.PushFrame(frame);
-        pulse.Stop();
+        try { Dispatcher.PushFrame(frame); }
+        finally { pulse.Stop(); }
+        _desktopCancellation.ThrowIfCancellationRequested();
         Assert.True(completed(), "The desktop operation did not complete.");
     }
 

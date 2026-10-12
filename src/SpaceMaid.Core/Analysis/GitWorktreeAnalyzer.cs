@@ -77,13 +77,16 @@ public static partial class GitWorktreeAnalyzer
             if (File.Exists(Path.Join(common, "objects", "info", "alternates")))
                 return Result("Needs review", "Alternate Git object storage cannot be verified by this bounded local check.");
             var git = new GitReader(path, budget.Token);
-            var roots = await git.Run("rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir");
+            var rootsTask = git.Run("rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir");
+            var listedTask = git.Run("worktree", "list", "--porcelain", "-z");
+            await Task.WhenAll(rootsTask, listedTask).ConfigureAwait(false);
+            var roots = rootsTask.Result;
             var rootLines = roots.Output.TrimEnd('\n', '\r').Split('\n');
             if (roots.Code != 0 || rootLines.Length != 3 || !Normalize(rootLines[0].TrimEnd('\r')).Equals(path, StringComparison.Ordinal)
                 || !Normalize(rootLines[1].TrimEnd('\r')).Equals(gitDir, StringComparison.Ordinal)
                 || !Normalize(rootLines[2].TrimEnd('\r')).Equals(common, StringComparison.Ordinal))
                 return Result("Needs review", "Git did not resolve this exact registered worktree root.");
-            var listed = await git.Run("worktree", "list", "--porcelain", "-z");
+            var listed = listedTask.Result;
             if (listed.Code != 0) return Result("Needs review", "Git could not read the worktree registry.");
             var registration = Registered(listed.Output, path);
             if (registration is null || registration.ContainsKey("bare") || registration.ContainsKey("locked") || registration.ContainsKey("prunable"))
@@ -92,20 +95,32 @@ public static partial class GitWorktreeAnalyzer
             if (branch?.StartsWith("refs/heads/", StringComparison.Ordinal) != true)
                 return Result("Needs review", "Detached or unresolved branches need manual review.");
             string fullBranch = branch; branch = branch["refs/heads/".Length..];
-            var tracked = await git.Run("ls-files", "-v", "-z");
+            // These independent, read-only queries share the same protected
+            // paths and deadline. Overlap process startup rather than spending
+            // the bounded check waiting for each Git process in turn.
+            var trackedTask = git.Run("ls-files", "-v", "-z");
+            var stagedTask = git.Run("ls-files", "--stage", "-z");
+            await Task.WhenAll(trackedTask, stagedTask).ConfigureAwait(false);
+            var tracked = trackedTask.Result;
             if (tracked.Code != 0 || tracked.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(row => !row.StartsWith("H ", StringComparison.Ordinal)))
                 return Result("Needs review", "Unmerged, sparse or assume-unchanged index entries need manual review.");
-            var staged = await git.Run("ls-files", "--stage", "-z");
+            var staged = stagedTask.Result;
             if (staged.Code != 0 || staged.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(row => row.StartsWith("160000 ", StringComparison.Ordinal)))
                 return Result("Needs review", "Submodules or unreadable index entries need manual review.");
-            var status = await git.Run("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all");
+            // Only status reads ordinary file content. Keep the index and
+            // submodule refusal checks ahead of that content read.
+            var statusTask = git.Run("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all");
+            var headTask = git.Run("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}");
+            var upstreamTask = git.Run("rev-parse", "--symbolic-full-name", "@{upstream}");
+            await Task.WhenAll(statusTask, headTask, upstreamTask).ConfigureAwait(false);
+            var status = statusTask.Result;
             if (status.Code != 0) return Result("Needs review", "Git could not establish a clean worktree.");
             if (status.Output.Length != 0) return Result("Local changes", "Tracked changes or untracked files are present. Preserve this work before cleanup.");
-            var head = await git.Run("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}");
+            var head = headTask.Result;
             if (head.Code != 0 || !IsObjectId(head.Output.Trim()) || registration.GetValueOrDefault("HEAD") != head.Output.Trim())
                 return Result("Needs review", "The worktree HEAD changed or is not fully available locally.");
             string integrationReason = "No configured upstream or single locally cached remote default is available. No fetch was performed.";
-            var upstream = await git.Run("rev-parse", "--symbolic-full-name", "@{upstream}");
+            var upstream = upstreamTask.Result;
             if (upstream.Code == 0) target = upstream.Output.Trim();
             else
             {
@@ -135,8 +150,10 @@ public static partial class GitWorktreeAnalyzer
             if (File.Exists(headLogPath) && File.Exists(branchLogPath) && new FileInfo(headLogPath).Length != 0 && new FileInfo(branchLogPath).Length != 0)
             {
                 DateTime? headLogModified = guard.File(headLogPath), branchLogModified = guard.File(branchLogPath);
-                var headLog = await git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", "HEAD");
-                var branchLog = await git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", fullBranch);
+                var headLogTask = git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", "HEAD");
+                var branchLogTask = git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", fullBranch);
+                await Task.WhenAll(headLogTask, branchLogTask).ConfigureAwait(false);
+                var headLog = headLogTask.Result; var branchLog = branchLogTask.Result;
                 DateTime? headActivity = ReflogTime(headLog), branchActivity = ReflogTime(branchLog);
                 if (headActivity is not null && branchActivity is not null && headLogModified is not null && branchLogModified is not null)
                     reflog = Max(Max(headActivity, branchActivity), Max(headLogModified, branchLogModified));
@@ -149,13 +166,18 @@ public static partial class GitWorktreeAnalyzer
             // Age is now a selectable filter, so recent namespace changes no
             // longer reject a checkout automatically. Re-establish clean status
             // after the final live walk before publishing usable facts.
-            var finalStatus = await git.Run("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all");
+            var finalStatusTask = git.Run("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all");
+            var finalHeadTask = git.Run("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}");
+            var finalBranchTask = git.Run("symbolic-ref", "--quiet", "HEAD");
+            var finalTargetTask = destination is null ? null : git.Run("rev-parse", "--verify", "--end-of-options", target + "^{commit}");
+            var finalRegistrationTask = git.Run("worktree", "list", "--porcelain", "-z");
+            await Task.WhenAll(finalStatusTask, finalHeadTask, finalBranchTask,
+                (Task?)finalTargetTask ?? Task.CompletedTask, finalRegistrationTask).ConfigureAwait(false);
+            var finalStatus = finalStatusTask.Result;
             if (finalStatus.Code != 0) return Result("Needs review", "Git could not re-establish a clean worktree after inspection.");
             if (finalStatus.Output.Length != 0) return Result("Local changes", "Tracked changes or untracked files are present. Preserve this work before cleanup.");
-            var finalHead = await git.Run("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}");
-            var finalBranch = await git.Run("symbolic-ref", "--quiet", "HEAD");
-            var finalTarget = destination is null ? null : await git.Run("rev-parse", "--verify", "--end-of-options", target + "^{commit}");
-            var finalRegistration = await git.Run("worktree", "list", "--porcelain", "-z");
+            var finalHead = finalHeadTask.Result; var finalBranch = finalBranchTask.Result;
+            var finalTarget = finalTargetTask?.Result; var finalRegistration = finalRegistrationTask.Result;
             var finalEntry = finalRegistration.Code == 0 ? Registered(finalRegistration.Output, path) : null;
             if (finalHead.Code != 0 || finalHead.Output != head.Output || finalBranch.Code != 0 || finalBranch.Output.Trim() != fullBranch
                 || (destination is not null && (finalTarget is null || finalTarget.Code != 0 || finalTarget.Output != destination.Output)) || finalEntry is null || finalEntry.ContainsKey("locked")
@@ -169,6 +191,7 @@ public static partial class GitWorktreeAnalyzer
             if (Max(modified, reflog) > DateTime.UtcNow.AddDays(-InactiveDays))
                 return Result("Recent activity", "Clean and integrated locally, with observed modification or reflog activity within 30 days. This does not measure actual use.");
             return Result("Stale worktree", "Clean, registered and integrated locally; no observed modification or reflog activity for 30 days. Remote freshness and actual use are unknown.");
+
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { return Result("Needs review", "The bounded 10-second check timed out; no cleanup recommendation was made."); }

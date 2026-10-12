@@ -24,8 +24,28 @@ public sealed partial class DesktopTests
     {
         Exception? failure = null;
         string stage = "starting";
+        var elapsed = Stopwatch.StartNew();
+        string workflow = "navigation and folder operations";
+        long workflowStarted = Stopwatch.GetTimestamp();
+        using var timeout = new CancellationTokenSource();
+        string timeline = Path.Join(FindRepository(), "artifacts", "desktop-workflows.tsv");
+        Directory.CreateDirectory(Path.GetDirectoryName(timeline)!);
+        File.WriteAllText(timeline, "seconds\tstage\n");
+        void SetStage(string value)
+        {
+            timeout.Token.ThrowIfCancellationRequested();
+            stage = value;
+            File.AppendAllText(timeline, $"{elapsed.Elapsed.TotalSeconds:F3}\t{value}\n");
+        }
+        void BeginWorkflow(string value)
+        {
+            Volatile.Write(ref workflow, value);
+            Interlocked.Exchange(ref workflowStarted, Stopwatch.GetTimestamp());
+            SetStage(value);
+        }
         var thread = new Thread(() =>
         {
+            _desktopCancellation = timeout.Token;
             Application? app = null;
             TestDirectory? fixture = null;
             MainWindow? window = null;
@@ -38,13 +58,20 @@ public sealed partial class DesktopTests
                 string bin = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
                 File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[8192]);
                 BuildActivityFixture.AgeProject(project);
-                stage = "loading application resources";
+                SetStage("loading application resources");
                 app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
 #pragma warning disable WPF0001
                 app.ThemeMode = ThemeMode.System;
 #pragma warning restore WPF0001
                 app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/SpaceMaid.App;component/Styles.xaml", UriKind.Relative) });
-                stage = "constructing main window";
+                using (var cancelledWait = new CancellationTokenSource())
+                {
+                    cancelledWait.Cancel();
+                    _desktopCancellation = cancelledWait.Token;
+                    try { Assert.Throws<OperationCanceledException>(() => PumpUntil(() => false, TimeSpan.FromSeconds(1))); }
+                    finally { _desktopCancellation = timeout.Token; }
+                }
+                SetStage("constructing main window");
                 window = new MainWindow();
                 window.LogDirectory = Path.Join(fixture.Path, "diagnostics");
                 window.ExtensionDataRoot = Path.Join(fixture.Path, "extensions");
@@ -68,7 +95,7 @@ public sealed partial class DesktopTests
                     foreach (var choice in app.Windows.OfType<StartupWindow>().ToArray()) choice.Close();
                 }));
                 window.Show();
-                stage = "keeping the build retention preference bounded and persistent";
+                SetStage("keeping the build retention preference bounded and persistent");
                 var buildRetention = (TextBox)window.FindName("BuildKeepRecentDaysBox");
                 Assert.Equal("3", buildRetention.Text);
                 File.WriteAllText(window.CleanupSettingsPath, "{invalid");
@@ -84,7 +111,7 @@ public sealed partial class DesktopTests
                 buildRetention.Text = "3";
                 Assert.True(window.SaveBuildRetention()); Assert.Equal(3, window.CurrentBuildPolicy.KeepRecentDays);
                 ((ToggleButton)window.FindName("ViewOptionsToggle")).IsChecked = false;
-                stage = "choosing a drive without starting a scan";
+                SetStage("choosing a drive without starting a scan");
                 var drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
                 var drivesList = (ItemsControl)window.FindName("DriveChoices");
@@ -97,7 +124,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(fixtureRoot, window.CurrentPath);
                 Assert.Null(typeof(MainWindow).GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
                 Assert.Empty(Directory.Exists(window.LogDirectory) ? Directory.GetFiles(window.LogDirectory, "*.jsonl") : []);
-                stage = "keeping the fast-scan enable button in sync with session state";
+                SetStage("keeping the fast-scan enable button in sync with session state");
                 var enableFast = (Button)window.FindName("ElevateButton");
                 var fastFlag = typeof(MainWindow).GetField("_fastEnabled", BindingFlags.Instance | BindingFlags.NonPublic)!;
                 var availableVisibility = Elevation.IsAdministrator ? Visibility.Collapsed : Visibility.Visible;
@@ -119,7 +146,7 @@ public sealed partial class DesktopTests
                 window.SetBusy(false);
                 Assert.Equal(availableVisibility, enableFast.Visibility); Assert.Equal(!Elevation.IsAdministrator, enableFast.IsEnabled);
                 var fixtureDrive = new DriveInfo(fixture.Path);
-                stage = "returning to the drive root without starting a scan";
+                SetStage("returning to the drive root without starting a scan");
                 window.SetScanTarget(project);
                 var rootButton = (Button)window.FindName("DriveRootButton");
                 rootButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -141,7 +168,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(Visibility.Collapsed, editor.Visibility); Assert.Equal(fixture.Path, editor.Text);
                 Assert.Equal(Visibility.Visible, rootButton.Visibility);
                 var scanButton = (Button)window.FindName("ScanButton");
-                stage = "scanning fixture through the UI";
+                SetStage("scanning fixture through the UI");
                 ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 editor.Text = fixture.Path;
                 scanButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -153,7 +180,7 @@ public sealed partial class DesktopTests
                 Assert.Contains("backend-selected", events);
                 Assert.Contains("app-scan-complete", events);
                 Assert.Contains("Standard Windows scan", ((TextBlock)window.FindName("BackendStatusText")).Text);
-                stage = "showing historical drive suggestions and recent folders";
+                SetStage("showing historical drive suggestions and recent folders");
                 drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
                 fixtureChoice = drivesList.Items.Cast<DriveChoice>().Single(choice => choice.RootPath == fixtureRoot);
@@ -187,7 +214,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => drivePopup.IsOpen && PresentationSource.FromVisual(drivePanel) is not null, TimeSpan.FromSeconds(3));
                 var closeDrives = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(drivePanel), Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
                 drivePanel.RaiseEvent(closeDrives); Assert.True(closeDrives.Handled); Assert.False(drivePopup.IsOpen);
-                stage = "changing drives while editing a full path";
+                SetStage("changing drives while editing a full path");
                 ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 window.UpdateLayout();
                 Render(window, Path.Join(FindRepository(), "artifacts", "ui", "drive-location-edit.png"), 1220, 940);
@@ -201,7 +228,7 @@ public sealed partial class DesktopTests
                 chooseDrive = window.ChooseDriveAsync(fixtureChoice, fixtureChoice.RecentPath);
                 PumpUntil(() => chooseDrive.IsCompleted, TimeSpan.FromSeconds(3)); chooseDrive.GetAwaiter().GetResult();
                 Assert.Equal(fixture.Path, window.CurrentPath);
-                stage = "opening a drive recommendation from the matching inventory";
+                SetStage("opening a drive recommendation from the matching inventory");
                 ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 1;
                 ((TextBox)window.FindName("OpportunitySearch")).Text = "no matches";
                 drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -225,7 +252,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => gone.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(gone.GetAwaiter().GetResult());
                 Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
                 Assert.Contains("no longer found", ((TextBlock)window.FindName("StatusText")).Text);
-                stage = "scanning before opening a recommendation when inventory is absent";
+                SetStage("scanning before opening a recommendation when inventory is absent");
                 // A drive fixture is deliberately bounded to this temporary
                 // directory. The shortcut still runs the real scanner and UI.
                 var bounded = recommended with { Drive = recommended.Drive with { RootPath = fixture.Path } };
@@ -268,7 +295,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(row.Item, ((StackPanel)window.FindName("DetailPanel")).DataContext);
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
-                stage = "navigating the real folder tree and treemap";
+                SetStage("navigating the real folder tree and treemap");
                 int existingScanLogs = Directory.GetFiles(window.LogDirectory, "*.jsonl").Length;
                 ((Button)window.FindName("EditPathButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 editor.Text = bin;
@@ -293,11 +320,11 @@ public sealed partial class DesktopTests
                 var tree = (ListBox)window.FindName("SpaceTree");
                 var explorer = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 Assert.True(tree.Items.Count >= 2);
-                stage = "opening folder operations through routed right-click events";
+                SetStage("opening folder operations through routed right-click events");
                 int binLink = explorer.Scan.PrimaryLink(row.Item.DirectoryIndex);
                 int projectLink = explorer.Scan.PrimaryLink(explorer.Scan.Entry(binLink).ParentIndex);
                 var projectContainer = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(explorer.Find(projectLink)));
-                stage = "checking expansion hit targets beyond the arrow glyph";
+                SetStage("checking expansion hit targets beyond the arrow glyph");
                 window.UpdateLayout();
                 var projectExpander = Descendants(projectContainer).OfType<Button>().Single();
                 Assert.True(projectExpander.ActualWidth >= 40 && projectExpander.ActualHeight >= 34);
@@ -305,7 +332,7 @@ public sealed partial class DesktopTests
                 foreach (var point in new[] { new Point(2, 2), new Point(projectExpander.ActualWidth - 2, 2),
                     new Point(2, projectExpander.ActualHeight - 2), new Point(projectExpander.ActualWidth - 2, projectExpander.ActualHeight - 2) })
                     Assert.Contains(Assert.IsAssignableFrom<DependencyObject>(tree.InputHitTest(projectExpander.TranslatePoint(point, tree))), expansionTargets);
-                stage = "opening folder operations through routed right-click events";
+                SetStage("opening folder operations through routed right-click events");
                 string rootMapTotal = window.CurrentPath;
                 RightClick(window, projectContainer);
                 Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
@@ -326,7 +353,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(3, projectTile.ContextMenu.Items.Count);
                 projectTile.ContextMenu.IsOpen = false;
 
-                stage = "revealing a map folder beneath a collapsed tree branch";
+                SetStage("revealing a map folder beneath a collapsed tree branch");
                 var openProject = window.NavigateToEntryAsync(projectLink);
                 PumpUntil(() => openProject.IsCompleted, TimeSpan.FromSeconds(10));
                 openProject.GetAwaiter().GetResult();
@@ -346,7 +373,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 tree.ContextMenu.IsOpen = false;
 
-                stage = "sorting tree columns while preserving expansion, selection and map scope";
+                SetStage("sorting tree columns while preserving expansion, selection and map scope");
                 CheckTreeColumns(window, tree);
                 var expandedBefore = tree.Items.Cast<ExplorerRow>().Where(r => r.Expanded).Select(r => r.Entry.LinkIndex).ToArray();
                 foreach (string header in new[] { "NameHeader", "NameHeader", "ModifiedHeader", "ModifiedHeader", "CreatedHeader", "TypeHeader", "ExtensionHeader", "AttributesHeader", "LogicalHeader", "AllocationHeader", "ShareHeader" })
@@ -366,7 +393,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => navigation.IsCompleted, TimeSpan.FromSeconds(10));
                 navigation.GetAwaiter().GetResult();
                 Assert.Equal(bin, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
-                stage = "keeping a folder menu action bound to its original target";
+                SetStage("keeping a folder menu action bound to its original target");
                 string? menuConfirmationPath = null;
                 var menuTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
@@ -400,7 +427,7 @@ public sealed partial class DesktopTests
                 Assert.Contains(typeText.Text, Assert.IsType<string>(fileContainer.ToolTip));
                 Render(window, Path.Join(FindRepository(), "artifacts", "ui", "registry-ambiguous-selection.png"), 1220, 910);
 
-                stage = "constructing cleanup review";
+                SetStage("constructing cleanup review");
                 var scan = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false).GetAwaiter().GetResult();
                 var plan = CleanupPlanner.Create(scan, OpportunityDetector.Find(scan));
                 var review = new ReviewWindow(plan);
@@ -414,7 +441,7 @@ public sealed partial class DesktopTests
                 Assert.Equal("No skipped-path warnings", ((TextBlock)details.FindName("CoverageText")).Text);
                 Assert.Contains(Descendants(startup.Content as DependencyObject).OfType<Button>(), b => Equals(b.Content, "Continue without admin"));
 
-                stage = "checking folder Delete confirmation and its safe default";
+                SetStage("checking folder Delete confirmation and its safe default");
                 var returnToFolder = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
                 PumpUntil(() => returnToFolder.IsCompleted, TimeSpan.FromSeconds(10));
                 returnToFolder.GetAwaiter().GetResult();
@@ -457,7 +484,7 @@ public sealed partial class DesktopTests
                 pathField.RaiseEvent(fieldKey);
                 Assert.False(fieldKey.Handled);
 
-                stage = "recycling a fixture through the actual UI and marking its scan stale";
+                SetStage("recycling a fixture through the actual UI and marking its scan stale");
                 var approveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
                     var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
@@ -511,7 +538,7 @@ public sealed partial class DesktopTests
                 Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>())).Selected = true;
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
 
-                stage = "preserving a collapsed root and prior out-of-date scopes during rechecks";
+                SetStage("preserving a collapsed root and prior out-of-date scopes during rechecks");
                 var goRoot = window.NavigateToEntryAsync(-1);
                 PumpUntil(() => goRoot.IsCompleted, TimeSpan.FromSeconds(10)); goRoot.GetAwaiter().GetResult();
                 Assert.IsType<ExplorerRows>(tree.ItemsSource).Collapse(-1);
@@ -530,7 +557,7 @@ public sealed partial class DesktopTests
                 Assert.Contains("Rechecked", ((TextBlock)window.FindName("TreeNote")).Text);
                 Assert.Equal("8 KiB", ((TextBlock)window.FindName("CandidateText")).Text);
 
-                stage = "draining an Explorer-return recheck deferred while busy";
+                SetStage("draining an Explorer-return recheck deferred while busy");
                 using (var busy = new CancellationTokenSource())
                 {
                     typeof(MainWindow).GetField("_work", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, busy);
@@ -544,7 +571,7 @@ public sealed partial class DesktopTests
                     Assert.Null(typeof(MainWindow).GetField("_explorerRecheckPath", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
                 }
 
-                stage = "checking an eligible native cloud file menu and cancelling its confirmation";
+                SetStage("checking an eligible native cloud file menu and cancelling its confirmation");
                 string cloudRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "synced")).FullName;
                 string cloudFile = Path.Join(cloudRoot, "photo.jpg"); File.WriteAllBytes(cloudFile, new byte[4096]);
                 OnlineOnlyWindow onlinePreview;
@@ -584,7 +611,7 @@ public sealed partial class DesktopTests
                     onlinePreview = new OnlineOnlyWindow(CloudFiles.Prepare(cloudScan, cloudLink, default));
                 }
 
-                stage = "preserving grouped-selection deletion safeguards after an unrelated recheck";
+                SetStage("preserving grouped-selection deletion safeguards after an unrelated recheck");
                 string groupedRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "many-files")).FullName;
                 for (int i = 0; i < 70; i++) File.WriteAllBytes(Path.Join(groupedRoot, $"photo-{i}.jpg"), new byte[512]);
                 var importGroup = window.RecheckFolderAsync(fixture.Path);
@@ -642,7 +669,7 @@ public sealed partial class DesktopTests
                 var detailPanel = (StackPanel)window.FindName("EntryDetail");
                 Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The treemap overlaps its selected-entry details.");
 
-                stage = "checking wide-folder UI virtualization";
+                SetStage("checking wide-folder UI virtualization");
                 var wideBuilder = new ScanBuilder(trackPreliminary: true);
                 wideBuilder.RootIndex = wideBuilder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
                 for (int i = 0; i < 50_000; i++)
@@ -650,7 +677,7 @@ public sealed partial class DesktopTests
                     int file = wideBuilder.AddFile(new(new((ulong)i + 2), FileAttributes.Normal, 4096, 4096, 0));
                     wideBuilder.AddLink(file, new(1), $"file-{i}.bin");
                 }
-                stage = "showing bounded preliminary results";
+                SetStage("showing bounded preliminary results");
                 window.RetainCancelledPreliminary(); // Clear the completed fixture before simulating acquisition.
                 window.SetBusy(true);
                 ((TextBlock)window.FindName("StatusText")).Text = "Reading folders · 50,001 file objects · 1.0s";
@@ -670,7 +697,7 @@ public sealed partial class DesktopTests
                 Assert.Equal("Path pending…", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).PathText);
                 Assert.Contains("Inferred type:", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).EntryTooltip);
                 Assert.Contains("PRELIMINARY", ((TextBlock)window.FindName("ScannedSizeLabel")).Text);
-                stage = "sorting preliminary rows and retaining the choice across progress updates";
+                SetStage("sorting preliminary rows and retaining the choice across progress updates");
                 foreach (string header in new[] { "PreliminaryNameHeader", "PreliminaryNameHeader", "PreliminaryLogicalHeader", "PreliminaryAllocationHeader" })
                     ((ButtonBase)window.FindName(header)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 ((Button)window.FindName("PreliminaryNameHeader")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -688,7 +715,7 @@ public sealed partial class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"preliminary-{(mode == ThemeMode.Light ? "light" : "dark")}.png"), 1220, 910);
                 }
 #pragma warning restore WPF0001
-                stage = "retaining cancelled partial results and resetting a fallback";
+                SetStage("retaining cancelled partial results and resetting a fallback");
                 window.RetainCancelledPreliminary();
                 window.SetBusy(false);
                 ((TextBlock)window.FindName("StatusText")).Text = "Scan cancelled · Preliminary results retained.";
@@ -709,7 +736,7 @@ public sealed partial class DesktopTests
                 // A backend restart is a fresh acquisition view, not cancelled.
                 Assert.DoesNotContain("cancelled", ((TextBlock)window.FindName("PreliminaryCaption")).Text);
                 var wideScan = wideBuilder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
-                stage = "binding the wide-folder indexed source";
+                SetStage("binding the wide-folder indexed source");
                 var wideLoad = window.InitializeExplorerAsync(wideScan, [], CancellationToken.None);
                 PumpUntil(() => wideLoad.IsCompleted, TimeSpan.FromSeconds(10));
                 wideLoad.GetAwaiter().GetResult();
@@ -717,12 +744,12 @@ public sealed partial class DesktopTests
                 Assert.Empty(preliminaryFiles.Items.Cast<object>());
                 Assert.Equal(Visibility.Visible, ((Grid)window.FindName("ExplorePanel")).Visibility);
                 var wideContent = (FrameworkElement)window.Content;
-                stage = "measuring the wide-folder window";
+                SetStage("measuring the wide-folder window");
                 window.UpdateLayout();
                 Assert.Equal(50_001, tree.Items.Count);
                 int realized = Descendants(tree).OfType<ListBoxItem>().Count();
                 Assert.True(realized is > 0 and <= 100, $"The wide folder realized {realized:N0} containers.");
-                stage = "blocking deletion of grouped map entries";
+                SetStage("blocking deletion of grouped map entries");
                 var groupedTile = Assert.IsType<Button>(Assert.Single(map.Children.Cast<object>()));
                 Assert.Equal(-2, Assert.IsType<SpaceContribution>(groupedTile.DataContext).Link);
                 Assert.Null(groupedTile.ContextMenu);
@@ -736,7 +763,7 @@ public sealed partial class DesktopTests
                 groupedSort.GetAwaiter().GetResult();
                 Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
-                stage = "disabling recycling on a drive-root context menu";
+                SetStage("disabling recycling on a drive-root context menu");
                 RightClick(window, Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0)));
                 PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.True(((MenuItem)tree.ContextMenu.Items[0]).IsEnabled);
@@ -746,7 +773,7 @@ public sealed partial class DesktopTests
                 tree.ContextMenu.IsOpen = false;
                 RightClick(window, tree);
                 Assert.False(tree.ContextMenu.IsOpen); // Blank tree space does not reuse the selected root's menu.
-                stage = "scrolling to the final wide-folder entry";
+                SetStage("scrolling to the final wide-folder entry");
                 var wideRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                 tree.SelectedIndex = wideRows.Count - 1;
                 tree.ScrollIntoView(tree.SelectedItem);
@@ -767,13 +794,17 @@ public sealed partial class DesktopTests
                 Assert.True(scanButton.IsEnabled);
                 Assert.Equal(dialogsBefore, app.Windows.OfType<RecycleFolderWindow>().Count()); // An older scan's menu cannot delete a current target.
 
-                CheckPhotos(window, app, fixture, artifactRoot, value => stage = value);
+                BeginWorkflow("Photos");
+                CheckPhotos(window, app, fixture, artifactRoot, SetStage);
 
-                stage = "checking Apps extension packaging, sorting, search, cancellation and drive changes";
+                BeginWorkflow("Apps");
+                SetStage("checking Apps extension packaging, sorting, search, cancellation and drive changes");
                 CheckApps(window, app, fixture, artifactRoot);
-                stage = "checking local assistant metadata, review, disable and cancellation";
+                BeginWorkflow("Assistant");
+                SetStage("checking local assistant metadata, review, disable and cancellation");
                 CheckAssistant(window, app, artifactRoot);
-                stage = "rendering framed folders at desktop and compact sizes";
+                BeginWorkflow("Explorer maps and columns");
+                SetStage("rendering framed folders at desktop and compact sizes");
                 window.SetScanTarget(@"G:\");
                 var layoutScan = NestedLayoutFixture();
                 var layoutLoad = window.InitializeExplorerAsync(layoutScan, [], default);
@@ -813,7 +844,7 @@ public sealed partial class DesktopTests
                     exploreLayout.ColumnDefinitions[0].Width = new(1, GridUnitType.Star);
                 }
 #pragma warning restore WPF0001
-                stage = "keeping small overview folders inside their proportional map cells after resizing";
+                SetStage("keeping small overview folders inside their proportional map cells after resizing");
                 var crowdedLoad = window.InitializeExplorerAsync(CrowdedMapFixture(), [], default);
                 PumpUntil(() => crowdedLoad.IsCompleted, TimeSpan.FromSeconds(10));
                 crowdedLoad.GetAwaiter().GetResult();
@@ -822,7 +853,7 @@ public sealed partial class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-crowded-{size.Item1}.png"), size.Item1, size.Item2);
                     AssertTilesContained(map);
                 }
-                stage = "revealing the parent of a nested grouped tile beneath a collapsed root";
+                SetStage("revealing the parent of a nested grouped tile beneath a collapsed root");
                 var groupedLoad = window.InitializeExplorerAsync(NestedLayoutFixture(smallEntries: true), [], default);
                 PumpUntil(() => groupedLoad.IsCompleted, TimeSpan.FromSeconds(10));
                 groupedLoad.GetAwaiter().GetResult();
@@ -851,23 +882,26 @@ public sealed partial class DesktopTests
                 Assert.True(Assert.IsType<ExplorerRow>(tree.SelectedItem).Expanded);
                 Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
-                stage = "keeping the initial sort visible after column changes and basic scanning";
+                SetStage("keeping the initial sort visible after column changes and basic scanning");
                 CheckVisibleInitialSort(window);
-                stage = "browsing thousands of grouped opportunities and retaining hidden selections";
+                BeginWorkflow("Opportunities browsing and selection");
+                SetStage("browsing thousands of grouped opportunities and retaining hidden selections");
                 CheckOpportunityBrowser(window, app, artifactRoot);
-                stage = "browsing additional cleanup categories by tool and project";
+                SetStage("browsing additional cleanup categories by tool and project");
                 CheckAdditionalCleanupCategories(window, app, artifactRoot);
-                stage = "validating stale selections before cleanup review";
+                BeginWorkflow("Cleanup review and execution");
+                SetStage("validating stale selections before cleanup review");
                 CheckOpportunityValidation(window, app, artifactRoot);
-                stage = "reviewing a thousand cleanup folders with bounded pages and bulk exclusions";
+                SetStage("reviewing a thousand cleanup folders with bounded pages and bulk exclusions");
                 CheckBulkCleanupReview(app, artifactRoot);
-                stage = "confirming batch cleanup and refreshing its affected folders";
+                SetStage("confirming batch cleanup and refreshing its affected folders");
                 CheckOpportunityCleanup(window, app, artifactRoot);
-                stage = "keeping overlapping extension groups and selections separate";
+                SetStage("keeping overlapping extension groups and selections separate");
                 CheckOverlappingOpportunityExtensions(window, app, artifactRoot);
-                stage = "confirming selected-drive Recycle Bin cleanup without deleting real bin contents";
+                BeginWorkflow("Recycle Bin and helper lifecycle");
+                SetStage("confirming selected-drive Recycle Bin cleanup without deleting real bin contents");
                 CheckRecycleBinCleanup(window, app, artifactRoot);
-                stage = "retaining one helper across app scans and closing it with the window";
+                SetStage("retaining one helper across app scans and closing it with the window");
                 var helperStart = HelperLayoutSource.CreateAsync(false);
                 PumpUntil(() => helperStart.IsCompleted, TimeSpan.FromSeconds(10));
                 var appHelper = helperStart.GetAwaiter().GetResult();
@@ -884,7 +918,7 @@ public sealed partial class DesktopTests
                     Assert.Same(appHelper, typeof(MainWindow).GetField("_scanHelper", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
                     Assert.True(appHelper.IsAvailable); Assert.False(appHelper.Exit.IsCompleted);
                 }
-                stage = "closing windows";
+                SetStage("closing windows");
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
                 PumpUntil(() => !app.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(10));
@@ -894,6 +928,8 @@ public sealed partial class DesktopTests
             catch (Exception ex) { failure = new InvalidOperationException($"WPF smoke failed while {stage}.", ex); }
             finally
             {
+                // Let cleanup pump the dispatcher even after a workflow timed out.
+                _desktopCancellation = default;
                 try
                 {
                     if (window?.IsVisible == true)
@@ -906,10 +942,22 @@ public sealed partial class DesktopTests
         thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        // This single-Application harness also exercises the Assistant's
-        // renders, cancellation and human review. Retain each interaction's
-        // own timeout while allowing the complete set of workflows to finish.
-        Assert.True(thread.Join(TimeSpan.FromSeconds(90)), $"The WPF smoke test timed out while {stage}.");
+        // One Application owns all workflows, but their cumulative rendering and
+        // fixture work must not consume another workflow's deadline. Interaction
+        // waits retain their own shorter limits; synchronous stalls remain bounded.
+        string? timedOut = null;
+        while (!thread.Join(TimeSpan.FromMilliseconds(100)))
+        {
+            if (Stopwatch.GetElapsedTime(Interlocked.Read(ref workflowStarted)) <= TimeSpan.FromSeconds(90)) continue;
+            timedOut = $"The WPF {Volatile.Read(ref workflow)} workflow timed out while {stage}.";
+            timeout.Cancel();
+            break;
+        }
+        if (timedOut is not null)
+        {
+            bool stopped = thread.Join(TimeSpan.FromSeconds(15));
+            Assert.Fail(timedOut + (stopped ? " The test session was closed." : " The test session did not finish closing."));
+        }
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 

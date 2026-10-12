@@ -55,6 +55,26 @@ public sealed class GitWorktreeAnalyzerTests
         Assert.Equal("local work that must be preserved", File.ReadAllText(changed));
     }
 
+    [Theory]
+    [InlineData("--assume-unchanged")]
+    [InlineData("--skip-worktree")]
+    public async Task IndexFlagsThatCanHideLocalChangesRequireReview(string flag)
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        await GitFixture.Run(repo.Checkout, repo.Old, "update-index", flag, "--", "source.txt");
+        File.WriteAllText(repo.Source, "local work hidden from ordinary Git status");
+        GitFixture.Age(repo.Checkout, repo.Old);
+        string gitDir = (await GitFixture.Run(repo.Checkout, repo.Old, "rev-parse", "--absolute-git-dir")).Trim();
+        string index = Path.Join(gitDir, "index"); byte[] before = File.ReadAllBytes(index);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var result = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
+        Assert.False(result.Recommended); Assert.False(result.VerifiedClean);
+        Assert.Equal("Needs review", result.Status);
+        Assert.Contains("index entries need manual review", result.Reason, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(index));
+        Assert.Equal("local work hidden from ordinary Git status", File.ReadAllText(repo.Source));
+    }
+
     [Fact]
     public async Task UnintegratedCommitsLockedRegistrationsAndUnsafeFiltersRequireReview()
     {
