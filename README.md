@@ -10,7 +10,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 
 ## Download and run
 
-Download **Setup.exe** from this repository's **Releases** and choose **Install** or a **Portable** folder. Normal installation adds the .NET 10 Desktop Runtime when needed. Portable mode requires the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) already installed. A portable ZIP is also available: extract it and open `Space Maid.exe`. Keep the extracted folders together.
+Download the **Setup** installer from [Releases](https://github.com/adsamcik/Space-Maid/releases) and choose **Install** or a **Portable** folder. Normal installation adds the .NET 10 Desktop Runtime when needed. Portable mode requires the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) already installed. A portable ZIP is also available: extract it and open `Space Maid.exe`. Keep the extracted folders together.
 
 Release binaries are currently unsigned.
 
