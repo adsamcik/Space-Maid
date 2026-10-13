@@ -34,7 +34,7 @@ public partial class MainWindow
         try
         {
             log.Record("review-validation-start", new { Selected = selected.Length, OutOfDate = _scanStale, WorktreePolicies = checkedWorktrees });
-            var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected, work.Token, log.Record, DiscoverOpportunities,
+            var validation = await Operations.ReviewCleanupAsync(scan, selected, work.Token, log.Record, DiscoverOpportunities,
                 new Progress<OpportunityValidationProgress>(update =>
                 {
                     if (_closing || !ReferenceEquals(_work, work)) return;
@@ -42,7 +42,7 @@ public partial class MainWindow
                     ScanProgressBar.IsIndeterminate = false;
                     ScanProgressBar.Maximum = Math.Max(1, update.Total);
                     ScanProgressBar.Value = update.Completed;
-                }), FastMetadataSource());
+                }));
             var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
                 new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking worktree… " + path; }));
             _worktreeCheckTask = gitCheck;

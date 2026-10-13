@@ -28,9 +28,10 @@ internal static class CleanupBatch
     internal static async Task<CleanupBatchResult> ExecuteAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null,
-        INtfsLayoutSource? layoutSource = null)
+        FileOperations? operations = null)
     {
         ArgumentNullException.ThrowIfNull(discover);
+        operations ??= new();
         var results = plan.BlockedLocations.Select(item => new CleanupLocationResult(item.Opportunity,
             CleanupOutcome.Skipped, item.Reason)).ToList();
         OpportunityReviewValidation? validation;
@@ -40,8 +41,8 @@ internal static class CleanupBatch
         try
         {
             progress.Report(new(0, plan.Targets.Count, "", "Checking confirmed folders again…"));
-            validation = await OpportunityReviewValidator.ValidateAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic, discover,
-                new InlineValidationProgress(update => progress.Report(new(update.Completed, update.Total, "", "Checking confirmed folders…"))), layoutSource);
+            validation = await operations.ReviewCleanupAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic, discover,
+                new InlineValidationProgress(update => progress.Report(new(update.Completed, update.Total, "", "Checking confirmed folders…"))));
             current = validation.ValidatedLocations.ToDictionary(location => (location.ProviderId, location.Path, location.RuleId));
             currentAssessments = await Task.Run(() => BuildCleanupProtection.Assess(validation.Snapshot, validation.Findings, plan.BuildPolicy, token), token);
             var selectedDirectories = validation.ValidatedLocations.DistinctBy(location => location.DirectoryIndex)
@@ -117,7 +118,7 @@ internal static class CleanupBatch
                     token.ThrowIfCancellationRequested();
                     progress.Report(new(completed, plan.Targets.Count, target.Path, "Moving to Recycle Bin…"));
                     attempted = true;
-                    var recycled = await FolderRecycler.RecycleAsync(target, owner, token, diagnostic);
+                    var recycled = await operations.RecycleAsync(target, owner, token, diagnostic);
                     result = new(location, recycled.Cancelled ? CleanupOutcome.Cancelled : CleanupOutcome.Recycled,
                         recycled.Cancelled ? "Cancelled; some contents may already have moved." : "Moved to Recycle Bin.", true, recycled);
                     if (recycled.Cancelled)

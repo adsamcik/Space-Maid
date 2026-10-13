@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using SpaceMaid.App;
 using SpaceMaid.App.Extensions;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
@@ -81,20 +82,21 @@ public sealed class ScopedScannerTests
         File.WriteAllBytes(file + ":named", new byte[8192]);
         var fresh = await new VolumeScanner().MeasureFolderAsync(fixture.Path);
         var source = new MetadataSource(fresh);
-        var checkedSelection = await OpportunityReviewValidator.ValidateAsync(original, [selected],
-            discover: DeveloperOpportunityFixture.Find, layoutSource: source);
+        var operations = new FileOperations(() => source);
+        var checkedSelection = await operations.ReviewCleanupAsync(original, [selected],
+            discover: DeveloperOpportunityFixture.Find);
         Assert.Equal(12288, Assert.Single(checkedSelection.ValidatedLocations).LogicalBytes);
         Assert.True(checkedSelection.CanMergeInventory);
-        var refreshed = await ScanRechecker.RefreshAsync(original, [new(output)], layoutSource: source);
+        var refreshed = await operations.RecheckAsync(original, [new(output)]);
         Assert.Equal(fresh.LogicalBytes, refreshed.LogicalBytes);
         var progress = new CapturedProgress();
-        var scanned = await new VolumeScanner(source).ScanAsync(output, progress);
+        var scanned = await operations.ScanAsync(output, progress);
         Assert.Equal("Fast NTFS folder scan", scanned.Backend); Assert.Equal(12288, scanned.LogicalBytes);
         Assert.True(scanned.IncludesAllDataStreams);
         var preliminary = Assert.IsType<ScanPreliminary>(progress.Last?.Preliminary);
         Assert.Equal(scanned.LogicalBytes, preliminary.LogicalBytes);
         Assert.Equal(12288, Assert.Single(preliminary.LargestFiles).LogicalBytes);
-        var inventory = new ExtensionInventory(() => null, () => false, () => new Lease(), layoutSource: () => source);
+        var inventory = new ExtensionInventory(() => null, () => false, () => new Lease(), operations: operations);
         var size = await inventory.ReadFolderSizeAsync(output, refresh: true, default);
         Assert.NotNull(size); Assert.Contains("Fast NTFS", size.Source); Assert.Equal(12288, size.LogicalBytes);
         Assert.Equal(0, source.WholeVolumeCalls);
@@ -177,7 +179,7 @@ public sealed class ScopedScannerTests
         public void Report(ScanProgress value) => Last = value;
     }
 
-    private sealed class MetadataSource(ScanSnapshot snapshot) : INtfsLayoutSource
+    internal sealed class MetadataSource(ScanSnapshot snapshot) : INtfsLayoutSource
     {
         private readonly Dictionary<FileIdentity, FileRecord> _records = snapshot.Records.ToDictionary(record => record.Identity);
         internal List<FileIdentity[]> Requests { get; } = [];

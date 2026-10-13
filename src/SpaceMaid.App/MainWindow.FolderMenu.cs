@@ -62,7 +62,7 @@ public partial class MainWindow
 
     private async Task AddCloudMenuAsync(ContextMenu menu, MenuItem checking, object marker, ScanSnapshot scan, int link, string path)
     {
-        var state = await Task.Run(() => CloudFiles.Inspect(path));
+        var state = await Operations.InspectCloudAsync(path);
         if (!CanUseFolderMenu(scan) || !ReferenceEquals(menu.Tag, marker)) return;
         menu.Items.Remove(checking);
         if (state is not null)

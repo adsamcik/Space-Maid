@@ -47,7 +47,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     internal ExtensionRuntime(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Action<string> reveal,
         string? dataRoot = null, string? bundleRoot = null, string? logDirectory = null, bool? administrator = null,
         Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? evidenceReview = null,
-        Func<INtfsLayoutSource?>? layoutSource = null)
+        FileOperations? operations = null)
     {
         _evidenceReview = evidenceReview;
         _administrator = administrator ?? Elevation.IsAdministrator;
@@ -58,7 +58,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         _diagnostics = new ScanLog(logDirectory ?? ScanLog.DefaultDirectory);
         Opportunities = new(_diagnostics.Record, _lifetime.Token);
         _jobs = new(_diagnostics.Record);
-        _inventory = new(currentScan, isScanStale, _jobs.BeginDiscovery, _lifetime.Token, layoutSource, _diagnostics.Record);
+        _inventory = new(currentScan, isScanStale, _jobs.BeginDiscovery, _lifetime.Token, operations, _diagnostics.Record);
         _tools = new(_jobs.WaitForDiscoveryAsync, _diagnostics.Record, _administrator);
         _settings = ReadSettings();
     }

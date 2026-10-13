@@ -17,7 +17,7 @@ public partial class MainWindow
         try
         {
             StatusText.Text = "Checking current cloud sync status…";
-            var plan = await Task.Run(() => CloudFiles.Prepare(scan, link, work.Token), work.Token);
+            var plan = await Operations.PrepareOnlineOnlyAsync(scan, link, work.Token);
             if (_closing || work.IsCancellationRequested) return;
             log.Record("online-only-prepared", new { plan.Path, plan.Provider, plan.EligibleCount, plan.SkippedCount, plan.LocalBytes, plan.Warnings });
             if (plan.EligibleCount == 0) { StatusText.Text = "No eligible synced local files were found. Unsynced, local-only and already online-only files were skipped."; return; }
@@ -32,7 +32,7 @@ public partial class MainWindow
             {
                 if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = $"Requesting online-only: {update.Processed:N0} / {update.Total:N0} · {update.Skipped:N0} skipped";
             });
-            var result = await Task.Run(() => CloudFiles.Execute(plan, progress, work.Token));
+            var result = await Operations.MakeOnlineOnlyAsync(plan, progress, work.Token);
             log.Record("online-only-result", result);
             if (_closing) return;
             string note = $"{result.Requested:N0} online-only requests accepted · {result.ConfirmedOnlineOnly:N0} confirmed online-only · {result.Skipped:N0} skipped"

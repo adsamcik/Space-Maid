@@ -12,8 +12,6 @@ public partial class MainWindow
 {
     private HelperLayoutSource? _scanHelper;
     private bool _fastEnabled;
-    private INtfsLayoutSource? FastMetadataSource() => _scanHelper?.IsAvailable == true ? _scanHelper
-        : Elevation.IsAdministrator ? new NativeNtfsLayoutSource() : null;
     private string _scanStatus = "Ready · Scan a drive to explore space";
     private TimeSpan _detectionElapsed, _presentationElapsed;
 
@@ -80,8 +78,8 @@ public partial class MainWindow
                 }
             }
             if (_scanHelper?.IsAvailable == true) log.Record("helper-session", new { _scanHelper.ProcessId, Reused = !helperStarted });
-            var scan = await new VolumeScanner().ScanAsync(target, progress, work.Token,
-                preferFast: _fastEnabled || Elevation.IsAdministrator, diagnostic: d => log.Record(d.Event, d), layoutSource: FastMetadataSource(),
+            var scan = await Operations.ScanAsync(target, progress, work.Token,
+                diagnostic: d => log.Record(d.Event, d),
                 fastUnavailableReason: helperFailure);
             acquiring = false;
             if (_closing) return false;

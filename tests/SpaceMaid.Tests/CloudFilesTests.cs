@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using SpaceMaid.App;
 using SpaceMaid.Core.Scanning;
 using Xunit;
 
@@ -55,6 +56,7 @@ public sealed class CloudFilesTests
     [Fact]
     public async Task WindowsPlaceholderRequestsAreRevalidatedAndReportedAsQueued()
     {
+        var operations = new FileOperations(() => throw new InvalidOperationException("Cloud operations must not request NTFS metadata."));
         using var fixture = new TestDirectory();
         string file = Path.Join(fixture.Path, "fixture.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -65,27 +67,27 @@ public sealed class CloudFilesTests
         {
             using (var handle = File.OpenHandle(file, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
                 Marshal.ThrowExceptionForHR(CfConvertToPlaceholder(handle, [1], 1, 1, out _, 0));
-            var state = Assert.IsType<CloudFileState>(CloudFiles.Inspect(file));
+            var state = Assert.IsType<CloudFileState>(await operations.InspectCloudAsync(file));
             Assert.Equal(registration.Name, state.Provider);
             Assert.True(state.CanRequestOnlineOnly);
             var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
-            var plan = CloudFiles.Prepare(scan, scan.FindEntry(file)!.Value, default);
+            var plan = await operations.PrepareOnlineOnlyAsync(scan, scan.FindEntry(file)!.Value, default);
             Assert.Equal(1, plan.EligibleCount);
             var updates = new List<OnlineOnlyProgress>();
-            var result = CloudFiles.Execute(plan, new InlineProgress<OnlineOnlyProgress>(updates.Add), default);
+            var result = await operations.MakeOnlineOnlyAsync(plan, new InlineProgress<OnlineOnlyProgress>(updates.Add), default);
             Assert.Equal(1, result.Requested);
             Assert.Equal(0, result.ConfirmedOnlineOnly); // No real provider is connected to complete it.
             Assert.Equal(2, CloudFiles.Inspect(file)!.PinState);
             Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
             Assert.Equal(1, Assert.Single(updates).Processed);
-            var folderPlan = CloudFiles.Prepare(scan, -1, default);
+            var folderPlan = await operations.PrepareOnlineOnlyAsync(scan, -1, default);
             Assert.Equal(1, folderPlan.EligibleCount);
             using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
-            Assert.True(CloudFiles.Execute(folderPlan, null, cancelled.Token).Cancelled);
+            Assert.True((await operations.MakeOnlineOnlyAsync(folderPlan, null, cancelled.Token)).Cancelled);
             // A planned identity mismatch must not redirect a confirmed request.
             var wrongIdentity = new OnlineOnlyPlan(file, state.Provider,
                 [new(file, state with { Identity = new(ulong.MaxValue) })], 0, []);
-            var replaced = CloudFiles.Execute(wrongIdentity, null, default);
+            var replaced = await operations.MakeOnlineOnlyAsync(wrongIdentity, null, default);
             Assert.Equal(0, replaced.Requested);
             Assert.Equal(1, replaced.Skipped);
             Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);

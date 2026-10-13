@@ -58,7 +58,7 @@ public partial class MainWindow
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();
         var timer = Stopwatch.StartNew();
-        var updated = prechecked ?? await ScanRechecker.RefreshAsync(scan, requests, token, log.Record, FastMetadataSource());
+        var updated = prechecked ?? await Operations.RecheckAsync(scan, requests, token, log.Record);
         var analysis = await Task.Run(() =>
         {
             var classified = OpportunityExtensions.Analyze(updated, token);

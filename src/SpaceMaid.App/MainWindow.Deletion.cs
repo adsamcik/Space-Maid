@@ -60,7 +60,7 @@ public partial class MainWindow
             { log.Record("recycle-confirmation-cancelled", new { target.Path }); return null; }
             StatusText.Text = $"Moving to Recycle Bin: {target.Path} · Windows shows progress and cancellation.";
             started = true;
-            var result = await FolderRecycler.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
+            var result = await Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
             outcome = result;
             if (!_closing)
             {

@@ -82,7 +82,7 @@ public sealed partial class DesktopTests
                 window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
                 window.CleanupSettingsPath = Path.Join(fixture.Path, "cleanup-settings.json");
                 window.UpdateSettingsPath = Path.Join(fixture.Path, "update-settings.json");
-                window.RecycleBins = new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call."));
+                window.Operations = new(recycleBins: new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call.")));
                 window.LoadBuildCleanupSettings();
                 string fixtureRoot = Path.GetPathRoot(fixture.Path)!;
                 window.DriveProvider = () => [new(fixtureRoot, "Development", DriveDiscovery.VolumeId(fixtureRoot), true, GiB(500), GiB(20)),

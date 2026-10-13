@@ -20,9 +20,11 @@ public partial class MainWindow : Window
     private string? _scanLogPath;
     private readonly Task _classificationReady = Task.Run(FileTypeClassifier.Prepare);
     internal string LogDirectory { get; set; } = AppData.File("Logs");
+    internal FileOperations Operations { get; set; }
 
     public MainWindow()
     {
+        Operations = new(() => _scanHelper?.IsAvailable == true ? _scanHelper : null);
         InitializeComponent();
         InitializeTreeColumns();
         Activated += Window_Activated;
@@ -172,12 +174,10 @@ public partial class MainWindow : Window
         try
         {
             if (!Directory.Exists(path)) { StatusText.Text = "This location is no longer available. Rescan to refresh the results."; return; }
-            var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
-            start.ArgumentList.Add(path);
-            using var process = Process.Start(start);
-            _explorerRecheckPath = path;
+            _explorerRecheckPath = Operations.OpenInExplorer(path);
         }
-        catch (Win32Exception ex) { StatusText.Text = $"Could not open the folder: {ex.Message}"; }
+        catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)
+        { StatusText.Text = $"Could not open the folder: {ex.Message}"; }
     }
 
     private bool _shutdownComplete;

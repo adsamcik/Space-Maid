@@ -24,8 +24,8 @@ public sealed partial class DesktopTests
         string root = Path.GetPathRoot(window.CurrentPath)!;
         long items = 3, bytes = GiB(6); int emptyCalls = 0;
         var roots = new List<string>();
-        window.RecycleBins = new(path => "fixture-" + path, _ => (bytes, items), (_, path) =>
-        { roots.Add(path); emptyCalls++; bytes = 0; items = 0; return 0; });
+        window.Operations = new(recycleBins: new(path => "fixture-" + path, _ => (bytes, items), (_, path) =>
+        { roots.Add(path); emptyCalls++; bytes = 0; items = 0; return 0; }));
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
         ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
         ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -55,8 +55,8 @@ public sealed partial class DesktopTests
         Assert.Contains("empty", ((TextBlock)window.FindName("StatusText")).Text, StringComparison.OrdinalIgnoreCase);
         PumpUntil(() => ((TextBlock)window.FindName("FreeSpaceText")).Text == "24 GiB", TimeSpan.FromSeconds(3));
         Assert.Contains("recycle-bin-native-finish", File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip)));
-        window.RecycleBins = new(_ => null, _ => throw new InvalidOperationException("Unavailable query must not run."),
-            (_, _) => throw new InvalidOperationException("Unavailable empty must not run."));
+        window.Operations = new(recycleBins: new(_ => null, _ => throw new InvalidOperationException("Unavailable query must not run."),
+            (_, _) => throw new InvalidOperationException("Unavailable empty must not run.")));
         var unavailable = window.RefreshRecycleBinAsync();
         PumpUntil(() => unavailable.IsCompleted, TimeSpan.FromSeconds(3)); unavailable.GetAwaiter().GetResult();
         Assert.Equal("Unavailable", ((TextBlock)window.FindName("RecycleBinCount")).Text);

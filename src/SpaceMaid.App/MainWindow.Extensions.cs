@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
@@ -29,7 +28,7 @@ public partial class MainWindow
         {
             _extensions = new ExtensionRuntime(() => _snapshot, () => _scanStale, RevealExtensionLocation,
                 dataRoot: ExtensionDataRoot, logDirectory: Path.Join(LogDirectory, "Extensions"), evidenceReview: ReviewAssistantEvidenceAsync,
-                layoutSource: FastMetadataSource);
+                operations: Operations);
             _extensions.JobsChanged += ExtensionJobsChanged;
             _extensions.SetDiscoveryBusy(_work is not null);
             await _extensions.InitializeAsync(_extensionLifetime.Token);
@@ -96,11 +95,9 @@ public partial class MainWindow
         if (!File.Exists(path)) { StatusText.Text = "This location is no longer available. Refresh its view."; return; }
         try
         {
-            var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
-            start.ArgumentList.Add("/select," + Path.GetFullPath(path));
-            using var process = Process.Start(start);
-            _explorerRecheckPath = Path.GetDirectoryName(path);
+            _explorerRecheckPath = Operations.OpenInExplorer(path);
         }
-        catch (System.ComponentModel.Win32Exception error) { StatusText.Text = $"Could not reveal the location: {error.Message}"; }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        { StatusText.Text = $"Could not reveal the location: {error.Message}"; }
     }
 }

@@ -8,7 +8,6 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
-    internal RecycleBinService RecycleBins { get; set; } = new();
     private RecycleBinSnapshot? _recycleBin;
     private int _recycleBinVersion;
 
@@ -26,7 +25,7 @@ public partial class MainWindow
         RecycleBinTitle.Text = "Recycle Bin · " + root;
         try
         {
-            var bin = await RecycleBins.QueryAsync(root);
+            var bin = await Operations.QueryRecycleBinAsync(root);
             if (_closing || version != _recycleBinVersion) return;
             _recycleBin = bin;
             RecycleBinSize.Text = SizeText.Format(bin.Bytes);
@@ -58,7 +57,7 @@ public partial class MainWindow
     {
         string root = Path.GetPathRoot(_currentPath) ?? "";
         var scan = _snapshot; string? scannedVolume = _snapshotVolumeId, confirmedVolume = null;
-        var service = RecycleBins;
+        var operations = Operations;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("empty-recycle-bin", root);
         _work = work; ++_recycleBinVersion;
@@ -68,7 +67,7 @@ public partial class MainWindow
         try
         {
             StatusText.Text = "Checking Recycle Bin…";
-            var bin = await service.QueryAsync(root); confirmedVolume = bin.VolumeId;
+            var bin = await operations.QueryRecycleBinAsync(root); confirmedVolume = bin.VolumeId;
             if (_closing || work.IsCancellationRequested) return;
             if (bin.Items == 0) { message = "Recycle Bin is empty."; return; }
             var confirmation = new EmptyRecycleBinWindow(bin) { Owner = this };
@@ -83,7 +82,7 @@ public partial class MainWindow
             CancelButton.Visibility = Visibility.Collapsed;
             StatusText.Text = "Emptying Recycle Bin on " + bin.RootPath + "…";
             started = true;
-            var result = await service.EmptyAsync(bin, new WindowInteropHelper(this).Handle, work.Token, log.Record);
+            var result = await operations.EmptyRecycleBinAsync(bin, new WindowInteropHelper(this).Handle, work.Token, log.Record);
             message = result.Remaining.Items == 0 ? "Recycle Bin is empty."
                 : $"{result.Remaining.Items:N0} items remain in the Recycle Bin.";
             if (result.Cancelled) message = "Cleanup cancelled. " + message;
@@ -114,7 +113,7 @@ public partial class MainWindow
                             requests = RecycleBinRefreshScopes(scan, binPath, userBin, Directory.Exists(userBin), Directory.Exists(binPath));
                             if (requests.Count > 0)
                             {
-                                var current = await service.QueryAsync(root);
+                                var current = await operations.QueryRecycleBinAsync(root);
                                 if (scannedVolume is null || !scannedVolume.Equals(confirmedVolume, StringComparison.OrdinalIgnoreCase)
                                     || !current.VolumeId.Equals(confirmedVolume, StringComparison.OrdinalIgnoreCase))
                                     throw new IOException("Drive identity changed. Rescan to update results.");

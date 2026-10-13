@@ -7,10 +7,11 @@ using SpaceMaid.Extensions.Contracts;
 namespace SpaceMaid.App.Extensions;
 
 internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Func<IDisposable> beginDiscovery,
-    CancellationToken lifetime = default, Func<INtfsLayoutSource?>? layoutSource = null,
+    CancellationToken lifetime = default, FileOperations? operations = null,
     Action<string, object>? diagnostic = null) : IInventoryReader, IInventoryFolderSizes, IInventoryEvidence
 {
     private const int BatchSize = 512;
+    private readonly FileOperations _operations = operations ?? new();
     private readonly object _gate = new();
     private readonly Dictionary<Guid, ReferenceBatch> _readers = [];
     private sealed record ReferenceBatch(ScanSnapshot? Scan, Dictionary<int, string?> Locations, CancellationToken Cancellation);
@@ -41,7 +42,7 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
             return ReferenceEquals(currentScan(), scan) && !isScanStale() ? summary : null;
         }
         using var discovery = beginDiscovery();
-        var measured = await new VolumeScanner(layoutSource?.Invoke()).MeasureFolderAsync(path, token, diagnostic).ConfigureAwait(false);
+        var measured = await _operations.MeasureFolderAsync(path, token, diagnostic).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         return new InventoryFolderSize(measured.LogicalBytes, measured.HasAllocationData ? measured.AllocatedBytes : null,
             !measured.RootEntry.IsIncomplete && measured.WarningCount == 0, measured.ScannedAtUtc, measured.Backend, SizeWarnings(measured));
