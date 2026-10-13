@@ -7,14 +7,15 @@ using System.IO.Enumeration;
 
 namespace SpaceMaid.Core.Scanning;
 
-public sealed class VolumeScanner
+public sealed class VolumeScanner(INtfsLayoutSource? scopedSource = null)
 {
     // Scoped app-folder measurements need current stream sizes: NTFS directory
     // entries for other hard-link names can retain earlier EOF/allocation values.
     // Attribute-only handles also include named DATA streams, without content IO.
-    public async Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default)
+    public async Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default,
+        Action<string, object>? diagnostic = null)
     {
-        try { return await ReadDirectoryAsync(path, recursive: true, token, allStreams: true).ConfigureAwait(false); }
+        try { return await ReadDirectoryAsync(path, recursive: true, token, allStreams: true, diagnostic: diagnostic).ConfigureAwait(false); }
         catch (Win32Exception error) when (error.NativeErrorCode is 1 or 50 or 87)
         { return await ReadDirectoryAsync(path, recursive: true, token, allowBasic: true).ConfigureAwait(false); }
     }
@@ -22,11 +23,11 @@ public sealed class VolumeScanner
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null,
         INtfsLayoutSource? layoutSource = null, string? fastUnavailableReason = null) =>
-        Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic, layoutSource, fastUnavailableReason), cancellationToken);
+        Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic, layoutSource ?? scopedSource, fastUnavailableReason), cancellationToken);
 
     // Parent rechecks read immediate names only, including at a drive root.
     internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token,
-        bool allStreams = false, bool allowBasic = false) => Task.Run(() =>
+        bool allStreams = false, bool allowBasic = false, Action<string, object>? diagnostic = null) => Task.Run(() =>
     {
         var timer = Stopwatch.StartNew();
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
@@ -39,25 +40,104 @@ public sealed class VolumeScanner
             AcquireBasic(path, builder, reporter, token, recursive);
             return builder.Build(path, "Targeted basic metadata", timer.Elapsed, allocatedBefore, token);
         }
-        var inventory = builder.Build(path, "Targeted Windows metadata", timer.Elapsed, allocatedBefore, token);
+        string backend = "Targeted Windows metadata";
         if (allStreams)
         {
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            backend = RefreshStreams(path, recursive, builder, scopedSource, timer, allocatedBefore, token, diagnostic)
+                ? "Fast NTFS scoped metadata" : "Targeted Windows stream metadata";
+        }
+        return builder.Build(path, backend, timer.Elapsed, allocatedBefore, token);
+    }, token);
+
+    // Membership comes from fresh, identity-checked directory enumeration. The
+    // helper supplies stream metadata only; its names cannot widen the scope.
+    private static bool RefreshStreams(string path, bool recursive, ScanBuilder builder, INtfsLayoutSource? source,
+        Stopwatch timer, long allocatedBefore, CancellationToken token, Action<string, object>? diagnostic)
+    {
+        string root = Path.GetPathRoot(Path.GetFullPath(path))!;
+        bool fastComplete = false;
+        if (source is not null && root.Length == 3 && builder.Files.All(file => file.Identity.High == 0 && file.Identity.Low != 0))
+        {
             try
             {
-                for (int i = 0; i < inventory.Records.Length; i++)
+                NativeNtfsLayoutSource.ValidateVolume(root);
+                diagnostic?.Invoke("scoped-fast-start", new { Path = path, Files = builder.Count });
+                for (int offset = 0; offset < builder.Count; offset += ScanPipeProtocol.MaximumFileIds)
                 {
                     token.ThrowIfCancellationRequested();
-                    string filePath = inventory.EntryPath(inventory.PrimaryLink(i)) ?? throw new IOException("A refreshed file path is unresolved.");
-                    builder.ReplaceMetadata(ReadStreamMetadata(filePath, inventory.Records[i], ref buffer));
+                    int count = Math.Min(ScanPipeProtocol.MaximumFileIds, builder.Count - offset);
+                    var expected = new Dictionary<FileIdentity, FileRecord>(count);
+                    for (int i = offset; i < offset + count; i++) expected.Add(builder.Files[i].Identity, builder.Files[i]);
+                    var actual = new Dictionary<FileIdentity, FileRecord>(expected.Count);
+                    source.AcquireFiles(root, expected.Keys.ToArray(), block =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (block.Data.IsEmpty) return;
+                        var parsed = new ScanBuilder();
+                        LayoutParser.Parse(block.Data.Span, parsed);
+                        if (parsed.Count != LayoutParser.U32(block.Data.Span, 0)) throw new InvalidDataException("Duplicate scoped NTFS metadata.");
+                        foreach (var record in parsed.Files)
+                        {
+                            if (!expected.TryGetValue(record.Identity, out var previous) || previous.IsDirectory != record.IsDirectory
+                                || !actual.TryAdd(record.Identity, record))
+                                throw new InvalidDataException("Unexpected scoped NTFS file identity or type.");
+                        }
+                    }, token);
+                    if (actual.Count != expected.Count) throw new IOException("A file disappeared during the scoped NTFS lookup.");
+                    foreach (var record in actual.Values) builder.ReplaceMetadata(record);
+                    diagnostic?.Invoke("scoped-fast-batch", new { Path = path, Files = actual.Count, Completed = offset + actual.Count });
                 }
+                fastComplete = true;
             }
-            finally { ArrayPool<byte>.Shared.Return(buffer); }
-            builder.AllStreams = true;
-            return builder.Build(path, "Targeted Windows stream metadata", timer.Elapsed, allocatedBefore, token);
+            catch (Exception error) when (error is Win32Exception or IOException or InvalidDataException or NotSupportedException)
+            {
+                builder.FallbackReason = "Fast NTFS metadata unavailable: " + error.Message;
+                diagnostic?.Invoke("scoped-fast-fallback", new { Path = path, Error = error.ToString(), Win32Error = (error as Win32Exception)?.NativeErrorCode });
+            }
         }
-        return inventory;
-    }, token);
+        token.ThrowIfCancellationRequested();
+        if (fastComplete)
+        {
+            // IDs can still exist outside this scope after a rename. Re-enumerate
+            // directory names/IDs, without opening individual files or adopting
+            // new membership. A changed namespace must fail, not fall back using
+            // the earlier names. Final cleanup retains its separate live guards.
+            var current = new ScanBuilder();
+            var reporter = new ScanReporter(null, null, timer, allocatedBefore, path);
+            AcquireDirectories(path, current, reporter, token, recursive, validateIdentity: true);
+            if (!builder.HasSameNamespace(current, token))
+                throw new IOException("The folder contents changed during the NTFS lookup. Recheck the folder again.");
+            builder.AllStreams = true;
+            diagnostic?.Invoke("scoped-fast-complete", new { Path = path, Files = builder.Count, ElapsedMs = timer.Elapsed.TotalMilliseconds });
+            return true;
+        }
+        var inventory = builder.Build(path, "Targeted Windows metadata", timer.Elapsed, allocatedBefore, token);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            for (int i = 0; i < inventory.Records.Length; i++)
+            {
+                token.ThrowIfCancellationRequested();
+                string filePath = inventory.EntryPath(inventory.PrimaryLink(i)) ?? throw new IOException("A refreshed file path is unresolved.");
+                builder.ReplaceMetadata(ReadStreamMetadata(filePath, inventory.Records[i], ref buffer));
+            }
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+        VerifyDirectoryIdentity(path, builder.Files[builder.RootIndex].Identity);
+        builder.AllStreams = true;
+        return false;
+    }
+
+    private static unsafe void VerifyDirectoryIdentity(string path, FileIdentity expected)
+    {
+        using var handle = OpenDirectory(path);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        byte[] info = new byte[24];
+        fixed (byte* pointer = info)
+            if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        if (new FileIdentity(LayoutParser.U64(info, 8), LayoutParser.U64(info, 16)) != expected)
+            throw new IOException("A folder moved or was replaced during its metadata lookup.");
+    }
 
     // Attribute-only handles enumerate all DATA stream sizes, including named
     // and sparse streams. Hold the identity while querying; never read content.
@@ -151,7 +231,7 @@ public sealed class VolumeScanner
             standard.WarningReported = message => reporter.Event("coverage-warning", message, standard);
             string backend = "Standard Windows scan";
             reporter.UseBackend(backend, fallbackReason ?? "Using directory metadata enumeration; fast mode was not requested or the target is not a whole local NTFS volume.", standard);
-            try { AcquireDirectories(target, standard, reporter, token); }
+            try { AcquireDirectories(target, standard, reporter, token, validateIdentity: preferFast && layoutSource is not null); }
             catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87)
             {
                 standard = new ScanBuilder(progress is not null) { AllocationData = false, FallbackReason =
@@ -163,6 +243,13 @@ public sealed class VolumeScanner
                 reporter.UseBackend("Basic folder scan", "Using logical-size-only enumeration.", standard);
                 AcquireBasic(target, standard, reporter, token);
                 backend = "Basic folder scan";
+            }
+            if (preferFast && layoutSource is not null && standard.AllocationData && !target.Equals(root, StringComparison.OrdinalIgnoreCase))
+            {
+                bool fast = RefreshStreams(target, true, standard, layoutSource, timer, allocatedBefore, token,
+                    (name, detail) => reporter.Event(name, detail.ToString() ?? name, standard));
+                backend = fast ? "Fast NTFS folder scan" : "Standard Windows stream scan";
+                reporter.UseBackend(backend, standard.FallbackReason ?? "Using scoped NTFS stream metadata.", standard);
             }
             return Finish(standard, backend);
         }

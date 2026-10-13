@@ -20,7 +20,7 @@ public partial class MainWindow
         try
         {
             log.Record("cleanup-confirmed", new { Locations = plan.Preview.Locations.Select(location => location.Path).ToArray(), Blocked = plan.BlockedLocations.Count });
-            result = await CleanupBatch.ExecuteAsync(plan, new WindowInteropHelper(this).Handle, progress, work.Token, log.Record, checkedWorktrees, DiscoverOpportunities);
+            result = await CleanupBatch.ExecuteAsync(plan, new WindowInteropHelper(this).Handle, progress, work.Token, log.Record, checkedWorktrees, DiscoverOpportunities, FastMetadataSource());
             if (_closing || !ReferenceEquals(_snapshot, displayed)) return result;
             if (result.Validation is not { } validation)
             {
@@ -53,7 +53,7 @@ public partial class MainWindow
                 _staleScopes.UnionWith(validation.UncheckedScopes);
                 progress.Report(new(plan.Targets.Count, plan.Targets.Count, "", "Rechecking affected folders…"));
                 var updated = result.Locations.Any(item => item.Attempted)
-                    ? await ScanRechecker.RefreshAsync(validation.Snapshot, requests, work.Token, log.Record) : validation.Snapshot;
+                    ? await ScanRechecker.RefreshAsync(validation.Snapshot, requests, work.Token, log.Record, FastMetadataSource()) : validation.Snapshot;
                 await RefreshAffectedAsync(displayed, requests, result.Summary, work.Token, log, updated);
                 result = result with { RefreshNote = "Affected folders refreshed; other folders retain earlier scan data." };
             }

@@ -9,10 +9,10 @@ public static class ScanRechecker
     internal sealed record Replacement(string Path, bool Recursive, ScanSnapshot Fresh);
 
     public static async Task<ScanSnapshot> RefreshAsync(ScanSnapshot scan, IEnumerable<ScanRecheckRequest> requests,
-        CancellationToken token = default, Action<string, object>? diagnostic = null)
+        CancellationToken token = default, Action<string, object>? diagnostic = null, INtfsLayoutSource? layoutSource = null)
     {
         if (!scan.HasAllocationData) throw new InvalidOperationException("This scan has no stable file identities. A full rescan is required.");
-        var scanner = new VolumeScanner();
+        var scanner = new VolumeScanner(layoutSource);
         var replacements = new List<Replacement>();
         var pending = new Queue<ScanRecheckRequest>(requests);
         var visited = new HashSet<string>(StringComparer.Ordinal);
@@ -27,10 +27,11 @@ public static class ScanRechecker
             if (!visited.Add(path)) continue;
             ValidateAncestors(path);
             diagnostic?.Invoke("recheck-read-start", new { Path = path, request.Recursive });
-            var fresh = await scanner.ReadDirectoryAsync(path, request.Recursive, token, scan.IncludesAllDataStreams);
+            var fresh = await scanner.ReadDirectoryAsync(path, request.Recursive, token, scan.IncludesAllDataStreams, diagnostic: diagnostic);
             if (fresh.WarningCount > 0) throw new IOException("The recheck was incomplete: " + string.Join(" ", fresh.Warnings));
             replacements.Add(new(path, request.Recursive, fresh));
-            diagnostic?.Invoke("recheck-read-complete", new { Path = path, fresh.FileCount, fresh.NameCount, fresh.Metrics.Acquisition });
+            diagnostic?.Invoke("recheck-read-complete", new { Path = path, fresh.FileCount, fresh.NameCount, fresh.Backend,
+                fresh.FallbackReason, fresh.Metrics.Acquisition });
             if (!request.Recursive)
             {
                 int? oldLink = scan.FindEntry(path);

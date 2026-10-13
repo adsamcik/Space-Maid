@@ -13,6 +13,8 @@ public readonly record struct NtfsLayoutBlock(ReadOnlyMemory<byte> Data, double 
 public interface INtfsLayoutSource
 {
     void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token);
+    void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token) =>
+        throw new NotSupportedException("This metadata source does not support scoped NTFS queries.");
 }
 
 public sealed class NativeNtfsLayoutSource : INtfsLayoutSource
@@ -28,13 +30,55 @@ public sealed class NativeNtfsLayoutSource : INtfsLayoutSource
         return volume;
     }
 
-    public unsafe void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
+    public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
     {
+        byte[] input = new byte[32];
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x37);
+        Acquire(volume, input, consume, token);
+    }
+
+    public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        ValidateFiles(files);
+        var captured = files.ToArray();
+        Acquire(volume, CreateFilesInput(captured), consume, token);
+    }
+
+    public static void ValidateFiles(IReadOnlyList<FileIdentity> files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count is < 1 or > ScanPipeProtocol.MaximumFileIds)
+            throw new InvalidDataException("A scoped NTFS query needs between 1 and 1024 file identities.");
+        var seen = new HashSet<ulong>();
+        foreach (var file in files)
+            if (file.High != 0 || file.Low == 0 || !seen.Add(file.Low))
+                throw new InvalidDataException("A scoped NTFS query needs distinct, nonzero 64-bit NTFS file identities.");
+    }
+
+    internal static byte[] CreateFilesInput(IReadOnlyList<FileIdentity> files)
+    {
+        ValidateFiles(files);
+        byte[] input = new byte[checked(16 + files.Count * 16)];
+        BinaryPrimitives.WriteUInt32LittleEndian(input, (uint)files.Count);
+        // STREAMS | EXTRA_INFO | resident/unallocated streams | RESTART.
+        // No names/extents: scoped directory membership stays with the caller.
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x35);
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(8), 2);
+        for (int i = 0; i < files.Count; i++)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(16 + i * 16), files[i].Low);
+            BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(24 + i * 16), files[i].Low);
+        }
+        return input;
+    }
+
+    private static unsafe void Acquire(string volume, byte[] input, Action<NtfsLayoutBlock> consume, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         ValidateVolume(volume);
         using var handle = NativeMethods.CreateFile(@"\\.\" + volume[..2], 0x80000000, 7, 0, 3, 0, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        byte[] input = new byte[32];
-        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x37);
         int size = 1024 * 1024;
         byte[] output = ArrayPool<byte>.Shared.Rent(size);
         try
@@ -64,7 +108,8 @@ public sealed class NativeNtfsLayoutSource : INtfsLayoutSource
                 }
                 if (bytes < 16 || bytes > size) throw new InvalidDataException("Invalid NTFS metadata response length.");
                 consume(new(output.AsMemory(0, bytes), elapsed));
-                BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x36);
+                uint flags = BinaryPrimitives.ReadUInt32LittleEndian(input.AsSpan(4));
+                BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), flags & ~1u);
             }
         }
         finally { ArrayPool<byte>.Shared.Return(output); }

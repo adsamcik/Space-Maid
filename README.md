@@ -18,6 +18,8 @@ Release builds check this repository's GitHub Releases for updates once a day wh
 
 Enable fast scanning when prompted to authorize the read-only NTFS helper. The app stays unelevated; standard scanning remains available if you decline.
 
+The same helper accelerates folder scans, cleanup review, rechecks and app-size refreshes with scoped NTFS metadata queries. Current folder membership and cleanup safeguards are still checked; unsupported queries fall back to standard metadata reads.
+
 Cleanup moves selected folders to the Recycle Bin after review and confirmation. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Photos cleanup is currently disabled.
 
 ## Build from source

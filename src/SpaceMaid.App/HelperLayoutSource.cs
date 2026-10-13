@@ -67,6 +67,18 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
     }
 
     public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
+        => AcquireRequest(volume, null, consume, token);
+
+    public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        NativeNtfsLayoutSource.ValidateFiles(files);
+        var captured = files.ToArray();
+        NativeNtfsLayoutSource.ValidateFiles(captured);
+        AcquireRequest(volume, captured, consume, token);
+    }
+
+    private void AcquireRequest(string volume, FileIdentity[]? files, Action<NtfsLayoutBlock> consume, CancellationToken token)
     {
         // Validation/cancellation before sending cannot poison the idle session.
         token.ThrowIfCancellationRequested();
@@ -76,8 +88,14 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
             token.ThrowIfCancellationRequested();
             if (!IsAvailable) throw new IOException("The fast-scan helper is no longer connected.");
             long id = ++_request;
-            byte[] request = new byte[11]; BinaryPrimitives.WriteInt64LittleEndian(request, id);
-            Encoding.ASCII.GetBytes(volume).CopyTo(request, 8);
+            ScanFrameKind kind = files is null ? ScanFrameKind.Request : ScanFrameKind.FilesRequest;
+            byte[] request;
+            if (files is null)
+            {
+                request = new byte[11]; BinaryPrimitives.WriteInt64LittleEndian(request, id);
+                Encoding.ASCII.GetBytes(volume).CopyTo(request, 8);
+            }
+            else request = ScanPipeProtocol.CreateFilesRequest(id, volume, files);
             bool terminal = false;
             ExceptionDispatchInfo? consumeFailure = null;
             byte[] buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
@@ -98,7 +116,7 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
             }
             try
             {
-                lock (_writeGate) ScanPipeProtocol.Write(_pipe, ScanFrameKind.Request, request);
+                lock (_writeGate) ScanPipeProtocol.Write(_pipe, kind, request);
                 using var cancelled = token.Register(CancelRequest);
                 while (true)
                 {

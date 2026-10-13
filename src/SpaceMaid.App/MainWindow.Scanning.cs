@@ -12,6 +12,8 @@ public partial class MainWindow
 {
     private HelperLayoutSource? _scanHelper;
     private bool _fastEnabled;
+    private INtfsLayoutSource? FastMetadataSource() => _scanHelper?.IsAvailable == true ? _scanHelper
+        : Elevation.IsAdministrator ? new NativeNtfsLayoutSource() : null;
     private string _scanStatus = "Ready · Scan a drive to explore space";
     private TimeSpan _detectionElapsed, _presentationElapsed;
 
@@ -60,7 +62,7 @@ public partial class MainWindow
             string root = Path.GetPathRoot(target)!;
             string? historyVolume = await Task.Run(() => DriveDiscovery.VolumeId(root)).WaitAsync(work.Token);
             var selectedDrive = root.Length == 3 ? new DriveInfo(root) : null;
-            if (_fastEnabled && _scanHelper?.IsAvailable != true && target.Equals(root, StringComparison.OrdinalIgnoreCase)
+            if (_fastEnabled && _scanHelper?.IsAvailable != true
                 && selectedDrive is not null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
                 && selectedDrive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
             {
@@ -79,7 +81,7 @@ public partial class MainWindow
             }
             if (_scanHelper?.IsAvailable == true) log.Record("helper-session", new { _scanHelper.ProcessId, Reused = !helperStarted });
             var scan = await new VolumeScanner().ScanAsync(target, progress, work.Token,
-                preferFast: _fastEnabled || Elevation.IsAdministrator, diagnostic: d => log.Record(d.Event, d), layoutSource: _scanHelper,
+                preferFast: _fastEnabled || Elevation.IsAdministrator, diagnostic: d => log.Record(d.Event, d), layoutSource: FastMetadataSource(),
                 fastUnavailableReason: helperFailure);
             acquiring = false;
             if (_closing) return false;

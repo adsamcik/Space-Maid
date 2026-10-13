@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
 
@@ -26,7 +27,8 @@ internal static class CleanupBatch
 {
     internal static async Task<CleanupBatchResult> ExecuteAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
-        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null)
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null,
+        INtfsLayoutSource? layoutSource = null)
     {
         ArgumentNullException.ThrowIfNull(discover);
         var results = plan.BlockedLocations.Select(item => new CleanupLocationResult(item.Opportunity,
@@ -39,7 +41,7 @@ internal static class CleanupBatch
         {
             progress.Report(new(0, plan.Targets.Count, "", "Checking confirmed folders again…"));
             validation = await OpportunityReviewValidator.ValidateAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic, discover,
-                new InlineValidationProgress(update => progress.Report(new(update.Completed, update.Total, "", "Checking confirmed folders…"))));
+                new InlineValidationProgress(update => progress.Report(new(update.Completed, update.Total, "", "Checking confirmed folders…"))), layoutSource);
             current = validation.ValidatedLocations.ToDictionary(location => (location.ProviderId, location.Path, location.RuleId));
             currentAssessments = await Task.Run(() => BuildCleanupProtection.Assess(validation.Snapshot, validation.Findings, plan.BuildPolicy, token), token);
             var selectedDirectories = validation.ValidatedLocations.DistinctBy(location => location.DirectoryIndex)

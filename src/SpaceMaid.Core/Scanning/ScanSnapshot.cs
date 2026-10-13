@@ -2,7 +2,7 @@ using SpaceMaid.Core.Analysis;
 
 namespace SpaceMaid.Core.Scanning;
 
-internal readonly record struct FileIdentity(ulong Low, ulong High = 0);
+public readonly record struct FileIdentity(ulong Low, ulong High = 0);
 
 internal readonly record struct FileRecord(
     FileIdentity Identity, FileAttributes Attributes, long LogicalBytes,

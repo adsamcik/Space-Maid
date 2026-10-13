@@ -17,8 +17,10 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
     private readonly List<int>? _firstNames = trackPreliminary ? [] : null;
     private readonly PriorityQueue<int, (long Bytes, int Tie)> _largest = new();
     private long _observedLogical, _observedAllocated;
+    private bool _largestNeedsRefresh;
 
     public int Count => _files.Count;
+    internal IReadOnlyList<FileRecord> Files => _files;
     public int NameCount => _links.Count;
     public int WarningCount => _omissions;
     public Action<string>? WarningReported { get; set; }
@@ -50,9 +52,59 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         return index;
     }
 
-    internal void ReplaceMetadata(FileRecord file) => _files[_ids[file.Identity]] = file;
+    internal void ReplaceMetadata(FileRecord file)
+    {
+        int index = _ids[file.Identity];
+        var previous = _files[index];
+        _files[index] = file;
+        if (_firstNames is null) return;
+        _observedLogical = checked(_observedLogical - previous.LogicalBytes + file.LogicalBytes);
+        _observedAllocated = checked(_observedAllocated - previous.AllocatedBytes + file.AllocatedBytes);
+        if (previous.LogicalBytes != file.LogicalBytes || previous.AllocatedBytes != file.AllocatedBytes)
+            _largestNeedsRefresh = true;
+    }
     internal void MarkUnmeasuredDirectory(FileIdentity identity) => _unmeasuredDirectories.Add(identity);
     internal void ClearUnmeasuredDirectory(FileIdentity identity) => _unmeasuredDirectories.Remove(identity);
+
+    internal bool HasSameNamespace(ScanBuilder current, CancellationToken token)
+    {
+        if (RootIndex < 0 || current.RootIndex < 0 || _files[RootIndex].Identity != current._files[current.RootIndex].Identity
+            || _files.Count != current._files.Count || _links.Count != current._links.Count || WarningCount != current.WarningCount) return false;
+        for (int i = 0; i < current._files.Count; i++)
+        {
+            if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
+            var file = current._files[i];
+            if (!_ids.TryGetValue(file.Identity, out int index) || _files[index].IsDirectory != file.IsDirectory) return false;
+        }
+        // Most physical files have one name. Index their aliases without
+        // materializing paths or depending on directory enumeration order.
+        int[] heads = new int[_files.Count], next = new int[_links.Count];
+        Array.Fill(heads, -1);
+        for (int i = 0; i < _links.Count; i++)
+        {
+            if ((i & 4095) == 0) token.ThrowIfCancellationRequested();
+            int file = _links[i].FileIndex;
+            next[i] = heads[file]; heads[file] = i;
+        }
+        bool[] matched = new bool[_links.Count];
+        for (int position = 0; position < current._links.Count; position++)
+        {
+            if ((position & 4095) == 0) token.ThrowIfCancellationRequested();
+            var link = current._links[position];
+            int file = _ids[current._files[link.FileIndex].Identity];
+            bool found = false;
+            for (int i = heads[file]; i >= 0; i = next[i])
+            {
+                var previous = _links[i];
+                if (matched[i] || previous.ParentIdentity != link.ParentIdentity || previous.NameLength != link.NameLength
+                    || !_names.AsSpan(previous.NameOffset, previous.NameLength)
+                        .SequenceEqual(current._names.AsSpan(link.NameOffset, link.NameLength))) continue;
+                matched[i] = found = true; break;
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
 
     public void AddLink(int file, FileIdentity parent, ReadOnlySpan<char> name)
     {
@@ -70,6 +122,22 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
 
     public ScanPreliminary Preliminary(string rootPath)
     {
+        // Folder scans first enumerate names, then replace stream sizes in
+        // batches. Rebuild the bounded ranking only when a preview is requested.
+        if (_largestNeedsRefresh)
+        {
+            _largest.Clear();
+            for (int i = 0; i < _files.Count; i++)
+            {
+                var file = _files[i];
+                if (file.IsDirectory) continue;
+                var priority = (AllocationData ? file.AllocatedBytes : file.LogicalBytes, -i);
+                if (_largest.Count < 100) _largest.Enqueue(i, priority);
+                else if (_largest.TryPeek(out _, out var smallest) && priority.CompareTo(smallest) > 0)
+                    _largest.EnqueueDequeue(i, priority);
+            }
+            _largestNeedsRefresh = false;
+        }
         var largest = _largest.UnorderedItems.OrderByDescending(item => item.Priority).Select(item =>
         {
             var file = _files[item.Element];

@@ -42,7 +42,7 @@ public partial class MainWindow
                     ScanProgressBar.IsIndeterminate = false;
                     ScanProgressBar.Maximum = Math.Max(1, update.Total);
                     ScanProgressBar.Value = update.Completed;
-                }));
+                }), FastMetadataSource());
             var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
                 new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking worktree… " + path; }));
             _worktreeCheckTask = gitCheck;

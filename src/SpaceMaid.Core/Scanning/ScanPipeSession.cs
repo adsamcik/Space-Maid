@@ -29,11 +29,13 @@ internal static class ScanPipeSession
                         if (request == activeRequest) active?.Cancel();
                     continue;
                 }
-                if (frame.Kind != ScanFrameKind.Request || frame.Length != 11)
+                if (frame.Kind == ScanFrameKind.Request ? frame.Length != 11
+                    : frame.Kind != ScanFrameKind.FilesRequest || frame.Length is < 23 or > ScanPipeProtocol.MaximumFilesRequestPayload)
                     throw new InvalidDataException("Unexpected scan command.");
-                byte[] payload = new byte[11]; pipe.ReadExactly(payload);
+                byte[] payload = new byte[frame.Length]; pipe.ReadExactly(payload);
                 long id = BinaryPrimitives.ReadInt64LittleEndian(payload);
                 string volume = Encoding.ASCII.GetString(payload, 8, 3);
+                FileIdentity[]? files = frame.Kind == ScanFrameKind.FilesRequest ? ScanPipeProtocol.ReadFilesRequest(payload) : null;
                 lock (stateGate)
                 {
                     if (active is not null || id <= lastRequest)
@@ -41,7 +43,7 @@ internal static class ScanPipeSession
                     lastRequest = activeRequest = id;
                     active = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
                     var requestCancellation = active;
-                    worker = Task.Run(() => Acquire(id, volume, requestCancellation));
+                    worker = Task.Run(() => Acquire(id, volume, files, requestCancellation));
                 }
             }
         }
@@ -54,17 +56,19 @@ internal static class ScanPipeSession
             await worker.ConfigureAwait(false);
         }
 
-        void Acquire(long id, string volume, CancellationTokenSource cancellation)
+        void Acquire(long id, string volume, FileIdentity[]? files, CancellationTokenSource cancellation)
         {
             Exception? failure = null;
             try
             {
                 NativeNtfsLayoutSource.ValidateVolume(volume);
-                source.Acquire(volume, block =>
+                void Consume(NtfsLayoutBlock block)
                 {
                     cancellation.Token.ThrowIfCancellationRequested();
                     ScanPipeProtocol.WriteBlock(pipe, id, block);
-                }, cancellation.Token);
+                }
+                if (files is null) source.Acquire(volume, Consume, cancellation.Token);
+                else source.AcquireFiles(volume, files, Consume, cancellation.Token);
             }
             catch (Exception ex) { failure = ex; }
             finally

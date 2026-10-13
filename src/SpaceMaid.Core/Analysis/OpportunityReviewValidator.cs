@@ -14,16 +14,17 @@ public static class OpportunityReviewValidator
 {
     public static Task<OpportunityReviewValidation> ValidateAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
         CancellationToken token = default, Action<string, object>? diagnostic = null, OpportunityDiscovery? discover = null,
-        IProgress<OpportunityValidationProgress>? progress = null)
+        IProgress<OpportunityValidationProgress>? progress = null, INtfsLayoutSource? layoutSource = null)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
         ArgumentNullException.ThrowIfNull(discover);
         var captured = selected.ToArray();
-        return Task.Run(() => ValidateCoreAsync(scan, captured, token, diagnostic, discover, progress), token);
+        return Task.Run(() => ValidateCoreAsync(scan, captured, token, diagnostic, discover, progress, layoutSource), token);
     }
 
     private static async Task<OpportunityReviewValidation> ValidateCoreAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
-        CancellationToken token, Action<string, object>? diagnostic, OpportunityDiscovery discover, IProgress<OpportunityValidationProgress>? progress)
+        CancellationToken token, Action<string, object>? diagnostic, OpportunityDiscovery discover, IProgress<OpportunityValidationProgress>? progress,
+        INtfsLayoutSource? layoutSource)
     {
         token.ThrowIfCancellationRequested();
         if (selected.Count == 0) throw new ArgumentException("Select at least one opportunity to validate.", nameof(selected));
@@ -51,7 +52,7 @@ public static class OpportunityReviewValidator
         }
         var scopes = PlanScopes(requests.Select(value => new ScanRecheckRequest(value.Key, value.Value)), token);
         diagnostic?.Invoke("opportunity-validation-start", new { Selected = choices.Count, Scopes = scopes.Length, scan.HasAllocationData });
-        var reader = new VolumeScanner();
+        var reader = new VolumeScanner(layoutSource);
         var replacements = new List<ScanRechecker.Replacement>(scopes.Length);
         var progressTimer = Stopwatch.StartNew(); int completed = 0;
         foreach (var scope in scopes)
@@ -62,10 +63,12 @@ public static class OpportunityReviewValidator
             if (completed == 0 || progressTimer.ElapsedMilliseconds >= 150)
             { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
             var fresh = await reader.ReadDirectoryAsync(scope.Path, scope.Recursive, token,
-                allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData).ConfigureAwait(false);
+                allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData,
+                diagnostic: diagnostic).ConfigureAwait(false);
             if (fresh.WarningCount > 0) throw new IOException("The selected scope could not be fully validated: " + string.Join(" ", fresh.Warnings));
             replacements.Add(new(scope.Path, scope.Recursive, fresh));
-            diagnostic?.Invoke("opportunity-validation-read-complete", new { scope.Path, scope.Recursive, fresh.FileCount, ElapsedMs = fresh.Metrics.Acquisition.TotalMilliseconds });
+            diagnostic?.Invoke("opportunity-validation-read-complete", new { scope.Path, scope.Recursive, fresh.FileCount,
+                fresh.Backend, fresh.FallbackReason, ElapsedMs = fresh.Metrics.Acquisition.TotalMilliseconds });
             completed++;
         }
         progress?.Report(new(completed, scopes.Length, ""));
