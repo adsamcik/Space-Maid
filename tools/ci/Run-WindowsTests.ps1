@@ -27,11 +27,11 @@ $administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.Windo
 
 if ($TestUserProcess) {
     if ($administrator) { throw 'The desktop and extension tests must run without administrator access.' }
-    # A credentialed process inherits the runner environment. Use its loaded
-    # profile for known folders and temporary fixtures instead of runneradmin's.
-    $env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
-    $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
-    $env:APPDATA = [Environment]::GetFolderPath('ApplicationData')
+    # Known-folder lookup can expand the inherited runneradmin USERPROFILE.
+    # Rebuild profile variables from this account's token and loaded profile.
+    . (Join-Path $PSScriptRoot 'Initialize-TestUserEnvironment.ps1')
+    Initialize-TestUserEnvironment
+    & (Join-Path $PSScriptRoot 'Test-UserEnvironment.ps1')
     $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
     $env:TMP = $env:TEMP
     $env:SPACEMAID_TEST_MODEL_WORKER = $workerExecutable

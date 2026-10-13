@@ -51,6 +51,9 @@ public sealed partial class DesktopTests
             MainWindow? window = null;
             try
             {
+                // The component harness bypasses App.Main; reproduce its updater
+                // startup before constructing views, including release metadata builds.
+                Velopack.VelopackApp.Build().SetArgs([]).SetAutoApplyOnStartup(false).Run();
                 SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
                 fixture = new TestDirectory();
                 string project = Directory.CreateDirectory(Path.Join(fixture.Path, "sample")).FullName;
@@ -78,6 +81,7 @@ public sealed partial class DesktopTests
                 window.DriveHistoryPath = Path.Join(fixture.Path, "drive-history.json");
                 window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
                 window.CleanupSettingsPath = Path.Join(fixture.Path, "cleanup-settings.json");
+                window.UpdateSettingsPath = Path.Join(fixture.Path, "update-settings.json");
                 window.RecycleBins = new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call."));
                 window.LoadBuildCleanupSettings();
                 string fixtureRoot = Path.GetPathRoot(fixture.Path)!;
