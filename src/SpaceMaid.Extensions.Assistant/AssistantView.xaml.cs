@@ -47,7 +47,7 @@ public partial class AssistantView : UserControl
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
-        { EnabledBox.IsChecked = false; StatusText.Text = "Local model settings could not be read. Choose a model and enable the assistant to save new settings."; }
+        { EnabledBox.IsChecked = false; StatusText.Text = "Couldn't load settings. Choose a model and enable the assistant."; }
         _initialized = true; SettingsPanel.IsExpanded = EnabledBox.IsChecked != true || string.IsNullOrEmpty(ModelPathBox.Text);
         SuggestionList.SizeChanged += (_, _) =>
         {
@@ -76,7 +76,7 @@ public partial class AssistantView : UserControl
     {
         if (!_initialized) return;
         Invalidate();
-        try { SaveSettings(); StatusText.Text = EnabledBox.IsChecked == true ? "Choose a scanned folder to investigate." : "Local assistant disabled."; }
+        try { SaveSettings(); StatusText.Text = EnabledBox.IsChecked == true ? "Choose a scanned folder." : "Assistant disabled."; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { EnabledBox.IsChecked = false; StatusText.Text = "Settings could not be saved: " + error.Message; }
         UpdateActions();
@@ -86,7 +86,7 @@ public partial class AssistantView : UserControl
         var picker = new OpenFileDialog { Title = "Choose a local GGUF instruction model", Filter = "GGUF models (*.gguf)|*.gguf|All files (*.*)|*.*", CheckFileExists = true };
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
         Invalidate(); ModelPathBox.Text = picker.FileName;
-        try { SaveSettings(); StatusText.Text = "Model selected. Refresh the folder summary before investigating."; }
+        try { SaveSettings(); StatusText.Text = _root is null ? "Model selected. Choose a scanned folder." : "Model selected. Refresh to continue."; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { StatusText.Text = "Settings could not be saved: " + error.Message; }
         UpdateActions();
     }
@@ -100,7 +100,7 @@ public partial class AssistantView : UserControl
     private void Exclusions_Changed(object sender, TextChangedEventArgs e)
     {
         if (!_initialized) return;
-        Invalidate(); StatusText.Text = "Exclusions changed. Refresh the summary."; UpdateActions();
+        Invalidate(); StatusText.Text = "Exclusions changed. Refresh to continue."; UpdateActions();
     }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await StartAsync(RefreshSummaryAsync);
     private async void Run_Click(object sender, RoutedEventArgs e) => await StartAsync(InvestigateAsync);
@@ -112,7 +112,7 @@ public partial class AssistantView : UserControl
         _work = work; _busy = true; UpdateActions();
         try { _active = action(work.Token); await _active; }
         catch (OperationCanceledException)
-        { if (!_closed) StatusText.Text = "Stopped. No cleanup was authorized."; }
+        { if (!_closed) StatusText.Text = "Stopped."; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException
             or JsonException or System.ComponentModel.Win32Exception or NotSupportedException or TimeoutException or AggregateException)
         {
@@ -135,10 +135,11 @@ public partial class AssistantView : UserControl
             if (_closed || version != _version) return;
             _session = session; session = null!;
             ShowEvidence(summary);
-            StatusText.Text = summary.Coverage.Complete ? "Summary ready. Find suggestions when you want to investigate."
+            EmptyText.Text = "No suggestions yet.";
+            StatusText.Text = summary.Coverage.Complete ? "Ready."
                 : summary.Coverage.WarningCount > 0 || summary.Coverage.RetainsEarlierMetadata
-                    ? "The disk scan has warnings or retained metadata. Scan the selected folder separately, then refresh this summary."
-                    : "Coverage is incomplete. Scan this folder again, or choose a smaller folder if the summary reached its limit.";
+                    ? "Scan incomplete or out of date. Rescan this folder, then refresh."
+                    : "Incomplete summary. Rescan or choose a smaller folder.";
         }
         finally { session?.Dispose(); UpdateActions(); }
     }
@@ -157,9 +158,9 @@ public partial class AssistantView : UserControl
         // Native/model process is disposed on return, before human review.
         SuggestionList.ItemsSource = result.Suggestions.Select(item => new SuggestionRow(item)).ToArray();
         EmptyText.Visibility = result.Suggestions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyText.Text = result.UntrustedNote.Length > 0 ? "Model note (unverified): " + result.UntrustedNote : "No investigation suggestions were found.";
+        EmptyText.Text = result.UntrustedNote.Length > 0 ? "AI note (unverified): " + result.UntrustedNote : "No suggestions found.";
         ShowEvidence(result.Summary);
-        StatusText.Text = result.Suggestions.Count == 0 ? "Investigation finished without suggestions." : $"{result.Suggestions.Count} suggestions to investigate. Select folders for the host's separate review.";
+        StatusText.Text = result.Suggestions.Count == 0 ? "Finished." : $"{result.Suggestions.Count:N0} suggestions · Review before cleanup";
     }
     private void ShowEvidence(EvidenceSummary summary) => EvidenceText.Text = summary.Text + "\n" + string.Join("\n", summary.Cautions)
         + $"\nSource: {summary.Coverage.Backend} · Observed {summary.Coverage.ScannedAtUtc.ToLocalTime():g}";
@@ -168,7 +169,7 @@ public partial class AssistantView : UserControl
         if (_session is not { } session || _host is not IExtensionEvidenceReview review) throw new InvalidOperationException("Host cleanup review is unavailable.");
         var ids = SuggestionList.SelectedItems.Cast<SuggestionRow>().Select(row => row.Item.Entry.Id).ToArray();
         var result = await review.ReviewEvidenceAsync(session, ids, token);
-        Invalidate(cancel: false); StatusText.Text = result.Message + " Refresh the summary before another investigation.";
+        Invalidate(cancel: false); StatusText.Text = result.Message + " Refresh to continue.";
     }, bounded: false);
     private async void Open_Click(object sender, RoutedEventArgs e)
     {
@@ -177,13 +178,13 @@ public partial class AssistantView : UserControl
         catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException) { Invalidate(); StatusText.Text = error.Message; }
     }
     private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateActions();
-    private void Cancel_Click(object sender, RoutedEventArgs e) { Invalidate(); StatusText.Text = "Stopping the local assistant…"; }
+    private void Cancel_Click(object sender, RoutedEventArgs e) { Invalidate(); StatusText.Text = "Stopping…"; }
     private void Invalidate(bool cancel = true)
     {
         _version++; if (cancel) _work?.Cancel();
         _session?.Dispose(); _session = null;
         SuggestionList.ItemsSource = null; EmptyText.Visibility = Visibility.Visible; EvidenceText.Text = "";
-        EmptyText.Text = "Refresh the summary to start another investigation.";
+        EmptyText.Text = _root is null ? "Choose a scanned folder to begin." : "Refresh to find suggestions.";
         UpdateActions();
     }
     private void UpdateActions()

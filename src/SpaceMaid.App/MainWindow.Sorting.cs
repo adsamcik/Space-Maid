@@ -103,7 +103,7 @@ public partial class MainWindow
         });
         PreliminaryFiles.ItemsSource = rows;
         if (selected is not null) PreliminaryFiles.SelectedItem = rows.FirstOrDefault(row => row.File == selected);
-        SetSortHeader(PreliminaryNameHeader, "File / exact path", ScanSortColumn.Name, _preliminarySortColumn, _preliminaryDescending);
+        SetSortHeader(PreliminaryNameHeader, "File", ScanSortColumn.Name, _preliminarySortColumn, _preliminaryDescending);
         SetSortHeader(PreliminaryAllocationHeader, "Allocated", ScanSortColumn.Allocated, _preliminarySortColumn, _preliminaryDescending);
         SetSortHeader(PreliminaryLogicalHeader, "Logical", ScanSortColumn.Logical, _preliminarySortColumn, _preliminaryDescending);
     }

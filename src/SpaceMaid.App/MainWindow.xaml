@@ -112,7 +112,9 @@
                         <StackPanel>
                             <WrapPanel><TextBlock Text="Candidates" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <TextBlock x:Name="CandidateText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
-                            <TextBlock x:Name="CandidateCaption" Text="Estimate" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="Overlapping folders are counted once. Review cleanup checks current contents." />
+                            <TextBlock x:Name="CandidateCaption" Text="Estimate" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="Overlapping folders are counted once. Review cleanup checks current contents.">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="Estimate"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
                         </StackPanel>
                     </UniformGrid>
                 </Border>
@@ -198,7 +200,9 @@
                       <TextBlock x:Name="TreeHint" Text="Scan a drive to explore." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
                       <DockPanel Grid.Row="2" Margin="12,4,8,4">
                           <Button x:Name="ColumnsButton" DockPanel.Dock="Right" Content="Columns" Click="Columns_Click" Style="{StaticResource ColumnHeader}" ToolTip="Choose columns. Drag headers to reorder; drag their edges to resize." AutomationProperties.Name="Choose tree columns" />
-                          <TextBlock x:Name="TreeNote" Text="Shared files counted once" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" />
+                          <TextBlock x:Name="TreeNote" Text="Shared files counted once" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0.65" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
+                              <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="Shared files counted once"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                          </TextBlock>
                       </DockPanel>
                   </Grid>
               </Border>
@@ -228,12 +232,12 @@
               <Grid>
                   <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                   <StackPanel Margin="18,16">
-                      <TextBlock Text="Largest files · Preliminary" FontSize="18" FontWeight="SemiBold" />
+                      <TextBlock Text="Largest files · Preliminary" FontSize="16" FontWeight="SemiBold" />
                       <TextBlock x:Name="PreliminaryCaption" Text="Scanning…" TextWrapping="Wrap" Opacity="0.65" FontSize="12" Margin="0,6,0,0" />
                   </StackPanel>
                   <Grid Grid.Row="1" Margin="22,0,24,8">
                       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
-                      <Button x:Name="PreliminaryNameHeader" Content="File / exact path" Tag="Name" Click="PreliminarySort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
+                      <Button x:Name="PreliminaryNameHeader" Content="File" Tag="Name" Click="PreliminarySort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
                       <Button x:Name="PreliminaryAllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="PreliminarySort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
                       <Button x:Name="PreliminaryLogicalHeader" Content="Logical" Tag="Logical" Click="PreliminarySort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
                   </Grid>
@@ -271,7 +275,7 @@
                         <ToggleButton x:Name="ViewOptionsToggle" Content="View options" Click="OpportunityOptions_Click" Padding="12,6" AutomationProperties.Name="Show grouping and sorting options" />
                     </StackPanel>
                     <Button x:Name="BackToCleanupButton" Content="← Cleanup groups" Click="BackToCleanup_Click" Visibility="Collapsed" HorizontalAlignment="Left" />
-                    <TextBlock x:Name="OpportunityPanelTitle" Text="Cleanup groups" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock x:Name="OpportunityPanelTitle" Text="Cleanup groups" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </DockPanel>
                 <Border x:Name="ViewOptionsPanel" Grid.Row="1" Margin="0,12,0,0">
                     <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=ViewOptionsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
@@ -434,7 +438,9 @@
                     </ListBox>
                     <StackPanel x:Name="EmptyState" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
                         <TextBlock x:Name="EmptyTitle" Text="Find cleanup opportunities" FontSize="18" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
-                        <TextBlock x:Name="EmptyCaption" Text="Scan a drive to start." Margin="0,12,0,0" TextAlignment="Center" TextWrapping="Wrap" Opacity="0.65" />
+                        <TextBlock x:Name="EmptyCaption" Text="Scan a drive to start." Margin="0,12,0,0" TextAlignment="Center" TextWrapping="Wrap" Opacity="0.65">
+                            <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                        </TextBlock>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -446,8 +452,7 @@
                             <TextBlock Text="{Binding Title}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding Category}" Opacity="0.65" FontSize="12" Margin="0,6,0,12" />
                             <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="12" />
-                            <TextBlock Text="BEFORE CLEANUP" Style="{StaticResource SectionLabel}" Margin="0,16,0,8" />
-                            <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" Margin="0,14,0,0" />
                             <Expander Header="Details" Margin="0,14,0,0">
                                 <StackPanel Margin="0,8,0,0">
                                     <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />

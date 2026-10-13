@@ -78,8 +78,8 @@ public partial class MainWindow
             _ => "Age uses file changes and Git activity, not access. Uses cached upstream refs. Local changes are protected; branches are kept."
         };
         WorktreeRuleHint.Text = policy.Mode == WorktreeCleanupMode.Old
-            ? "Local changes protected · Branches kept"
-            : "Cached upstream refs · Local changes protected · Branches kept";
+            ? "Unmerged branches kept"
+            : "Cached refs · Changed worktrees kept";
         var matchedGroups = _cleanupGroups.Where(item => item.Role == OpportunityGroupRole.MatchedWorktrees).ToArray();
         SelectWorktreeMatchesButton.IsEnabled = matchedGroups.Any(group => group.Locations.Count > 0);
         WorktreeCheckSummary.Text = _worktreeAssessments.Count == 0

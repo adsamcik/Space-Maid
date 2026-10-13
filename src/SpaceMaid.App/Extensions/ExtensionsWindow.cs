@@ -19,7 +19,8 @@ internal sealed class ExtensionsWindow : Window
         var panel = new DockPanel { Margin = new(24) };
         var heading = new StackPanel();
         heading.Children.Add(new TextBlock { Text = "Extensions", FontSize = 23, FontWeight = FontWeights.SemiBold });
-        heading.Children.Add(new TextBlock { Text = "Only add extensions you trust: they run with your account's permissions. Changes need a restart.", TextWrapping = TextWrapping.Wrap, Margin = new(0, 10, 0, 0), Opacity = .75 });
+        heading.Children.Add(new TextBlock { Text = "Only add extensions you trust. Restart to apply changes.", TextWrapping = TextWrapping.Wrap, Margin = new(0, 8, 0, 0), Opacity = .75,
+            ToolTip = "Extensions run with your account's permissions. Only add packages you trust." });
         DockPanel.SetDock(heading, Dock.Top); panel.Children.Add(heading);
         var footer = new StackPanel();
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };

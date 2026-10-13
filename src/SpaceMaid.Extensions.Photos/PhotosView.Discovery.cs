@@ -69,7 +69,7 @@ public partial class PhotosView
             SetNotice((discovering ? "Discovery finished" : completedJob?.Contains("Completed", StringComparison.Ordinal) == true ? "Analysis complete" : "Analysis finished") + (needsAttention ? " · Needs attention" : ""), needsAttention);
             StatusText.ToolTip = completedJob ?? StatusText.Text;
         }
-        catch (OperationCanceledException) { SetNotice("Interrupted · Saved results kept"); }
+        catch (OperationCanceledException) { SetNotice("Interrupted · Results kept"); }
         catch (Exception error) { ShowFailure(error); }
         finally
         {
@@ -90,5 +90,5 @@ public partial class PhotosView
         catch (Exception error) { ShowFailure(error); }
         finally { _liveRefresh = false; }
     }
-    private void Cancel_Click(object sender, RoutedEventArgs e) { _operation?.Cancel(); SetNotice("Cancelling · Finishing the current checkpoint"); }
+    private void Cancel_Click(object sender, RoutedEventArgs e) { _operation?.Cancel(); SetNotice("Stopping…"); }
 }

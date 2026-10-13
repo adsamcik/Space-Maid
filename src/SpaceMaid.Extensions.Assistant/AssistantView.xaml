@@ -9,21 +9,21 @@
                 <Grid Margin="0,8,0,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <TextBox x:Name="ModelPathBox" IsReadOnly="True" AutomationProperties.Name="Local GGUF model file" Margin="0,0,8,0" />
-                    <Button x:Name="ModelButton" Grid.Column="1" Content="Choose GGUF model" Click="ChooseModel_Click" Padding="12,5" />
+                    <Button x:Name="ModelButton" Grid.Column="1" Content="Choose model" Click="ChooseModel_Click" Padding="12,5" ToolTip="Choose a local GGUF instruction model" />
                 </Grid>
-                <TextBlock Text="CPU inference in a restricted process. No network or access to your file contents." TextWrapping="Wrap" FontSize="12" Opacity="0.7" Margin="0,6,0,0" />
+                <TextBlock Text="Runs locally in a restricted process. No network or file-content access." TextWrapping="Wrap" FontSize="12" Opacity="0.7" Margin="0,6,0,0" />
             </StackPanel>
         </Expander>
         <Grid Grid.Row="1" Margin="0,0,0,8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <Button x:Name="FolderButton" Content="Choose scanned folder" Click="ChooseFolder_Click" Padding="12,5" Margin="0,0,10,0" />
-            <TextBlock x:Name="FolderText" Grid.Column="1" Text="Choose a folder from the current scan." TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-            <Button x:Name="RefreshButton" Grid.Column="2" Content="Refresh summary" Click="Refresh_Click" Padding="12,5" Margin="10,0,0,0" IsEnabled="False" />
+            <Button x:Name="FolderButton" Content="Choose folder" Click="ChooseFolder_Click" Padding="12,5" Margin="0,0,10,0" ToolTip="Choose a folder from the current scan" />
+            <TextBlock x:Name="FolderText" Grid.Column="1" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <Button x:Name="RefreshButton" Grid.Column="2" Content="Refresh" Click="Refresh_Click" Padding="12,5" Margin="10,0,0,0" IsEnabled="False" ToolTip="Refresh this folder's summary" />
         </Grid>
-        <Expander Grid.Row="2" Header="Excluded folders and files" Margin="0,0,0,8">
+        <Expander Grid.Row="2" Header="Excluded paths" Margin="0,0,0,8">
             <StackPanel Margin="0,6,0,0">
                 <TextBox x:Name="ExclusionsBox" AcceptsReturn="True" MinHeight="54" MaxHeight="110" VerticalScrollBarVisibility="Auto" TextChanged="Exclusions_Changed" AutomationProperties.Name="Excluded paths, one per line" />
-                <TextBlock Text="One full path per line, inside the selected folder. Refresh the summary after changing exclusions." FontSize="12" Opacity="0.7" TextWrapping="Wrap" Margin="0,5,0,0" />
+                <TextBlock Text="One full path per line, within this folder." FontSize="12" Opacity="0.7" TextWrapping="Wrap" Margin="0,5,0,0" />
             </StackPanel>
         </Expander>
         <Grid Grid.Row="3" Margin="0,0,0,10">
@@ -32,7 +32,7 @@
             <TextBox x:Name="QuestionBox" Text="Find specific folders worth investigating for cleanup. Explain what I should check before removing anything." MaxLength="2000" AutomationProperties.Name="What to investigate" Margin="0,0,10,0" />
             <Button x:Name="RunButton" Grid.Column="1" Content="Find suggestions" Click="Run_Click" Padding="14,5" IsEnabled="False" />
             <Button x:Name="CancelButton" Grid.Column="2" Content="Cancel" Click="Cancel_Click" Padding="12,5" Margin="8,0,0,0" Visibility="Collapsed" />
-            <TextBlock x:Name="StatusText" Grid.Row="1" Grid.ColumnSpan="3" Text="Scan a folder or drive, then choose the folder to review." FontSize="12" TextWrapping="Wrap" Margin="0,7,0,0" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock x:Name="StatusText" Grid.Row="1" Grid.ColumnSpan="3" FontSize="12" TextWrapping="Wrap" Margin="0,7,0,0" AutomationProperties.LiveSetting="Polite" />
             <ProgressBar x:Name="ProgressStrip" Grid.Row="2" Grid.ColumnSpan="3" Height="3" MinHeight="0" Margin="0,6,0,0" IsIndeterminate="True" Visibility="Hidden" AutomationProperties.Name="Investigating metadata" />
         </Grid>
         <Grid Grid.Row="4">
@@ -42,22 +42,21 @@
                       SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="Selection_Changed" HeadersVisibility="Column" RowHeight="56"
                       EnableRowVirtualization="True" EnableColumnVirtualization="True" AutomationProperties.Name="Model suggestions for human review">
                 <DataGrid.Columns>
-                    <DataGridTemplateColumn Header="Folder or file" Width="240" MinWidth="160"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                    <DataGridTemplateColumn Header="Name" Width="240" MinWidth="160"><DataGridTemplateColumn.CellTemplate><DataTemplate>
                         <StackPanel VerticalAlignment="Center" Margin="8,3"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Path}" FontSize="11" Opacity="0.7" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" /></StackPanel>
                     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-                    <DataGridTextColumn Header="Model suggestion · verify yourself" Binding="{Binding Explanation}" Width="*" MinWidth="190"><DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap" /><Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Margin" Value="8,2" /><Setter Property="MaxHeight" Value="48" /><Setter Property="ToolTip" Value="{Binding Explanation}" /></Style></DataGridTextColumn.ElementStyle></DataGridTextColumn>
-                    <DataGridTextColumn Header="Host policy" Binding="{Binding Policy}" Width="125" />
+                    <DataGridTextColumn Header="AI suggestion · verify" Binding="{Binding Explanation}" Width="*" MinWidth="190"><DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap" /><Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Margin" Value="8,2" /><Setter Property="MaxHeight" Value="48" /><Setter Property="ToolTip" Value="{Binding Explanation}" /></Style></DataGridTextColumn.ElementStyle></DataGridTextColumn>
+                    <DataGridTextColumn Header="Review" Binding="{Binding Policy}" Width="125" />
                 </DataGrid.Columns>
             </DataGrid>
-            <TextBlock x:Name="EmptyText" Text="Suggestions will appear here for your review." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="380" Margin="24" Opacity="0.7" IsHitTestVisible="False" />
+            <TextBlock x:Name="EmptyText" Text="Choose a scanned folder to begin." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="380" Margin="24" Opacity="0.7" IsHitTestVisible="False" />
             <Grid Grid.Row="1" Margin="0,10,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <TextBlock Text="Select suggestions to inspect. Cleanup always requires the host's separate review." TextWrapping="Wrap" FontSize="12" Opacity="0.75" VerticalAlignment="Center" Margin="0,0,12,0" />
                 <Button x:Name="OpenButton" Grid.Column="1" Content="Open location" Click="Open_Click" Padding="12,5" IsEnabled="False" />
-                <Button x:Name="ReviewButton" Grid.Column="2" Content="Review in Opportunities" Click="Review_Click" Padding="12,5" Margin="8,0,0,0" IsEnabled="False" />
+                <Button x:Name="ReviewButton" Grid.Column="2" Content="Review cleanup" Click="Review_Click" Padding="12,5" Margin="8,0,0,0" IsEnabled="False" ToolTip="Review selected folders in Opportunities before cleanup" />
             </Grid>
         </Grid>
-        <Expander Grid.Row="5" Header="Observed evidence and limits" Margin="0,10,0,0">
+        <Expander Grid.Row="5" Header="Evidence and limits" Margin="0,10,0,0">
             <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="EvidenceText" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,6,0,0" /></ScrollViewer>
         </Expander>
     </Grid>

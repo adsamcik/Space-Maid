@@ -96,18 +96,18 @@ public partial class AppsView : UserControl, IDriveExtensionView
             if (!Current()) return;
             // Sorting once at completion keeps rows from jumping during discovery.
             UpdateList();
-            StatusText.Text = $"{_rows.Count:N0} app folders on {drive} · {measured:N0} measured · {timer.Elapsed.TotalSeconds:0.0} s"
+            StatusText.Text = $"{_rows.Count:N0} apps · {measured:N0} measured"
                 + (discovered.Warnings.Count > 0 ? " · Some folders unavailable" : "");
             StatusText.ToolTip = string.Join("\n", discovered.Warnings);
             CoverageText.Text = "Install folders only. App data and caches elsewhere are excluded. Windows Store packages and apps outside known locations may need Add app folder."
                 + (discovered.Warnings.Count > 0 ? "\n" + string.Join("\n", discovered.Warnings) : "");
-            EmptyText.Text = "No app folders found here. Add an app's install folder to measure it.";
+            EmptyText.Text = "No apps found. Add an app folder.";
             _host.Log("apps-discovery", new { Drive = drive, Apps = _rows.Count, Measured = measured, Milliseconds = timer.ElapsedMilliseconds, Warnings = discovered.Warnings });
         }
         catch (OperationCanceledException) when (work.IsCancellationRequested)
-        { if (Current()) { StatusText.Text = $"Cancelled · {_rows.Count:N0} app folders found · {measured:N0} measured"; UpdateList(); } }
+        { if (Current()) { StatusText.Text = $"Cancelled · {_rows.Count:N0} apps · {measured:N0} measured"; UpdateList(); } }
         catch (Exception error)
-        { if (Current()) { StatusText.Text = "Could not find apps. Choose Find apps to retry."; StatusText.ToolTip = error.Message; _discovered = false; } }
+        { if (Current()) { StatusText.Text = "Couldn't find apps. Try Find apps again."; StatusText.ToolTip = error.Message; _discovered = false; } }
         finally
         {
             if (ReferenceEquals(_work, work)) { Busy(false); _work = null; }

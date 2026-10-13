@@ -15,7 +15,7 @@
                 <TextBlock x:Name="PlanText" Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12" />
             </StackPanel>
         </Grid>
-        <TextBlock Text="Cloud copies stay. Internet and your sync app are needed to download again. Unsynced files are skipped." Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12" />
+        <TextBlock Text="Cloud copies stay. Downloading again needs internet. Unsynced files are skipped." Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12" />
         <Expander Header="Details" Margin="0,10,0,0">
             <TextBlock Text="Clears ‘Always keep on this device’. Your sync app releases space, which may take time. Cancellation stops new requests; earlier requests remain active." Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
         </Expander>

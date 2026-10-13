@@ -87,7 +87,7 @@ public partial class MainWindow
         ScannedSizeLabel.Text = "Scanned";
         ScannedSizeText.Text = SizeText.Format(updated.AllocatedBytes);
         ScannedSizeCaption.Text = "Partially refreshed";
-        TreeNote.Text = $"Rechecked at {updated.LastRecheckUtc!.Value.ToLocalTime():HH:mm:ss} · Other folders retain earlier scan data";
+        TreeNote.Text = $"Partial refresh · {updated.LastRecheckUtc!.Value.ToLocalTime():HH:mm:ss}";
         MapBasis.Text = "Area = allocated size · Partial refresh";
         RefreshPathDriveSpace();
         _staleScopes.RemoveWhere(scope => requests.Any(request =>

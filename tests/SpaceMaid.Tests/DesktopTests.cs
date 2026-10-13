@@ -498,7 +498,7 @@ public sealed partial class DesktopTests
                 {
                     Assert.False(Directory.Exists(bin));
                     Assert.Contains("Updated", ((TextBlock)window.FindName("StatusText")).Text);
-                    Assert.Contains("Rechecked", ((TextBlock)window.FindName("TreeNote")).Text);
+                    Assert.Contains("Partial refresh", ((TextBlock)window.FindName("TreeNote")).Text);
                     Assert.Equal("0 B", ((TextBlock)window.FindName("CandidateText")).Text);
                     Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
                     var updatedRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
@@ -554,7 +554,7 @@ public sealed partial class DesktopTests
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
                 var recovery = window.RecheckFolderAsync(project);
                 PumpUntil(() => recovery.IsCompleted, TimeSpan.FromSeconds(10)); recovery.GetAwaiter().GetResult();
-                Assert.Contains("Rechecked", ((TextBlock)window.FindName("TreeNote")).Text);
+                Assert.Contains("Partial refresh", ((TextBlock)window.FindName("TreeNote")).Text);
                 Assert.Equal("8 KiB", ((TextBlock)window.FindName("CandidateText")).Text);
 
                 SetStage("draining an Explorer-return recheck deferred while busy");
@@ -706,7 +706,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(names.Order(StringComparer.OrdinalIgnoreCase), names);
                 window.ShowPreliminary(preliminary);
                 Assert.Equal(names, preliminaryFiles.Items.Cast<PreliminaryRow>().Select(r => r.File.Name));
-                Assert.Equal("File / exact path ↑", ((Button)window.FindName("PreliminaryNameHeader")).Content);
+                Assert.Equal("File ↑", ((Button)window.FindName("PreliminaryNameHeader")).Content);
                 Assert.Equal(FontWeights.SemiBold, ((Button)window.FindName("PreliminaryNameHeader")).FontWeight);
                 Assert.Equal(FontWeights.Normal, ((Button)window.FindName("PreliminaryAllocationHeader")).FontWeight);
 #pragma warning disable WPF0001

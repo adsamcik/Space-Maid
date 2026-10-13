@@ -145,7 +145,7 @@ public partial class MainWindow
         GroupNavigationSummary.Text = $"{_opportunityGroupRows.Count:N0}"
             + (_opportunityGroupRows.Count == definitions.Count ? "" : $" of {definitions.Count:N0}")
             + " " + (detailScope ? definitions.Count == 1 ? "project" : "projects" : definitions.Count == 1 ? "group" : "groups");
-        GroupSizeNote.Text = _snapshot?.HasAllocationData == false ? "Logical size · Physical savings unknown" : "Estimates · Review before cleanup";
+        GroupSizeNote.Text = _snapshot?.HasAllocationData == false ? "Logical size · Physical savings unknown" : "Estimates";
         GroupSizeNote.ToolTip = byType ? "Sizes may overlap across types." : "Overlapping folders are counted once per group.";
         AllOpportunitiesButton.Content = $"All locations · {_matchingOpportunityRows.Count:N0}";
         CleanupScopeText.Visibility = detailScope ? Visibility.Visible : Visibility.Collapsed;
@@ -153,7 +153,7 @@ public partial class MainWindow
         CleanupOverviewNote.Text = _snapshot is null ? "Scan a drive to find cleanup groups."
             : _extensions is not null && OpportunityExtensions.Status(_snapshot) is { Length: > 0 } status ? status
             : _cleanupGroups.Count == 0 ? "No cleanup groups found."
-            : (_snapshot.HasAllocationData ? "Observed allocation" : "Logical size · Physical savings unknown")
+            : (_snapshot.HasAllocationData ? "Estimates" : "Logical size · Physical savings unknown")
                 + " · Groups may overlap";
         CleanupOverviewNote.ToolTip = "Bars compare each group's observed size with the largest visible group. Groups may overlap. Review counts nested folders once. Empty the Recycle Bin to free space.";
         DisplayOpportunityRows(detailPath);
@@ -200,12 +200,12 @@ public partial class MainWindow
             ? _cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey)?.Locations.Count ?? 0 : _rows.Count);
         OpportunityResultSummary.Text = missingProject ? "No matching folders remain in this project."
             : $"{rows.Count:N0}" + (rows.Count == total ? "" : $" of {total:N0}")
-                + $" {(total == 1 ? "folder" : "folders")}" + (active is null ? "" : $" · {active.Group.Kind}");
+                + $" {(total == 1 ? "folder" : "folders")}";
         EmptyState.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitle.Text = _snapshot is null ? "Find cleanup opportunities" : _rows.Count == 0 ? "No cleanup opportunities found" : "No matching folders";
         EmptyCaption.Text = missingProject ? "Choose another project or All locations."
             : _snapshot is null ? "Scan a drive to start."
-            : _rows.Count == 0 ? "In the accessible files." : "Clear search or change filters.";
+            : _rows.Count == 0 ? "" : "Clear search or change filters.";
         UpdateSelection();
     }
     private void CleanupGroupSelection_Click(object sender, RoutedEventArgs e)
@@ -292,16 +292,17 @@ public partial class MainWindow
         int hidden = selected - _visibleOpportunityRows.Count(row => row.Selected);
         bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown;
         SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected"
-            + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "Select folders to review";
+            + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "";
         if (overview)
         {
             int groups = _opportunityGroupRows.Count(group => group.Matches.Any(row => row.Selected));
             SelectionText.Text = selected > 0 ? $"{groups:N0} {(groups == 1 ? "group" : "groups")} selected · {selected:N0} {(selected == 1 ? "folder" : "folders")}"
-                : "Select groups to review";
+                : "";
         }
         ReviewButton.IsEnabled = selected > 0 && _work is null;
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && _work is null;
+        ClearOpportunitySelectionButton.Visibility = selected > 0 ? Visibility.Visible : Visibility.Collapsed;
         CheckWorktreesButton.IsEnabled = _work is null && _rows.Any(row => row.Item.IsWorktree);
         int worktrees = _rows.Count(row => row.Item.IsWorktree);
         CheckWorktreesButton.Content = _worktreeAssessments.Count == 0 ? "Check worktrees"

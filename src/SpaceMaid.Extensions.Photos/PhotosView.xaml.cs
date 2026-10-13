@@ -76,18 +76,18 @@ public partial class PhotosView : UserControl
         EmptyPanel.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         if (!empty) return;
         if (collection is null)
-            SetEmpty("Add your first photo folder", "", EmptyAction.Add, "Add folder");
+            SetEmpty("No photo folders", "", EmptyAction.Add, "Add folder");
         else if (_discovering)
             SetEmpty("Finding photos…", "", EmptyAction.Browse, "Browse photos");
         else if (_mode == PhotoMode.Families)
-            SetEmpty("No related files found", "Matching RAW, image and sidecar filenames.", EmptyAction.Browse, "Browse photos");
+            SetEmpty("No related files found", "", EmptyAction.Browse, "Browse photos");
         else if (_mode == PhotoMode.Duplicates && collection.Count > 0)
         {
             var analyzed = lastJob?.StartsWith("Analysis", StringComparison.Ordinal) == true && lastJob.Contains("Completed", StringComparison.Ordinal);
             SetEmpty("No verified duplicates", analyzed ? "" : "Analyze photos to compare file contents.",
                 analyzed ? EmptyAction.Browse : EmptyAction.Analyze, analyzed ? "Browse photos" : "Analyze photos");
         }
-        else SetEmpty("No photos found", "No supported photo filenames in this folder.", EmptyAction.Refresh, "Refresh folder");
+        else SetEmpty("No photos found", "No supported photo filenames in this folder.", EmptyAction.Refresh, "Refresh");
         EmptyActionButton.Visibility = _discovering ? Visibility.Collapsed : Visibility.Visible;
     }
     private void SetEmpty(string title, string message, EmptyAction action, string label)

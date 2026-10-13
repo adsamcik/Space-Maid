@@ -209,13 +209,13 @@
                             <TextBlock x:Name="PreviewStatusText" FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="0,0,0,12" />
                             <TextBlock x:Name="SelectedSummaryText" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBox x:Name="SelectedPathText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="12" Margin="0,10,0,14" AutomationProperties.Name="Selected photo exact path" />
-                            <Expander x:Name="FileDetails" Header="File details" FontSize="12">
+                            <Expander x:Name="FileDetails" Header="Details" FontSize="12">
                                 <TextBox x:Name="SelectionText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" Margin="0,10,0,0" AutomationProperties.Name="Selected photo evidence" />
                             </Expander>
                         </StackPanel>
                     </ScrollViewer>
                     <StackPanel Grid.Row="2" Margin="0,14,0,0">
-                        <Button x:Name="RevealButton" Content="Open in File Explorer" Click="Reveal_Click" IsEnabled="False" />
+                        <Button x:Name="RevealButton" Content="Open in Explorer" Click="Reveal_Click" IsEnabled="False" AutomationProperties.Name="Open selected photo in File Explorer" />
                         <Button x:Name="RetainButton" Content="Mark to keep" Click="Retain_Click" Visibility="Collapsed" Margin="0,8,0,0" ToolTip="Review preference only. Does not delete or modify any file." />
                     </StackPanel>
                 </Grid>
