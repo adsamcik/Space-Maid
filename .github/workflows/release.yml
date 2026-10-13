@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate tag and identify commit
+        id: tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $release = ./tools/ci/Get-ReleaseVersion.ps1 -Tag $env:RELEASE_TAG
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the tagged commit.' }
+          "version=$($release.Version)" >> $env:GITHUB_OUTPUT
+          "prerelease=$($release.Prerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+
+  verify:
+    name: Build and test release
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: space-maid-win-x64
+          path: artifacts/package
+      - name: Prepare ZIP and checksum
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: ./tools/ci/New-ReleasePackage.ps1 -PackagePath artifacts/package -Tag $env:RELEASE_TAG
+      - name: Publish verified assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $remoteCommit = gh api "repos/$env:GH_REPO/commits/$env:RELEASE_TAG" --jq '.sha'
+          if ($LASTEXITCODE -ne 0 -or $remoteCommit -ne $env:RELEASE_COMMIT) {
+            throw 'The remote tag no longer matches the tested commit.'
+          }
+          $isDraft = gh release view $env:RELEASE_TAG --json isDraft --jq '.isDraft' 2>$null
+          if ($LASTEXITCODE -eq 0 -and $isDraft -eq 'false') {
+            Write-Host 'This tag already has a published release; keeping its assets.'
+            exit 0
+          }
+          $zip = "artifacts/release/SpaceMaid-$env:RELEASE_VERSION-win-x64.zip"
+          $assets = @($zip, "$zip.sha256")
+          if ($LASTEXITCODE -eq 0 -and $isDraft -eq 'true') {
+            gh release upload $env:RELEASE_TAG @assets --clobber
+          } else {
+            $options = @('--draft', '--verify-tag', '--generate-notes', '--title', "Space Maid $env:RELEASE_TAG",
+              '--target', $env:RELEASE_COMMIT, '--notes-file', 'artifacts/release/release-notes.md')
+            if ($env:RELEASE_PRERELEASE -eq 'true') { $options += @('--prerelease', '--latest=false') }
+            gh release create $env:RELEASE_TAG @assets @options
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Release assets were not uploaded; keeping the release unpublished.' }
+          $options = @('--draft=false', "--prerelease=$env:RELEASE_PRERELEASE", '--verify-tag')
+          if ($env:RELEASE_PRERELEASE -eq 'true') { $options += '--latest=false' }
+          gh release edit $env:RELEASE_TAG @options
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the prepared release.' }

@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Optional release version without the v prefix
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -16,6 +23,7 @@ concurrency:
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   DOTNET_NOLOGO: 1
+  RELEASE_VERSION: ${{ inputs.version }}
 
 jobs:
   build:
@@ -29,10 +37,24 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
+      - name: Validate release version
+        if: inputs.version != ''
+        shell: pwsh
+        run: ./tools/ci/Get-ReleaseVersion.ps1 -Tag "v$env:RELEASE_VERSION" | Out-Null
       - name: Build app and test bundle
-        run: dotnet build tests/SpaceMaid.Tests/SpaceMaid.Tests.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --artifacts-path artifacts/ci -m:1
+        run: |
+          version_args=()
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            version_args+=("-p:Version=$RELEASE_VERSION" "-p:ContinuousIntegrationBuild=true")
+          fi
+          dotnet build tests/SpaceMaid.Tests/SpaceMaid.Tests.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --artifacts-path artifacts/ci -m:1 "${version_args[@]}"
       - name: Publish app
-        run: dotnet publish src/SpaceMaid.App/SpaceMaid.App.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --artifacts-path artifacts/ci --output artifacts/package -m:1
+        run: |
+          version_args=()
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            version_args+=("-p:Version=$RELEASE_VERSION" "-p:ContinuousIntegrationBuild=true")
+          fi
+          dotnet publish src/SpaceMaid.App/SpaceMaid.App.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --artifacts-path artifacts/ci --output artifacts/package -m:1 "${version_args[@]}"
       - name: Verify package
         shell: pwsh
         run: ./tools/ci/Verify-Package.ps1 -PackagePath artifacts/package
