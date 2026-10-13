@@ -659,6 +659,7 @@ public sealed partial class DesktopTests
                     Render(details, Path.Join(artifactRoot, "artifacts", "ui", $"details-{theme}.png"), 700, 680);
                     Render(recyclePreview, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-{theme}.png"), 520, 300);
                     Render(onlinePreview, Path.Join(artifactRoot, "artifacts", "ui", $"online-only-{theme}.png"), 590, 550);
+                    VerifyUpdatesUi(window, theme);
                 }
 #pragma warning restore WPF0001
                 Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 305);

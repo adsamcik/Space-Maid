@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/SpaceMaid.App/SpaceMaid.App.csproj" />
+    <Project Path="src/SpaceMaid.Installer/SpaceMaid.Installer.csproj" />
     <Project Path="src/SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <Project Path="src/SpaceMaid.ScanHelper/SpaceMaid.ScanHelper.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />

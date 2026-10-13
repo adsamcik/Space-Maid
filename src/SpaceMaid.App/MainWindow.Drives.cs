@@ -12,7 +12,7 @@ public partial class MainWindow
     private Task? _driveInitialization, _driveDiscovery;
     private IReadOnlyList<DriveDescriptor> _availableDrives = [];
     private bool _driveRestoreAttempted;
-    internal string DriveHistoryPath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid", "drive-history.json");
+    internal string DriveHistoryPath { get; set; } = AppData.File("drive-history.json");
     internal Func<IReadOnlyList<DriveDescriptor>> DriveProvider { get; set; } = DriveDiscovery.Read;
     internal Func<string, (long Total, long Free)> DriveSpaceProvider { get; set; } = DriveDiscovery.Space;
 

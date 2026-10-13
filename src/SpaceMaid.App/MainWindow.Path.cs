@@ -111,6 +111,7 @@ public partial class MainWindow
         if (busy || _browsing || _openingPath) DrivePopup.IsOpen = false;
         PathBar.IsEnabled = !busy && !_browsing && !_openingPath;
         ScanButton.IsEnabled = !busy && !_browsing && !_openingPath && _currentPath.Length > 0;
+        UpdateUpdateButton();
     }
 
     private void BeginPathEdit()

@@ -13,7 +13,7 @@ public partial class MainWindow
     private ExtensionRuntime? _extensions;
     private readonly CancellationTokenSource _extensionLifetime = new();
     private int _jobsUpdateQueued;
-    internal string? ExtensionDataRoot { get; set; }
+    internal string? ExtensionDataRoot { get; set; } = AppData.File("Extensions");
     internal bool ExtensionsReady { get; private set; }
     private Task? _extensionStartup;
     private OpportunityCatalog OpportunityExtensions => _extensions?.Opportunities
@@ -75,6 +75,7 @@ public partial class MainWindow
         {
             Interlocked.Exchange(ref _jobsUpdateQueued, 0);
             if (_closing || _extensions is null) return;
+            UpdateUpdateButton();
             var jobs = _extensions.RecentJobs.Where(job => job.State is ExtensionJobState.Queued or ExtensionJobState.Running).ToArray();
             ExtensionJobText.Visibility = jobs.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
             var active = jobs.FirstOrDefault(job => job.State == ExtensionJobState.Running) ?? jobs.FirstOrDefault();

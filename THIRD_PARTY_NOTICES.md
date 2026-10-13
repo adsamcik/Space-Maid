@@ -8,6 +8,7 @@ The following versions and package license declarations were checked against the
 
 | Component | Version | License | Copyright / attribution |
 | --- | --- | --- | --- |
+| Velopack (update runtime, native installer and updater) | 1.2.161 | MIT | Velopack Ltd. All rights reserved.; authors Velopack Ltd, Caelan Sayler and Kevin Bost. |
 | Microsoft.Data.Sqlite and Microsoft.Data.Sqlite.Core | 10.0.10 | MIT | Microsoft Corporation. All rights reserved. |
 | Microsoft.Extensions.AI.Abstractions | 10.10.1 | MIT | Microsoft Corporation. All rights reserved. |
 | Microsoft.Bcl.AsyncInterfaces, Microsoft.Bcl.Memory, Microsoft.Extensions.DependencyInjection.Abstractions, Microsoft.Extensions.Logging.Abstractions and System.Numerics.Tensors | 10.0.5 | MIT | Microsoft Corporation. All rights reserved. |
@@ -20,12 +21,13 @@ The following versions and package license declarations were checked against the
 
 Original projects and license references:
 
+- [Velopack 1.2.161](https://github.com/velopack/velopack/blob/1.2.161/LICENSE).
 - Microsoft packages: [dotnet](https://github.com/dotnet/dotnet/blob/main/LICENSE.txt), [AI abstractions](https://github.com/dotnet/extensions/blob/59e1741f6fb45cf7ae08e2df088aef71537a7bc4/LICENSE.TXT).
 - [CommunityToolkit](https://github.com/CommunityToolkit/dotnet/blob/35dfe7b12da0e64384bfaec7ebc0883196a89f9f/LICENSE.md), [Reactive / Interactive](https://github.com/dotnet/reactive/blob/b1b81fbfe09298655b4dae5cfe0c2269e7323f4e/LICENSE).
 - [LLamaSharp 0.27.0 source license](https://github.com/SciSharp/LLamaSharp/blob/7cbbc45e421d55794d5050d126e0b96511007007/LICENSE), [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/LICENSE).
 - [SQLitePCLRaw](https://github.com/ericsink/SQLitePCL.raw), [SQLite public-domain dedication](https://sqlite.org/copyright.html).
 
-The self-contained Windows model worker also includes the Microsoft .NET runtime. Its original notices accompany the worker as `Extensions/space-maid.assistant/Worker/Runtime-LICENSE.TXT` and `Extensions/space-maid.assistant/Worker/Runtime-THIRD-PARTY-NOTICES.TXT`. Retain those files when redistributing the worker. The main WPF application uses the separately installed .NET Desktop Runtime.
+The self-contained Windows model worker also includes the Microsoft .NET runtime. Its original notices accompany the worker as `Extensions/space-maid.assistant/Worker/Runtime-LICENSE.TXT` and `Extensions/space-maid.assistant/Worker/Runtime-THIRD-PARTY-NOTICES.TXT`. Retain those files when redistributing the worker. The standalone installer embeds its resolved .NET runtime notices, available through its **Licenses** link. The main WPF application uses the separately installed .NET Desktop Runtime.
 
 ### MIT terms for the components identified above
 

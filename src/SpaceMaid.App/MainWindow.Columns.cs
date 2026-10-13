@@ -14,7 +14,7 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
-    internal string ColumnLayoutPath { get; set; } = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid", "tree-columns.json");
+    internal string ColumnLayoutPath { get; set; } = AppData.File("tree-columns.json");
     private readonly DispatcherTimer _columnSaveTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private Dictionary<ScanSortColumn, GridViewColumn> _treeColumns = [];
     private bool _changingColumns, _fitNameColumn = true, _columnsReady;

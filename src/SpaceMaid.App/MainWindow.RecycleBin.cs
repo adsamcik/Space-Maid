@@ -51,7 +51,7 @@ public partial class MainWindow
         if (_closing || _work is not null || _browsing || _openingPath) return;
         var task = EmptyRecycleBinCoreAsync(); _cleanupTask = task;
         try { await task; }
-        finally { if (ReferenceEquals(_cleanupTask, task)) _cleanupTask = null; }
+        finally { if (ReferenceEquals(_cleanupTask, task)) _cleanupTask = null; UpdateUpdateButton(); }
     }
 
     private async Task EmptyRecycleBinCoreAsync()

@@ -91,7 +91,7 @@ public partial class MainWindow
     {
         var task = CheckWorktreesAsync(); _worktreeCheckTask = task;
         try { await task; }
-        finally { _worktreeCheckTask = null; }
+        finally { _worktreeCheckTask = null; UpdateUpdateButton(); }
     }
 
     internal async Task CheckWorktreesAsync()

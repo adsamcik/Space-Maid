@@ -1,0 +1,52 @@
+<Window x:Class="SpaceMaid.Installer.InstallerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Space Maid Setup" Icon="Assets/SpaceMaid.ico" Width="580" Height="440"
+        MinWidth="520" MinHeight="440" SizeToContent="Height" ResizeMode="CanMinimize"
+        FontFamily="Segoe UI" FontSize="14"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}"
+        WindowStartupLocation="CenterScreen" Closing="OnClosing">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+            <Image Source="Assets/SpaceMaid.ico" Width="44" Height="44" Margin="0,0,14,0" />
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Space Maid" FontSize="24" FontWeight="SemiBold" />
+                <TextBlock x:Name="VersionLabel" Opacity="0.65" />
+            </StackPanel>
+        </StackPanel>
+        <StackPanel x:Name="ModePanel" Grid.Row="1">
+            <RadioButton x:Name="InstallMode" IsChecked="True" GroupName="Mode" Padding="10" Margin="0,0,0,10" Checked="OnModeChanged">
+                <StackPanel><TextBlock Text="Install for me" FontSize="17" FontWeight="SemiBold" /><TextBlock Text="Start menu · Update checks" Opacity="0.65" Margin="0,4,0,0" /></StackPanel>
+            </RadioButton>
+            <RadioButton x:Name="PortableMode" GroupName="Mode" Padding="10" Checked="OnModeChanged">
+                <StackPanel><TextBlock Text="Portable folder" FontSize="17" FontWeight="SemiBold" /><TextBlock Text="Keep the app and settings together" Opacity="0.65" Margin="0,4,0,0" /></StackPanel>
+            </RadioButton>
+        </StackPanel>
+        <StackPanel x:Name="FolderPanel" Grid.Row="2" Visibility="Collapsed" Margin="0,14,0,0">
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBox x:Name="FolderPath" VerticalContentAlignment="Center" Padding="10,6" MinHeight="38" AutomationProperties.Name="Portable destination folder" />
+                <Button Grid.Column="1" Content="Browse…" Click="OnBrowse" Margin="8,0,0,0" Padding="12,6" />
+            </Grid>
+            <StackPanel x:Name="RuntimePanel" Orientation="Horizontal" Visibility="Collapsed" Margin="0,8,0,0">
+                <TextBlock Text=".NET 10 Desktop Runtime needed" VerticalAlignment="Center" Opacity="0.75" />
+                <Button Content="Download" Click="OnDownloadRuntime" Padding="8,2" Margin="8,0,0,0" />
+            </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Row="3" Margin="0,18,0,0">
+            <ProgressBar x:Name="Progress" Height="4" Minimum="0" Maximum="100" Visibility="Collapsed" />
+            <TextBlock x:Name="Status" TextWrapping="Wrap" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+        <Button x:Name="OpenFolderButton" Grid.Row="4" Content="Open folder" HorizontalAlignment="Left" Padding="12,6" Margin="0,12,0,0" Visibility="Collapsed" Click="OnOpenFolder" />
+        <Grid Grid.Row="5" Margin="0,24,0,0">
+            <Button Content="Licenses" Click="OnLicenses" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent" BorderThickness="0" Padding="0,6" Opacity="0.7" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="Cancel" Padding="18,8" Margin="0,0,10,0" Click="OnCancel" IsCancel="True" />
+                <Button x:Name="ActionButton" Content="Install" Padding="22,8" MinWidth="112" IsDefault="True" Click="OnAction" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

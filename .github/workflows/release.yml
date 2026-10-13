@@ -48,7 +48,7 @@ jobs:
     name: Publish GitHub release
     needs: [prepare, verify]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -60,7 +60,10 @@ jobs:
         with:
           name: space-maid-win-x64
           path: artifacts/package
-      - name: Prepare ZIP and checksum
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Prepare installer, portable app and update feed
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -86,8 +89,9 @@ jobs:
             Write-Host 'This tag already has a published release; keeping its assets.'
             exit 0
           }
-          $zip = "artifacts/release/SpaceMaid-$env:RELEASE_VERSION-win-x64.zip"
-          $assets = @($zip, "$zip.sha256")
+          $assets = @(Get-ChildItem -LiteralPath artifacts/release -File |
+            Where-Object Name -ne 'release-notes.md' | ForEach-Object FullName)
+          if ($assets.Count -eq 0) { throw 'No release assets were prepared.' }
           if ($LASTEXITCODE -eq 0 -and $isDraft -eq 'true') {
             gh release upload $env:RELEASE_TAG @assets --clobber
           } else {

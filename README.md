@@ -10,7 +10,11 @@ A Windows app for finding what fills your drives and cleaning up development clu
 
 ## Download and run
 
-Download the Windows x64 ZIP from this repository's **Releases**, extract it and open `SpaceMaid.App.exe`. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) first. Keep the bundled helper, extensions and notices alongside the app.
+Download **Setup.exe** from this repository's **Releases** and choose **Install** or a **Portable** folder. Normal installation adds the .NET 10 Desktop Runtime when needed. Portable mode requires the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) already installed. A portable ZIP is also available: extract it and open `Space Maid.exe`. Keep the extracted folders together.
+
+Release binaries are currently unsigned.
+
+Release builds check this repository's GitHub Releases for updates once a day when enabled. Choose **Download**, then **Restart and update** when ready; settings and photo catalogs are retained. Prerelease builds also receive prereleases. Source builds do not check for updates.
 
 Enable fast scanning when prompted to authorize the read-only NTFS helper. The app stays unelevated; standard scanning remains available if you decline.
 
@@ -24,7 +28,7 @@ On Windows, install the .NET 10 SDK version specified in [global.json](global.js
 dotnet run --project src/SpaceMaid.App -c Release
 ```
 
-[Contributing](CONTRIBUTING.md) covers builds, tests, bug reports and releases. [CI](.github/workflows/ci.yml) builds on Linux and runs Windows integration tests. Version tags such as `v1.2.3` or `v1.2.3-beta.1` trigger the [release workflow](.github/workflows/release.yml), which publishes a Windows ZIP and SHA-256 checksum after those checks pass.
+[Contributing](CONTRIBUTING.md) covers builds, tests, bug reports and releases. [CI](.github/workflows/ci.yml) builds on Linux and runs Windows integration tests. Version tags such as `v1.2.3` or `v1.2.3-beta.1` trigger the [release workflow](.github/workflows/release.yml), which publishes an installer, portable ZIP, update feed and checksums after those checks pass.
 
 ## Details
 

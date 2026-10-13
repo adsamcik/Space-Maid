@@ -6,6 +6,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5"><PrivateAssets>all</PrivateAssets></PackageReference>
     <ProjectReference Include="../../src/SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.App/SpaceMaid.App.csproj" />
+    <ProjectReference Include="../../src/SpaceMaid.Installer/SpaceMaid.Installer.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" />

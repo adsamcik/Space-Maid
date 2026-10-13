@@ -19,7 +19,7 @@ public partial class MainWindow : Window
     private bool _startupOffered;
     private string? _scanLogPath;
     private readonly Task _classificationReady = Task.Run(FileTypeClassifier.Prepare);
-    internal string LogDirectory { get; set; } = ScanLog.DefaultDirectory;
+    internal string LogDirectory { get; set; } = AppData.File("Logs");
 
     public MainWindow()
     {
@@ -46,6 +46,7 @@ public partial class MainWindow : Window
             if (startup.ShowDialog() == true) await RequestElevationAsync();
         }
         if (!_closing) await InitializeExtensionsAsync();
+        if (!_closing) InitializeUpdates();
     }
 
     internal void SetScanTarget(string path)
@@ -105,6 +106,7 @@ public partial class MainWindow : Window
         WorktreeCleanupControls.IsEnabled = !busy;
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
+        UpdateUpdateButton();
         if (!busy) { DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
     }
 
@@ -186,22 +188,34 @@ public partial class MainWindow : Window
         SaveColumnLayout();
         _closing = true; _opportunitySearchTimer.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
+        bool workersStopped = true;
         try
         {
+            if (_updates is not null) await _updates.StopAsync();
             if (_cleanupTask is not null)
                 try { await _cleanupTask; }
-                catch (Exception error) { Debug.WriteLine($"Cleanup shutdown: {error}"); }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Cleanup shutdown: {error}"); }
             if (_worktreeCheckTask is not null)
                 try { await _worktreeCheckTask; }
-                catch (Exception error) { Debug.WriteLine($"Worktree check shutdown: {error}"); }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Worktree check shutdown: {error}"); }
             if (_extensions is not null) await _extensions.DisposeAsync();
             if (scanHelper is not null)
                 try { await scanHelper.Exit.WaitAsync(TimeSpan.FromSeconds(10)); }
-                catch (Exception error) { Debug.WriteLine($"Scanner shutdown: {error}"); }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Scanner shutdown: {error}"); }
+            if (_restartForUpdate && _updates is not null)
+            {
+                if (!workersStopped) throw new InvalidOperationException("Some workers could not finish safely.");
+                await _updates.ScheduleRestartAsync();
+            }
         }
-        catch (Exception error) { Debug.WriteLine($"Extension shutdown: {error}"); }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"App shutdown: {error}");
+            if (_restartForUpdate) MessageBox.Show("The update could not start. Reopen Space Maid and try again.", "Updates", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         finally
         {
+            _updates?.Dispose();
             _shutdownComplete = true;
             _ = Dispatcher.BeginInvoke(new Action(Close));
         }

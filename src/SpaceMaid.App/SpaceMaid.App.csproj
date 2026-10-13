@@ -5,8 +5,16 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../../assets/branding/space-maid-visor.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <StartupObject>SpaceMaid.App.App</StartupObject>
   </PropertyGroup>
   <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GitHubRepository</_Parameter1>
+      <_Parameter2>$(GitHubRepository)</_Parameter2>
+    </AssemblyAttribute>
     <BundledExtension Include="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" ExtensionId="space-maid.photos" />
     <BundledExtension Include="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" ExtensionId="space-maid.apps" />
     <BundledExtension Include="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" ExtensionId="space-maid.developer" />

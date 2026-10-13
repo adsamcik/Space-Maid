@@ -40,7 +40,9 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-Use `v1.2.3-beta.1` for a prerelease. Tags require three version numbers, each at most 65534, and may include a SemVer prerelease suffix. The [release workflow](.github/workflows/release.yml) stamps the version, runs CI and publishes a ZIP, checksum and change notes using GitHub's built-in token.
+Use `v1.2.3-beta.1` for a prerelease. Tags require three version numbers, each at most 65534, and may include a SemVer prerelease suffix. The [release workflow](.github/workflows/release.yml) stamps the version and repository, runs CI, then uses the pinned Velopack tool to prepare update packages. A self-contained Setup.exe embeds the native installer and portable ZIP for its two installation choices; the ZIP, update feed and checksums are also published using GitHub's built-in token. Both release types use the `win` update channel; stable installations ignore prereleases.
+
+Keep every generated update package and feed asset on the release. The app discovers its repository from the build's `GitHubRepository` property; no owner name or access token is embedded. Releases must be public for unauthenticated update checks. Older plain ZIP builds need one manual install or extraction of a new release to enable updates.
 
 Failed uploads leave a draft that a rerun can finish. Published assets are preserved on reruns; use a new tag for changed binaries.
 

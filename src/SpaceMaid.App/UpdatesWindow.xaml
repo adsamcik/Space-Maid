@@ -1,0 +1,19 @@
+<Window x:Class="SpaceMaid.App.UpdatesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Updates" Width="430" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}" FontFamily="Segoe UI" FontSize="14">
+    <StackPanel Margin="24">
+        <DockPanel Margin="0,0,0,18"><TextBlock Text="Space Maid" FontSize="22" FontWeight="SemiBold" /><TextBlock x:Name="VersionText" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.65" /></DockPanel>
+        <TextBlock x:Name="StatusText" FontSize="16" TextWrapping="Wrap" />
+        <ProgressBar x:Name="ProgressBar" Height="5" Minimum="0" Maximum="100" Margin="0,14,0,0" Visibility="Collapsed" />
+        <CheckBox x:Name="AutomaticBox" Content="Check on startup" Margin="0,22,0,0" Click="Automatic_Click" />
+        <Expander x:Name="ErrorDetails" Header="Details" Visibility="Collapsed" Margin="0,14,0,0"><ScrollViewer MaxHeight="130"><TextBox x:Name="ErrorText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" /></ScrollViewer></Expander>
+        <TextBlock x:Name="BusyHint" Text="Finish active jobs before restarting." Visibility="Collapsed" Opacity="0.65" Margin="0,18,0,0" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button x:Name="CancelButton" Content="Cancel download" Visibility="Collapsed" Click="Cancel_Click" Margin="0,0,8,0" />
+            <Button x:Name="CheckButton" Content="Check" Click="Check_Click" Margin="0,0,8,0" />
+            <Button x:Name="ActionButton" Content="Download update" Click="Action_Click" Style="{DynamicResource AccentButtonStyle}" Visibility="Collapsed" />
+        </StackPanel>
+    </StackPanel>
+</Window>

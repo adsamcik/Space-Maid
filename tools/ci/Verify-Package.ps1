@@ -2,7 +2,7 @@ param([Parameter(Mandatory)][string]$PackagePath)
 $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $required = @(
-    'SpaceMaid.App.exe', 'SpaceMaid.App.dll', 'SpaceMaid.Core.dll', 'SpaceMaid.Extensions.Contracts.dll',
+    'SpaceMaid.App.exe', 'SpaceMaid.App.dll', 'SpaceMaid.Core.dll', 'SpaceMaid.Extensions.Contracts.dll', 'Velopack.dll',
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'Notices/FileFormatRegistry/README.md', 'Notices/FileFormatRegistry/FileFormatRegistry.provenance.json.gz',
     'ScanHelper/SpaceMaid.ScanHelper.exe', 'ScanHelper/SpaceMaid.Core.dll',
     'Extensions/space-maid.photos/extension.json', 'Extensions/space-maid.photos/SpaceMaid.Extensions.Photos.dll',

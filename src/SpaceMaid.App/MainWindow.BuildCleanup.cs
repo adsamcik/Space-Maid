@@ -9,7 +9,7 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
-    internal string CleanupSettingsPath { get; set; } = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid", "cleanup-settings.json");
+    internal string CleanupSettingsPath { get; set; } = AppData.File("cleanup-settings.json");
     internal BuildCleanupPolicy CurrentBuildPolicy { get; private set; } = BuildCleanupPolicy.Default;
     private bool _cleanupSettingsUnavailable;
 
