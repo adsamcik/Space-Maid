@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a problem with Space Maid.
+body:
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      placeholder: Release tag or commit
+    validations:
+      required: true
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      placeholder: Windows 11, version 25H2
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Screenshots or diagnostics
+      description: For scan problems, include the backend from Scan details. Remove private paths or information from logs before attaching them.
