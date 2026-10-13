@@ -221,7 +221,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     }
     private static void ValidateEntryPath(string directory, string assemblyPath)
     {
-        ExtensionInventory.ValidateAncestors(directory);
+        FileOperations.ValidateLocalAncestors(directory);
         if (!File.Exists(assemblyPath) || (File.GetAttributes(assemblyPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("The extension entry DLL is missing or is a reparse file.");
         if (!File.Exists(Path.ChangeExtension(assemblyPath, ".deps.json")))

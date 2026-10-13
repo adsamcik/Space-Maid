@@ -43,13 +43,13 @@ public partial class MainWindow
                     ScanProgressBar.Maximum = Math.Max(1, update.Total);
                     ScanProgressBar.Value = update.Completed;
                 }));
-            var gitCheck = GitWorktreeGuard.CheckAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
+            var gitCheck = Operations.CheckWorktreesAsync(validation.Snapshot, validation.ValidatedLocations, checkedWorktrees, work.Token, log.Record,
                 new Progress<string>(path => { if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = "Checking worktree… " + path; }));
             _worktreeCheckTask = gitCheck;
             IReadOnlyDictionary<string, string> gitBlocks;
             try { gitBlocks = await gitCheck; }
             finally { if (ReferenceEquals(_worktreeCheckTask, gitCheck)) _worktreeCheckTask = null; }
-            var plan = await Task.Run(() => CleanupPlanner.Prepare(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks, DiscoverOpportunities, buildPolicy), work.Token);
+            var plan = await Operations.PrepareCleanupAsync(validation.Snapshot, validation.ValidatedLocations, work.Token, gitBlocks, DiscoverOpportunities, buildPolicy);
             work.Token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             if (validation.CanMergeInventory)
@@ -92,7 +92,7 @@ public partial class MainWindow
                 {
                     var cleanup = ExecuteCleanupAsync(chosenPlan, displayed, progress, token, work, log, checkedWorktrees);
                     _cleanupTask = cleanup; return cleanup;
-                }, _cleanupGroups) { Owner = this }.ShowDialog();
+                }, _cleanupGroups, Operations) { Owner = this }.ShowDialog();
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or Win32Exception

@@ -94,7 +94,7 @@ public partial class MainWindow
                 var timer = Stopwatch.StartNew();
                 var analysis = OpportunityExtensions.Analyze(scan, work.Token);
                 var opportunities = analysis.Findings;
-                var total = CleanupPlanner.Create(scan, opportunities, work.Token);
+                var total = Operations.EstimateCleanup(scan, opportunities, work.Token);
                 return (Opportunities: opportunities, Total: total, Groups: analysis.Groups, Elapsed: timer.Elapsed);
             }, work.Token);
             if (_closing) return false;

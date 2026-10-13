@@ -8,18 +8,19 @@ namespace SpaceMaid.Tests;
 
 public sealed class CleanupBatchTests
 {
+    private readonly FileOperations _operations = new();
     [Fact]
     public async Task AReadyBuildThatBecomesUncertainAfterConfirmationIsSkippedWithoutRecycling()
     {
         using var fixture = new TestDirectory();
         var project = CreateProject(fixture.Path, "changed-rebuildability", 'r', 4096);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
-        var plan = CleanupPlanner.Prepare(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        var plan = await _operations.PrepareCleanupAsync(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
         var captured = Assert.Single(plan.Preview.Locations);
         Assert.Equal(CleanupReadiness.Ready, plan.BuildAssessments[captured.DirectoryIndex].State);
         IReadOnlyList<Opportunity> Discover(ScanSnapshot current, CancellationToken token) =>
             DeveloperOpportunityFixture.Find(current, token).Select(finding => finding with { IsRegeneratable = false }).ToArray();
-        var result = await CleanupBatch.ExecuteAsync(plan, 0, new InlineProgress(_ => { }), default,
+        var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), default,
             (_, _) => { }, discover: Discover);
         var skipped = Assert.Single(result.Locations);
         Assert.Equal(CleanupOutcome.Skipped, skipped.Outcome);
@@ -38,7 +39,7 @@ public sealed class CleanupBatchTests
             using var fixture = new TestDirectory();
             var project = CreateProject(fixture.Path, "active-build", 'x', 4096);
             var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
-            var plan = CleanupPlanner.Prepare(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+            var plan = await _operations.PrepareCleanupAsync(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
             Assert.True(plan.CanExecute);
             if (!touchAfterFreshCheck) File.SetLastWriteTimeUtc(project.File, DateTime.UtcNow);
             int discoveryCalls = 0;
@@ -49,7 +50,7 @@ public sealed class CleanupBatchTests
                     File.SetLastWriteTimeUtc(project.File, DateTime.UtcNow);
                 return found;
             }
-            var result = await CleanupBatch.ExecuteAsync(plan, 0, new InlineProgress(_ => { }), default,
+            var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), default,
                 (_, _) => { }, discover: Discover);
             var skipped = Assert.Single(result.Locations);
             Assert.Equal(CleanupOutcome.Skipped, skipped.Outcome);
@@ -67,14 +68,14 @@ public sealed class CleanupBatchTests
         var changedRule = CreateProject(fixture.Path, "changed-rule", 'a', 4096);
         var replaced = CreateProject(fixture.Path, "replaced", 'b', 8192);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
-        var plan = CleanupPlanner.Prepare(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        var plan = await _operations.PrepareCleanupAsync(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
         Assert.True(plan.CanExecute); Assert.Equal(2, plan.Targets.Count);
         File.Delete(changedRule.Marker);
         string original = replaced.Output + "-original"; Directory.Move(replaced.Output, original);
         Directory.CreateDirectory(replaced.Output);
         string replacementFile = Path.Join(replaced.Output, "new.dll"); File.WriteAllText(replacementFile, "replacement contents");
 
-        var result = await CleanupBatch.ExecuteAsync(plan, 0, new InlineProgress(_ => { }), default, (_, _) => { }, discover: DeveloperOpportunityFixture.Find);
+        var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), default, (_, _) => { }, discover: DeveloperOpportunityFixture.Find);
 
         Assert.Equal(0, result.RecycledCount); Assert.False(result.Cancelled); Assert.Null(result.ValidationError);
         Assert.Equal(2, result.Locations.Count);
@@ -94,13 +95,13 @@ public sealed class CleanupBatchTests
         using var fixture = new TestDirectory(); var project = CreateProject(fixture.Path, "logical", 'c', 4096);
         var native = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         var logical = AsLogical(native);
-        var plan = CleanupPlanner.Prepare(logical, OpportunityDetector.Find(logical), discover: DeveloperOpportunityFixture.Find);
+        var plan = await _operations.PrepareCleanupAsync(logical, OpportunityDetector.Find(logical), discover: DeveloperOpportunityFixture.Find);
         Assert.True(plan.CanExecute); Assert.False(Assert.Single(plan.Targets).HasAllocationData);
         string original = project.Output + "-original"; Directory.Move(project.Output, original);
         Directory.CreateDirectory(project.Output);
         string replacementFile = Path.Join(project.Output, "replacement.dll"); File.WriteAllText(replacementFile, "new identity");
 
-        var result = await CleanupBatch.ExecuteAsync(plan, 0, new InlineProgress(_ => { }), default, (_, _) => { }, discover: DeveloperOpportunityFixture.Find);
+        var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), default, (_, _) => { }, discover: DeveloperOpportunityFixture.Find);
 
         Assert.NotNull(result.Validation);
         Assert.Equal(project.Output, Assert.Single(result.Validation.ValidatedLocations).Path);
@@ -121,7 +122,7 @@ public sealed class CleanupBatchTests
         var second = CreateProject(fixture.Path, "second", 'e', 4096);
         var projects = new[] { first, second };
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
-        var plan = CleanupPlanner.Prepare(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        var plan = await _operations.PrepareCleanupAsync(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
         Assert.Equal(2, plan.Targets.Count); Assert.Empty(plan.BlockedLocations);
         using var cancellation = new CancellationTokenSource();
         var recycledDestinations = new List<(string Recycled, string Original)>();
@@ -129,7 +130,7 @@ public sealed class CleanupBatchTests
         { if (update.Completed == 1 && recycledDestinations.Count == 1) cancellation.Cancel(); });
         try
         {
-            var result = await CleanupBatch.ExecuteAsync(plan, 0, progress, cancellation.Token, (name, data) =>
+            var result = await _operations.ExecuteCleanupAsync(plan, 0, progress, cancellation.Token, (name, data) =>
             {
                 if (name == "cleanup-location-result" && data is CleanupLocationResult item && item.Recycle?.RecycledPath is { } destination)
                     recycledDestinations.Add((destination, item.Location.Path));

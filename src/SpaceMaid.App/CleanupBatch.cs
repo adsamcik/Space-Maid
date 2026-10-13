@@ -44,7 +44,7 @@ internal static class CleanupBatch
             validation = await operations.ReviewCleanupAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic, discover,
                 new InlineValidationProgress(update => progress.Report(new(update.Completed, update.Total, "", "Checking confirmed folders…"))));
             current = validation.ValidatedLocations.ToDictionary(location => (location.ProviderId, location.Path, location.RuleId));
-            currentAssessments = await Task.Run(() => BuildCleanupProtection.Assess(validation.Snapshot, validation.Findings, plan.BuildPolicy, token), token);
+            currentAssessments = await operations.AssessBuildCleanupAsync(validation.Snapshot, validation.Findings, plan.BuildPolicy, token);
             var selectedDirectories = validation.ValidatedLocations.DistinctBy(location => location.DirectoryIndex)
                 .ToDictionary(location => location.DirectoryIndex, location => location.Path);
             IOpportunityInventory inventory = validation.Snapshot;
@@ -98,7 +98,7 @@ internal static class CleanupBatch
                         throw new InvalidOperationException(freshAssessment.Reason);
                     if (checkedWorktrees?.Keys.Any(path => GitWorktreeGuard.Covers(target.Path, path)) == true)
                         progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking worktree Git state again…"));
-                    var gitBlocks = await GitWorktreeGuard.CheckAsync(validation.Snapshot, [location],
+                    var gitBlocks = await operations.CheckWorktreesAsync(validation.Snapshot, [location],
                         checkedWorktrees ?? new Dictionary<string, WorktreeCleanupPolicy>(), token, diagnostic);
                     if (gitBlocks.TryGetValue(location.Path, out string? reason)) throw new InvalidOperationException(reason);
                     if (buildsByTarget.TryGetValue(location.Path, out var builds))
@@ -108,7 +108,7 @@ internal static class CleanupBatch
                         {
                             var assessment = currentAssessments[build.DirectoryIndex];
                             if (assessment.State == CleanupReadiness.Protected) throw new InvalidOperationException(assessment.Reason);
-                            var live = await BuildCleanupProtection.CheckCurrentAsync(build, plan.BuildPolicy, token);
+                            var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token);
                             if (live.State == CleanupReadiness.Protected
                                 || live.State == CleanupReadiness.NeedsReview && assessment.State == CleanupReadiness.Ready)
                                 throw new InvalidOperationException(live.Reason);

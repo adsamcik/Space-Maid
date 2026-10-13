@@ -164,7 +164,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
             throw new ArgumentException("Tool inputs must be absolute local paths without control characters.");
         string? parent = Path.GetDirectoryName(path);
         if (parent is null) throw new IOException("The file has no local parent folder.");
-        ExtensionInventory.ValidateAncestors(parent);
+        FileOperations.ValidateLocalAncestors(parent);
         var attributes = File.GetAttributes(path);
         const FileAttributes cloudUnavailable = (FileAttributes)(0x1000 | 0x40000 | 0x400000);
         if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory | cloudUnavailable)) != 0)

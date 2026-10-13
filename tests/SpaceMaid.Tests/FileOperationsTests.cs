@@ -9,6 +9,51 @@ namespace SpaceMaid.Tests;
 public sealed class FileOperationsTests
 {
     [Fact]
+    public async Task FreshMetadataDiscoveryStaysBoundedAndDoesNotReadLockedContents()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 513; i++) File.WriteAllBytes(Path.Join(fixture.Path, $"photo-{i}.jpg"), new byte[17]);
+        string nested = Directory.CreateDirectory(Path.Join(fixture.Path, "nested")).FullName;
+        string locked = Path.Join(nested, "locked.jpg"); File.WriteAllBytes(locked, new byte[29]);
+        using var held = File.Open(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var operations = new FileOperations(() => throw new InvalidOperationException("Discovery must stream directory metadata."));
+        var batches = new List<MetadataBatch>();
+        await foreach (var batch in operations.ReadMetadataAsync(fixture.Path)) batches.Add(batch);
+        var entries = batches.SelectMany(batch => batch.Items).ToArray();
+        Assert.Equal(515, entries.Length);
+        Assert.All(batches, batch => Assert.InRange(batch.Items.Count, 0, 512));
+        Assert.All(batches.SkipLast(1), batch => Assert.False(batch.Complete));
+        Assert.True(batches[^1].Complete); Assert.Empty(batches[^1].Items); Assert.Empty(batches[^1].Warnings);
+        Assert.Equal(29, Assert.Single(entries, item => item.Path == locked).LogicalBytes);
+        Assert.All(entries, item => Assert.True(item.LastWriteFileTime > 0));
+        Assert.Equal(512, batches[0].Items.Count); // Earlier pages stay intact.
+    }
+
+    [Fact]
+    public async Task CancelledDiscoveryPublishesNoCompleteCoverageAndCanRestartWithCurrentMetadata()
+    {
+        using var fixture = new TestDirectory();
+        // One batch leaves the root enumerator active when cancellation arrives.
+        for (int i = 0; i < 513; i++) Directory.CreateDirectory(Path.Join(fixture.Path, $"folder-{i}"));
+        using var stop = new CancellationTokenSource();
+        var operations = new FileOperations();
+        await using (var reader = operations.ReadMetadataAsync(fixture.Path, stop.Token).GetAsyncEnumerator())
+        {
+            Assert.True(await reader.MoveNextAsync());
+            Assert.False(reader.Current.Complete); Assert.Equal(512, reader.Current.Items.Count);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await reader.MoveNextAsync());
+        }
+        Directory.CreateDirectory(Path.Join(fixture.Path, "after-cancellation"));
+        var restarted = new List<MetadataBatch>();
+        await foreach (var batch in operations.ReadMetadataAsync(fixture.Path)) restarted.Add(batch);
+        Assert.True(restarted[^1].Complete); Assert.Empty(restarted[^1].Warnings);
+        var entries = restarted.SelectMany(batch => batch.Items).ToArray();
+        Assert.Equal(514, entries.Length);
+        Assert.Contains(entries, item => item.Name == "after-cancellation");
+    }
+
+    [Fact]
     public async Task ExistingOperationsFollowChangingNtfsAvailabilityAndRetainStreamFallback()
     {
         using var fixture = new TestDirectory();

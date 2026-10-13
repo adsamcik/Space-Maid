@@ -11,7 +11,7 @@ dotnet build SpaceMaid.slnx -c Release -m:1
 dotnet test tests/SpaceMaid.Tests -c Release -m:1
 ```
 
-Run desktop tests as a normal user. Two raw-volume checks require administrator access and are skipped otherwise. A successful build does not establish native cleanup, cloud-provider or desktop interaction behavior.
+Run desktop tests as a normal user. Three raw-volume checks require administrator access and are skipped otherwise. A successful build does not establish native cleanup, cloud-provider or desktop interaction behavior.
 
 Git must be available on `PATH` for worktree fixtures. For the real Photos metadata checks, install the complete ExifTool Windows bundle as `%LOCALAPPDATA%\Programs\ExifTool\ExifTool.exe`, including its companion files. CI installs its pinned version automatically; local ExifTool-specific tests skip when it is absent.
 

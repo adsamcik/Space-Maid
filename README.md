@@ -20,7 +20,7 @@ Enable fast scanning when prompted to authorize the read-only NTFS helper. The a
 
 The same helper accelerates folder scans, cleanup review, rechecks and app-size refreshes with scoped NTFS metadata queries. Current folder membership and cleanup safeguards are still checked; unsupported queries fall back to standard metadata reads.
 
-The host's shared `FileOperations` API chooses the available metadata backend per request. Scanning, folder measurement, cleanup validation and refreshes use that service, including extension folder-size requests. Recycling, emptying the bin and making files online-only use their Windows Shell or sync-provider APIs through the same entrypoint, retaining confirmation and live identity checks. No caller needs to select an NTFS backend or elevate for a metadata request.
+The host's shared `FileOperations` API chooses the available metadata backend per request. Scanning, folder measurement, cleanup review/planning, worktree and build-activity checks, refreshes and extension metadata discovery use that service. Photo discovery streams bounded batches of current directory metadata; size measurements can use scoped NTFS queries. Recycling, emptying the bin and making files online-only use their Windows Shell or sync-provider APIs through the same entrypoint, retaining confirmation and live identity checks. Callers do not select backends or request elevation themselves.
 
 Cleanup moves selected folders to the Recycle Bin after review and confirmation. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Photos cleanup is currently disabled.
 

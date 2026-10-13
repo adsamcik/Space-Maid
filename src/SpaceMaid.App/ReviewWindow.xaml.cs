@@ -12,6 +12,7 @@ public partial class ReviewWindow : Window
     private readonly List<CleanupReviewRow> _locations = [];
     private readonly List<CleanupReviewGroup> _groups = [];
     private readonly DispatcherTimer _estimateTimer;
+    private FileOperations _operations = new();
     private Func<CleanupPlan, IProgress<CleanupProgress>, CancellationToken, Task<CleanupBatchResult>>? _execute;
     private CleanupPlan? _plan, _selectedPlan;
     private CancellationTokenSource? _cleanup, _estimateCancellation;
@@ -41,8 +42,9 @@ public partial class ReviewWindow : Window
 
     internal ReviewWindow(CleanupPlan plan, string validationNote,
         Func<CleanupPlan, IProgress<CleanupProgress>, CancellationToken, Task<CleanupBatchResult>> execute,
-        IReadOnlyList<OpportunityGroup>? groups = null) : this(plan.Preview, validationNote)
+        IReadOnlyList<OpportunityGroup>? groups = null, FileOperations? operations = null) : this(plan.Preview, validationNote)
     {
+        _operations = operations ?? _operations;
         _plan = plan; _execute = execute; _locations.Clear();
         foreach (var location in plan.Preview.Locations)
         {
@@ -171,7 +173,7 @@ public partial class ReviewWindow : Window
         _estimateCancellation = cancellation;
         int version = _selectionVersion;
         var choices = _locations.Where(row => row.Selected && row.CanSelect).Select(row => row.Location).ToArray();
-        var calculation = Task.Run(() => CleanupPlanner.Restrict(_plan, choices, cancellation.Token), cancellation.Token);
+        var calculation = _operations.RestrictCleanupAsync(_plan, choices, cancellation.Token);
         SelectionCalculation = calculation;
         try
         {

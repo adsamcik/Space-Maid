@@ -51,12 +51,19 @@ public sealed class HelperTests
         for (int request = 0; request < 2; request++)
         {
             using var stop = new CancellationTokenSource();
-            if (Elevation.IsAdministrator)
-                Assert.ThrowsAny<OperationCanceledException>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => stop.Cancel(), stop.Token));
+            int blocks = 0;
+            var error = Record.Exception(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, block =>
+            {
+                Assert.False(block.Data.IsEmpty); blocks++; stop.Cancel();
+            }, stop.Token));
+            // NTFS access depends on the volume's permissions, not merely the
+            // administrator role. Bound a readable query to its first batch.
+            if (blocks > 0)
+                Assert.IsAssignableFrom<OperationCanceledException>(error);
             else
             {
-                var error = Assert.Throws<Win32Exception>(() => source.Acquire(Path.GetPathRoot(Environment.CurrentDirectory)!, _ => { }, stop.Token));
-                Assert.Equal(5, error.NativeErrorCode);
+                var denied = Assert.IsType<Win32Exception>(error);
+                Assert.Equal(5, denied.NativeErrorCode);
             }
             Assert.True(source.IsAvailable); Assert.False(source.Exit.IsCompleted);
             Assert.Equal(processId, source.ProcessId);

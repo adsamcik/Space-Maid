@@ -113,7 +113,7 @@ public partial class MainWindow
             for (int i = 0; i < remaining.Length; i++)
             {
                 StatusText.Text = $"Checking worktrees · {_worktreeAssessments.Count + 1:N0} of {locations.Length:N0} · {remaining[i].Path}";
-                var result = await GitWorktreeAnalyzer.AssessAsync(scan, remaining[i], budget.Token);
+                var result = await Operations.AssessWorktreeAsync(scan, remaining[i], budget.Token);
                 log.Record("worktree-assessed", result);
                 if (_closing || !ReferenceEquals(_snapshot, scan)) return;
                 _worktreeAssessments[result.Path] = result;

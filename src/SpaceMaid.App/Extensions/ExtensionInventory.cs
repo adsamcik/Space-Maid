@@ -1,5 +1,4 @@
 using System.IO;
-using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
 using SpaceMaid.Core.Scanning;
 using SpaceMaid.Extensions.Contracts;
@@ -10,7 +9,7 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
     CancellationToken lifetime = default, FileOperations? operations = null,
     Action<string, object>? diagnostic = null) : IInventoryReader, IInventoryFolderSizes, IInventoryEvidence
 {
-    private const int BatchSize = 512;
+    private const int BatchSize = FileOperations.MetadataBatchSize;
     private readonly FileOperations _operations = operations ?? new();
     private readonly object _gate = new();
     private readonly Dictionary<Guid, ReferenceBatch> _readers = [];
@@ -28,7 +27,7 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime);
         token = linked.Token;
         token.ThrowIfCancellationRequested();
-        ValidateAncestors(path);
+        FileOperations.ValidateLocalAncestors(path);
         if (!refresh)
         {
             var scan = currentScan();
@@ -63,7 +62,7 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
         token.ThrowIfCancellationRequested();
         using var discovery = beginDiscovery();
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        ValidateAncestors(root);
+        FileOperations.ValidateLocalAncestors(root);
         var scan = currentScan();
         int? entry = preferExistingInventory ? scan?.FindEntry(root) : null;
         Guid generation = Guid.NewGuid();
@@ -130,64 +129,27 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
                 yield break;
             }
 
-            // This fallback streams directory metadata directly: no content reads,
-            // recursive reparse traversal, or second drive-sized snapshot.
-            var observed = DateTime.UtcNow;
-            var errors = new List<string>();
-            bool finished = true;
             int sequence = 0;
-            var folders = new Queue<string>(); folders.Enqueue(root);
-            var options = new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, AttributesToSkip = 0 };
-            IEnumerator<LocalEntry>? active = null;
-            try
+            await using var reader = _operations.ReadMetadataAsync(root, token).GetAsyncEnumerator(token);
+            while (true)
             {
-                while (folders.Count > 0 || active is not null)
+                Publish(null, []);
+                if (!await reader.MoveNextAsync().ConfigureAwait(false)) break;
+                var batch = reader.Current;
+                var items = new List<InventoryItem>(batch.Items.Count);
+                var paths = new Dictionary<int, string?>(batch.Items.Count);
+                foreach (var value in batch.Items)
                 {
-                    Publish(null, []);
-                    var items = new List<InventoryItem>(BatchSize);
-                    var paths = new Dictionary<int, string>(BatchSize);
-                    await Task.Run(() =>
-                    {
-                        while (items.Count < BatchSize && (folders.Count > 0 || active is not null))
-                        {
-                            token.ThrowIfCancellationRequested();
-                            try
-                            {
-                                if (active is null)
-                                {
-                                    string folder = folders.Dequeue(); ValidateAncestors(folder);
-                                    active = new FileSystemEnumerable<LocalEntry>(folder,
-                                        (ref FileSystemEntry value) => new(value.ToFullPath(), value.FileName.ToString(), value.Attributes,
-                                            value.IsDirectory ? 0 : value.Length, value.LastWriteTimeUtc.ToFileTime()), options).GetEnumerator();
-                                }
-                                if (!active.MoveNext()) { active.Dispose(); active = null; continue; }
-                                var value = active.Current;
-                                int handle = sequence++;
-                                items.Add(new(new(generation, handle), handle, value.Name, (value.Attributes & FileAttributes.Directory) != 0,
-                                    value.Size, 0, true, (uint)value.Attributes, value.WriteTime, null, null));
-                                paths[handle] = value.Path;
-                                if ((value.Attributes & FileAttributes.Directory) != 0)
-                                {
-                                    if ((value.Attributes & FileAttributes.ReparsePoint) == 0) folders.Enqueue(value.Path);
-                                    else RecordFailure("A reparse folder was left metadata-only and its contents were not followed.");
-                                }
-                            }
-                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                            {
-                                active?.Dispose(); active = null;
-                                RecordFailure("A folder was unavailable or could not be read: " + ex.Message);
-                            }
-                        }
-                    }, token).ConfigureAwait(false);
-                    Publish(null, paths.ToDictionary(pair => pair.Key, pair => (string?)pair.Value));
-                    if (items.Count > 0) yield return new(new(root, observed, false, false, false, false, errors.ToArray()), items);
+                    token.ThrowIfCancellationRequested();
+                    int handle = sequence++;
+                    items.Add(new(new(generation, handle), handle, value.Name, (value.Attributes & FileAttributes.Directory) != 0,
+                        value.LogicalBytes, 0, true, (uint)value.Attributes, value.LastWriteFileTime, null, null));
+                    paths[handle] = value.Path;
                 }
+                Publish(null, paths);
+                yield return new(new(root, batch.ObservedAtUtc, batch.Complete, false, false, false, batch.Warnings), items);
             }
-            finally { active?.Dispose(); }
             token.ThrowIfCancellationRequested();
-            Publish(null, []);
-            yield return new(new(root, observed, finished, false, false, false, errors.ToArray()), []);
-            void RecordFailure(string message) { finished = false; if (errors.Count < 32) errors.Add(message); }
             void Publish(ScanSnapshot? source, Dictionary<int, string?> locations)
             { lock (_gate) _readers[generation] = new(source, locations, token); }
         }
@@ -206,18 +168,4 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
         }
     }
 
-    internal static void ValidateAncestors(string path)
-    {
-        if (!Path.IsPathFullyQualified(path) || path.StartsWith("\\\\", StringComparison.Ordinal))
-            throw new IOException("Choose an available local collection folder.");
-        string? current = path;
-        while (current is not null)
-        {
-            var attributes = File.GetAttributes(current);
-            if ((attributes & (FileAttributes.ReparsePoint | (FileAttributes)(0x1000 | 0x40000 | 0x400000))) != 0)
-                throw new IOException("Reparse collection folders are metadata-only and are not followed. Choose a regular local collection folder.");
-            current = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(current));
-        }
-    }
-    private readonly record struct LocalEntry(string Path, string Name, FileAttributes Attributes, long Size, long WriteTime);
 }

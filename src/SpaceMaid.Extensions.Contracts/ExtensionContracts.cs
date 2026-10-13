@@ -46,7 +46,7 @@ public sealed record InventoryFolderSize(long LogicalBytes, long? AllocatedBytes
 public interface IInventoryFolderSizes
 {
     // Without refresh, return a current scan summary or null without scanning.
-    // With refresh, measure this folder's metadata using the standard scanner.
+    // With refresh, measure current folder metadata through the host's available backend.
     Task<InventoryFolderSize?> ReadFolderSizeAsync(string path, bool refresh, CancellationToken token);
 }
 public interface IDriveExtensionView

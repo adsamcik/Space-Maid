@@ -133,10 +133,10 @@ public sealed partial class DesktopTests
             await Task.Yield(); token.ThrowIfCancellationRequested();
             if (refresh) FreshMeasurements++;
             if (Block) { Waiting = true; await Task.Delay(Timeout.Infinite, token); }
-            if (location.EndsWith("03", StringComparison.Ordinal)) throw new IOException("Owned unavailable-folder fixture.");
-            long size = location == path ? GiB(146) : location.EndsWith("01", StringComparison.Ordinal) ? GiB(8.4) : GiB(1.2);
-            return new(size, location.EndsWith("02", StringComparison.Ordinal) ? null : size,
-                !location.EndsWith("02", StringComparison.Ordinal), DateTime.UtcNow, "Drive scan", []);
+            if (location == @"G:\Apps\Application 03") throw new IOException("Owned unavailable-folder fixture.");
+            long size = location == path ? GiB(146) : location == @"G:\Apps\Application 01" ? GiB(8.4) : GiB(1.2);
+            bool partial = location == @"G:\Apps\Application 02";
+            return new(size, partial ? null : size, !partial, DateTime.UtcNow, "Drive scan", []);
         }
         public IAsyncEnumerable<InventoryBatch> ReadAsync(string root, CancellationToken token, bool preferExistingInventory = false) => throw new NotSupportedException();
         public string? ResolveLocation(InventoryReference reference) => null;

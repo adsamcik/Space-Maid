@@ -63,7 +63,7 @@ public partial class MainWindow
         {
             var classified = OpportunityExtensions.Analyze(updated, token);
             var opportunities = findings ?? classified.Findings;
-            return (Opportunities: opportunities, Total: CleanupPlanner.Create(updated, opportunities, token), Groups: classified.Groups);
+            return (Opportunities: opportunities, Total: Operations.EstimateCleanup(updated, opportunities, token), Groups: classified.Groups);
         }, token);
         log.Record("opportunity-extensions", new { Status = OpportunityExtensions.Status(updated), ExtensionLog = _extensions?.LogPath });
         token.ThrowIfCancellationRequested();

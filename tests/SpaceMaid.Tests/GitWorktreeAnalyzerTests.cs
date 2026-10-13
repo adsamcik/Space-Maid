@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 using Xunit;
@@ -47,8 +48,9 @@ public sealed class GitWorktreeAnalyzerTests
         string changed = untracked ? Path.Join(repo.Checkout, "untracked.txt") : repo.Source;
         File.WriteAllText(changed, "local work that must be preserved"); GitFixture.Age(repo.Checkout, repo.Old);
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
-        var result = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
-        Assert.False(result.Recommended); Assert.Equal("Local changes", result.Status);
+        var result = await new FileOperations().AssessWorktreeAsync(scan, Finding(scan, repo.Checkout));
+        Assert.False(result.Recommended);
+        Assert.True(result.Status == "Local changes", $"{result.Status}: {result.Reason}");
         Assert.False(result.VerifiedClean);
         foreach (var mode in Enum.GetValues<WorktreeCleanupMode>())
             Assert.False(new WorktreeCleanupPolicy(mode, 1).Matches(result, DateTime.UtcNow));

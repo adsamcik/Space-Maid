@@ -7,7 +7,7 @@ namespace SpaceMaid.App;
 
 // Shared host entrypoint. Backend availability is evaluated per request; only
 // metadata uses NTFS. Shell and provider operations retain their live guards.
-internal sealed class FileOperations(Func<INtfsLayoutSource?>? ntfsSource = null, RecycleBinService? recycleBins = null)
+internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSource = null, RecycleBinService? recycleBins = null)
 {
     private readonly RecycleBinService _recycleBins = recycleBins ?? new();
 
