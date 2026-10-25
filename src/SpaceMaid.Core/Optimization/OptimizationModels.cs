@@ -13,8 +13,10 @@ public sealed record AutomaticCleanupRule
     public IReadOnlyList<string> FileSuffixes { get; }
     public int MinimumAgeDays { get; }
     public bool RequiresPythonSource { get; }
+    public GeneratedResourceKind ResourceKind { get; }
 
-    public AutomaticCleanupRule(string id, string name, string regeneration, IEnumerable<string> fileSuffixes, int minimumAgeDays = 7, bool requiresPythonSource = false)
+    public AutomaticCleanupRule(string id, string name, string regeneration, IEnumerable<string> fileSuffixes, int minimumAgeDays = 7,
+        bool requiresPythonSource = false, GeneratedResourceKind resourceKind = GeneratedResourceKind.Unverified)
     {
         if (string.IsNullOrWhiteSpace(id) || id.Length > 128 || id.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '.'))
             throw new ArgumentException("Invalid optimization rule ID.", nameof(id));
@@ -27,11 +29,13 @@ public sealed record AutomaticCleanupRule
         if (minimumAgeDays is < 1 or > 365) throw new ArgumentOutOfRangeException(nameof(minimumAgeDays));
         Id = id; Name = name; Regeneration = regeneration; FileSuffixes = Array.AsReadOnly(suffixes); MinimumAgeDays = minimumAgeDays;
         RequiresPythonSource = requiresPythonSource;
+        if (!Enum.IsDefined(resourceKind)) throw new ArgumentException("Invalid producer contract.", nameof(resourceKind));
+        ResourceKind = resourceKind;
     }
 
     public string ConsentKey(string providerId)
     {
-        string signature = string.Join('\n', FileSuffixes.Select(s => s.ToLowerInvariant())) + "\n" + Regeneration + "\n" + MinimumAgeDays + "\n" + RequiresPythonSource;
+        string signature = string.Join('\n', FileSuffixes.Select(s => s.ToLowerInvariant())) + "\n" + Regeneration + "\n" + MinimumAgeDays + "\n" + RequiresPythonSource + "\nproof-v2:" + ResourceKind;
         return providerId + "/" + Id + "/" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature)))[..16];
     }
 
@@ -57,10 +61,14 @@ public sealed record OptimizationPolicy
     public int KeepRecentDays { get; init; } = 14;
     public long MaxBytesPerRun { get; init; } = 512L * 1024 * 1024;
     public int MaxFilesPerRun { get; init; } = 500;
+    public int MaxEntriesPerRun { get; init; } = 20000;
+    public int MaxInspectionSeconds { get; init; } = 20;
+    public long MaxProofBytesPerRun { get; init; } = 32L * 1024 * 1024;
 
     public OptimizationPolicy Validate()
     {
-        if (KeepRecentDays is < 1 or > 365 || MaxFilesPerRun is < 1 or > 5000 || MaxBytesPerRun is < 1 or > 10L * 1024 * 1024 * 1024)
+        if (KeepRecentDays is < 1 or > 365 || MaxFilesPerRun is < 1 or > 5000 || MaxBytesPerRun is < 1 or > 10L * 1024 * 1024 * 1024
+            || MaxEntriesPerRun is < 1 or > 100000 || MaxInspectionSeconds is < 1 or > 120 || MaxProofBytesPerRun is < 1 or > 256L * 1024 * 1024)
             throw new ArgumentException("Invalid optimization retention or run limit.");
         if (EnabledRules is null || ExcludedPaths is null || EnabledRules.Length > 256 || ExcludedPaths.Length > 256
             || EnabledRules.Any(s => string.IsNullOrWhiteSpace(s) || s.Length > 512)) throw new ArgumentException("Invalid optimization rules.");
@@ -88,12 +96,26 @@ public sealed record OptimizationFile(string Path, string ContainerPath, string 
     AutomaticCleanupRule Rule)
 {
     public ulong? VolumeSerialNumber { get; init; }
+    public int ScanRecordIndex { get; init; } = -1;
+    public string ProviderId { get; init; } = "";
+    public OptimizationEvidence? Evidence { get; init; }
+    public IReadOnlyList<GeneratedInputRevision> Inputs { get; init; } = [];
+    public string? ContentHash { get; init; }
 }
 public sealed record OptimizationSkipped(string Path, string Reason);
+public sealed record OptimizationCooldown(string Path, long Written, long Created, DateTime RetryAfterUtc);
 public sealed record OptimizationPreview(IReadOnlyList<OptimizationFile> Files, IReadOnlyList<OptimizationSkipped> Skipped,
-    long EstimatedBytes, bool UsesLogicalSize, bool Limited);
+    long EstimatedBytes, bool UsesLogicalSize, bool Limited)
+{
+    public int ExaminedEntries { get; init; }
+    public int NextCursor { get; init; }
+    public bool CoverageComplete { get; init; } = true;
+}
 public enum OptimizationOutcome { Deleted, Skipped, Failed }
-public sealed record OptimizationFileResult(string Path, OptimizationOutcome Outcome, long LogicalBytes, string Message);
+public sealed record OptimizationFileResult(string Path, OptimizationOutcome Outcome, long LogicalBytes, string Message)
+{
+    public OptimizationCooldown? Cooldown { get; init; }
+}
 public sealed record OptimizationResult(IReadOnlyList<OptimizationFileResult> Files, bool Cancelled, string? Note = null)
 {
     public int DeletedCount => Files.Count(f => f.Outcome == OptimizationOutcome.Deleted);

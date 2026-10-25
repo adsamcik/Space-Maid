@@ -50,6 +50,7 @@ public partial class MainWindow : Window
         if (!_closing) await InitializeExtensionsAsync();
         if (!_closing) InitializeUpdates();
         if (!_closing) InitializeOptimization();
+        if (!_closing) InitializeWorktreeLifecycle();
     }
 
     internal void SetScanTarget(string path)
@@ -188,12 +189,21 @@ public partial class MainWindow : Window
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
         var scanHelper = _scanHelper;
         SaveColumnLayout();
-        _closing = true; _opportunitySearchTimer.Stop(); _optimizationTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        _closing = true; _opportunitySearchTimer.Stop(); _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
         bool workersStopped = true;
         try
         {
             if (_updates is not null) await _updates.StopAsync();
+            if (_duplicateWindow is not null)
+                try { await _duplicateWindow.StopAsync(); }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Duplicate search shutdown: {error}"); }
+            if (_toolCacheTask is not null)
+                try { await _toolCacheTask; }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Tool cache shutdown: {error}"); }
+            if (_worktreeLifecycleTask is not null)
+                try { await _worktreeLifecycleTask; }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Worktree lifecycle shutdown: {error}"); }
             if (_optimizationTask is not null)
                 try { await _optimizationTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Optimization shutdown: {error}"); }

@@ -39,6 +39,8 @@
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <DockPanel Margin="0,0,0,8">
                 <Button x:Name="PreviewButton" DockPanel.Dock="Right" Content="Preview" Click="Preview_Click" Padding="14,5"/>
+                <Button DockPanel.Dock="Right" Content="Keep folder" Click="KeepFolder_Click" Padding="10,5" Margin="0,0,8,0"/>
+                <Button DockPanel.Dock="Right" Content="Keep file" Click="KeepFile_Click" Padding="10,5" Margin="0,0,8,0"/>
                 <TextBlock x:Name="PreviewText" Text="Select rules, then preview the exact files." TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
             </DockPanel>
             <TabControl Grid.Row="1">
@@ -49,7 +51,7 @@
                                 <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
                             <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"/>
-                            <DataGridTextColumn Header="Rule" Binding="{Binding Rule}" Width="165"/>
+                            <DataGridTextColumn Header="Producer / variant" Binding="{Binding Rule}" Width="200"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </TabItem>

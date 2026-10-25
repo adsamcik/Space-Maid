@@ -79,7 +79,8 @@ public sealed partial class DesktopTests
         {
             LogDirectory = Path.Join(state.Path, "logs"), ExtensionDataRoot = Path.Join(state.Path, "extensions"),
             DriveHistoryPath = Path.Join(state.Path, "history.json"), ColumnLayoutPath = Path.Join(state.Path, "columns.json"),
-            CleanupSettingsPath = Path.Join(state.Path, "cleanup.json"), OptimizationSettingsPath = Path.Join(state.Path, "optimization.json")
+            CleanupSettingsPath = Path.Join(state.Path, "cleanup.json"), OptimizationSettingsPath = Path.Join(state.Path, "optimization.json"),
+            WorktreeLifecycleSettingsPath = Path.Join(state.Path, "managed-worktrees.json")
         };
         // This headless scheduler fixture needs only the metadata provider.
         // Avoid loading a second copy of WPF view assemblies into the same

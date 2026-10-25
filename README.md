@@ -6,6 +6,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 - **Opportunities** — grouped build output, caches, dependencies and Git worktrees, with configurable activity filters and live checks before cleanup.
   Includes [AI tool history, checkpoints and local model storage](docs/ai-storage-coverage.md), with tool-specific advice and protected shared stores.
 - **Auto optimize** — opt-in cleanup of old generated files, shared across extensions, with per-rule controls, exclusions, exact previews and run limits. [Automatic optimization](docs/automatic-optimization.md) describes coverage and safeguards.
+- **Storage tools** — resumable [duplicate discovery and content-preserving compression/block sharing](docs/duplicates-and-storage.md), native package-cache maintenance, and enrolled worktree quarantine with recovery grace.
 - **Apps** — installation folders, measured sizes and quick access in Explorer.
 - **Photos** — collections, exact duplicate review and related RAW/JPEG/sidecar files.
 - **Extensions** — trusted local workflows, including an optional local assistant.

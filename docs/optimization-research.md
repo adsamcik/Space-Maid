@@ -2,9 +2,9 @@
 
 Space Maid should optimize exact resources using evidence appropriate to each action. The highest-value direction combines producer-aware build cleanup, exact duplicate discovery, preservation options such as compression, and worktree lifecycle management. Broad detection can find opportunities; automatic action needs narrower proof. A valuable checkout can remain protected while independently verified compiler caches inside it are reclaimed.
 
-This proposal follows two specialist research tracks and an adversarial inspection, checked against the current code and primary documentation on 25 October 2026. It extends the existing [automatic optimizer](automatic-optimization.md), [Opportunities providers](opportunity-extensions.md) and [inventory evidence API](inventory-evidence.md). It does not expand the running application's rules. The reviewed optimization baseline is `61c0065`; unrelated concurrent changes to cleanup performance are outside these findings.
+This research follows two specialist tracks and an adversarial inspection, checked against baseline `61c0065` and primary documentation on 25 October 2026. The findings below describe that baseline. The subsequent implementation adds producer proofs, effective native leases, bounded continuation, content-preserving storage actions, native cache adapters and managed checkout recovery. See [automatic optimization](automatic-optimization.md) for current behavior and limitations, [duplicates and storage](duplicates-and-storage.md) for preservation actions, and the regression tests for executable evidence. Historical probes remain evidence of the original failures, not claims about the updated implementation.
 
-## Current findings and direct checks
+## Baseline findings and direct checks
 
 Three disposable local probes reproduced concrete weaknesses. They used metadata planning, a synthetic Git repository and empty fixture directories. No optimizer execution, real-data cleanup, network Git operation or application configuration change was performed.
 
@@ -16,7 +16,7 @@ Three disposable local probes reproduced concrete weaknesses. They used metadata
 
 The probe project built with zero warnings/errors. Its local source, logs, retained fixtures and machine-readable results are under `artifacts/optimization-research-probe`. The .NET source case ran the planner only, so it establishes false automatic eligibility rather than an observed deletion. The Git case demonstrates ambiguous integration semantics; keeping a local branch can still preserve its commits. The directory case does not demonstrate deletion of an unrelated replacement file: existing file-ID and volume checks continue to matter.
 
-Relevant current locations:
+Relevant baseline locations:
 
 - `SpaceMaid.Extensions.Developer/Analysis/OpportunityDetector.cs`: `AutomaticRule` attaches the .NET rule to `obj`; `DotNetIntermediate` includes `.cache` and generated-looking C# suffixes.
 - `SpaceMaid.Core/Optimization/OptimizationPlanner.cs`: recursive suffix admission and broad worktree ancestor protection.

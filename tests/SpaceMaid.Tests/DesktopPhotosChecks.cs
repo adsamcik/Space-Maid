@@ -27,6 +27,8 @@ public sealed partial class DesktopTests
             .GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
         var developerExtension = Assert.Single(extensionRuntime.Entries, value => value.Id == "space-maid.developer");
         Assert.Equal("Loaded", developerExtension.Status); Assert.Null(developerExtension.View);
+        var photosEntry = Assert.Single(extensionRuntime.Entries, value => value.Id == "space-maid.photos");
+        Assert.True(photosEntry.View is FrameworkElement, photosEntry.Error ?? photosEntry.Status);
         var photosView = Assert.IsAssignableFrom<FrameworkElement>(((ContentControl)window.FindName("PhotosContent")).Content);
         Assert.NotSame(System.Runtime.Loader.AssemblyLoadContext.Default,
             System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(photosView.GetType().Assembly));

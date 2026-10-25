@@ -21,6 +21,8 @@ public partial class OptimizationWindow : Window
     private OptimizationPolicy? _previewPolicy;
     private CancellationTokenSource? _work;
     private bool _closeAfterCancel;
+    private readonly OptimizationPolicy _basePolicy;
+    private int _cursor;
 
     internal OptimizationWindow(ScanSnapshot scan, IReadOnlyList<Opportunity> findings, FileOperations operations,
         OptimizationSettings settings, Action<OptimizationPolicy> save,
@@ -29,6 +31,7 @@ public partial class OptimizationWindow : Window
         InitializeComponent();
         _scan = scan; _findings = findings; _operations = operations; _save = save; _run = run;
         var policy = settings.Policy;
+        _basePolicy = policy; _cursor = settings.Cursor;
         AutomaticBox.IsChecked = policy.Enabled && string.Equals(policy.ScopePath, Path.TrimEndingDirectorySeparator(Path.GetFullPath(scan.RootPath)), StringComparison.OrdinalIgnoreCase);
         ScopeText.Text = scan.RootPath;
         DaysBox.Text = policy.KeepRecentDays.ToString(CultureInfo.InvariantCulture);
@@ -55,9 +58,9 @@ public partial class OptimizationWindow : Window
             throw new ArgumentException("Run limit: enter 1–10240 MiB.");
         var rules = _rules.Where(r => r.Enabled).Select(r => r.Key).ToArray();
         if (AutomaticBox.IsChecked == true && rules.Length == 0) throw new ArgumentException("Select at least one rule before enabling automatic optimization.");
-        return new OptimizationPolicy { Enabled = AutomaticBox.IsChecked == true, ScopePath = _scan.RootPath, KeepRecentDays = days,
+        return (_basePolicy with { Enabled = AutomaticBox.IsChecked == true, ScopePath = _scan.RootPath, KeepRecentDays = days,
             MaxBytesPerRun = (long)mib * 1024 * 1024, EnabledRules = rules,
-            ExcludedPaths = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }.Validate();
+            ExcludedPaths = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }).Validate();
     }
 
     private async void Preview_Click(object sender, RoutedEventArgs e)
@@ -67,13 +70,18 @@ public partial class OptimizationWindow : Window
         using var work = new CancellationTokenSource(); _work = work; SetWorking(true);
         try
         {
-            _previewPolicy = ReadPolicy();
-            _preview = await _operations.PreviewOptimizationAsync(_scan, _findings, _previewPolicy, work.Token);
-            FileList.ItemsSource = _preview.Files.Select(f => new { f.Path, DisplayPath = Path.GetRelativePath(_scan.RootPath, f.Path), Size = SizeText.Format(f.EstimatedBytes), Rule = f.Rule.Name }).ToArray();
+            var policy = ReadPolicy();
+            if (_previewPolicy is not null && JsonSerializer.Serialize(policy) != JsonSerializer.Serialize(_previewPolicy)) _cursor = 0;
+            _previewPolicy = policy;
+            _preview = await _operations.PreviewOptimizationAsync(_scan, _findings, _previewPolicy, work.Token, cursor: _cursor);
+            _cursor = _preview.NextCursor;
+            PreviewButton.Content = _preview.CoverageComplete ? "Preview" : "Continue preview";
+            FileList.ItemsSource = _preview.Files.Select(f => new DisplayFile(f.Path, Path.GetRelativePath(_scan.RootPath, f.Path),
+                SizeText.Format(f.EstimatedBytes), f.Rule.Name + (f.Evidence?.Variant is { Length: > 0 } variant && variant != "." ? " · " + variant : ""), f.ContainerPath)).ToArray();
             ShowResults(_preview.Skipped);
             PreviewText.Text = $"{_preview.Files.Count:N0} files · {SizeText.Format(_preview.EstimatedBytes)}"
-                + (_preview.UsesLogicalSize ? " logical size" : " estimated on disk") + (_preview.Limited ? " · Run limit applied" : "");
-            StatusText.Text = "Only these files can be deleted. Changed, open or protected files are checked again and kept.";
+                + (_preview.UsesLogicalSize ? " logical size" : " estimated on disk") + (_preview.CoverageComplete ? "" : " · Partial inspection");
+            StatusText.Text = $"{_preview.ExaminedEntries:N0} entries checked. Only files with verified producer evidence are eligible.";
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = error.Message; }
         finally { _work = null; SetWorking(false); if (_closeAfterCancel) Close(); }
@@ -113,6 +121,18 @@ public partial class OptimizationWindow : Window
         RunButton.IsEnabled = !busy && _preview?.Files.Count > 0;
         CloseButton.Content = busy ? "Cancel" : "Close";
     }
+    private void KeepFile_Click(object sender, RoutedEventArgs e) => KeepSelected(folder: false);
+    private void KeepFolder_Click(object sender, RoutedEventArgs e) => KeepSelected(folder: true);
+    private void KeepSelected(bool folder)
+    {
+        if (_work is not null || FileList.SelectedItem is not DisplayFile selected) return;
+        string path = folder ? selected.Container : selected.Path;
+        var exclusions = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        ExclusionsBox.Text = string.Join(Environment.NewLine, exclusions.Append(path).Distinct(StringComparer.OrdinalIgnoreCase));
+        _preview = null; _cursor = 0; RunButton.IsEnabled = false;
+        StatusText.Text = "Excluded this location. Preview again; save settings to keep the exclusion for automatic runs.";
+    }
+    internal sealed record DisplayFile(string Path, string DisplayPath, string Size, string Rule, string Container);
     private void ShowResults(IEnumerable<OptimizationSkipped> results) => ResultList.ItemsSource = results.Select(r =>
         new { r.Path, DisplayPath = Path.GetRelativePath(_scan.RootPath, r.Path), r.Reason }).ToArray();
     private void Close_Click(object sender, RoutedEventArgs e) { if (_work is { } work) work.Cancel(); else Close(); }

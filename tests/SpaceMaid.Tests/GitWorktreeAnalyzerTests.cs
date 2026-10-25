@@ -309,7 +309,116 @@ public sealed class GitWorktreeAnalyzerTests
 
     private static Opportunity Finding(ScanSnapshot scan, string path) => Assert.Single(OpportunityDetector.Find(scan), finding => finding.Path == path);
 
-    private sealed record GitFixture(string Main, string Parent, string Checkout, string Source, DateTime Old) : IDisposable
+    [Fact]
+    public async Task FeatureTrackingItsOwnRemoteRefIsRetainedButNotIntegratedIntoTheApprovedTarget()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        File.AppendAllText(repo.Source, "\nfeature not merged into main");
+        await GitFixture.Run(repo.Checkout, repo.Old, "commit", "-am", "unmerged feature");
+        await GitFixture.Run(repo.Main, repo.Old, "config", "remote.origin.url", ".");
+        await GitFixture.Run(repo.Main, repo.Old, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+        await GitFixture.Run(repo.Main, repo.Old, "update-ref", "refs/remotes/origin/old", "refs/heads/old");
+        await GitFixture.Run(repo.Checkout, repo.Old, "branch", "--set-upstream-to=origin/old", "old");
+        GitFixture.Age(repo.Checkout, repo.Old); await GitFixture.AgeReflogs(repo.Checkout, repo.Main, "old", repo.Old);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var value = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), "refs/heads/main");
+        Assert.True(value.RetainedOnUpstream); Assert.Equal("refs/remotes/origin/old", value.UpstreamReference);
+        Assert.False(value.Integrated); Assert.True(value.IntegrationTargetConfirmed); Assert.Equal("refs/heads/main", value.IntegrationTarget);
+        Assert.False(value.Recommended);
+        var suggested = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout));
+        Assert.Equal("refs/remotes/origin/main", suggested.IntegrationTarget); Assert.False(suggested.Integrated);
+    }
+
+    [Fact]
+    public async Task IgnoredLocalSecretsAndRecentCopiesDoNotQualifyForRetirement()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        File.WriteAllText(Path.Join(repo.Checkout, ".gitignore"), ".env\n");
+        await GitFixture.Run(repo.Checkout, repo.Old, "add", ".gitignore");
+        await GitFixture.Run(repo.Checkout, repo.Old, "commit", "-m", "ignore local secrets");
+        await GitFixture.Run(repo.Main, repo.Old, "merge", "--ff-only", "old");
+        File.WriteAllText(Path.Join(repo.Checkout, ".env"), "local credentials must survive");
+        GitFixture.Age(repo.Checkout, repo.Old); await GitFixture.AgeReflogs(repo.Checkout, repo.Main, "old", repo.Old);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var ignored = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), "refs/heads/main");
+        Assert.True(ignored.VerifiedClean); Assert.True(ignored.HasIgnoredFiles); Assert.Contains(".env", ignored.IgnoredPaths);
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Integrated).Matches(ignored, DateTime.UtcNow));
+        File.Delete(Path.Join(repo.Checkout, ".env"));
+        File.SetCreationTimeUtc(repo.Source, DateTime.UtcNow); File.SetLastWriteTimeUtc(repo.Source, repo.Old);
+        scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var copied = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), "refs/heads/main");
+        Assert.True(copied.Integrated); Assert.False(copied.Recommended); Assert.True(copied.LastActivityUtc > DateTime.UtcNow.AddDays(-1));
+    }
+
+    [Fact]
+    public async Task OperationStateIsExplicitAndLargeUnrelatedObjectDirectoriesAreNotLeased()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        string unrelated = Directory.CreateDirectory(Path.Join(repo.Main, ".git", "objects", "research-padding")).FullName;
+        for (int i = 0; i < 4200; i++) File.WriteAllText(Path.Join(unrelated, i.ToString(CultureInfo.InvariantCulture)), "unrelated");
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var value = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), "refs/heads/main");
+        Assert.True(value.Recommended, value.Reason);
+        string gitDir = (await GitFixture.Run(repo.Checkout, repo.Old, "rev-parse", "--absolute-git-dir")).Trim();
+        Directory.CreateDirectory(Path.Join(gitDir, "rebase-merge"));
+        var active = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), "refs/heads/main");
+        Assert.True(active.OperationInProgress); Assert.False(active.Recommended);
+    }
+
+    [Fact]
+    public async Task ManagedQuarantineAndRestorePreserveTheExactBranchAndPauseAutomaticRetirement()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        var service = new WorktreeRetirement(Path.Join(fixture.Path, "retirement.json"));
+        var policy = await service.EnrollAsync(repo.Checkout, "refs/heads/main", 30, 7, true);
+        var retired = await service.QuarantineAsync(policy);
+        Assert.Equal(WorktreeRetirementState.Quarantined, retired.State); Assert.False(Directory.Exists(repo.Checkout));
+        Assert.True(Directory.Exists(retired.QuarantinePath)); Assert.Equal("owned tracked source", File.ReadAllText(Path.Join(retired.QuarantinePath, "source.txt")));
+        Assert.Equal(retired.Head, (await GitFixture.Run(repo.Main, repo.Old, "rev-parse", retired.RecoveryReference)).Trim());
+        Assert.Equal(retired.Head, (await GitFixture.Run(repo.Main, repo.Old, "rev-parse", "old")).Trim());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.FinalizeAsync(retired.Id));
+        var restored = await service.RestoreAsync(retired.Id);
+        Assert.Equal(WorktreeRetirementState.Restored, restored.State); Assert.True(Directory.Exists(repo.Checkout));
+        Assert.False(Assert.Single(service.Load().Policies).Automatic);
+        Assert.Contains(repo.Checkout.Replace('\\', '/'), (await GitFixture.Run(repo.Main, repo.Old, "worktree", "list", "--porcelain")).Replace('\\', '/'));
+    }
+
+    [Fact]
+    public async Task FinalizationKeepsChangesAndNeverRemovesNewLocalData()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        string settings = Path.Join(fixture.Path, "retirement.json"); var service = new WorktreeRetirement(settings);
+        var policy = await service.EnrollAsync(repo.Checkout, "refs/heads/main", 30, 1, false);
+        var record = await service.QuarantineAsync(policy); Assert.Equal(WorktreeRetirementState.Quarantined, record.State);
+        var state = service.Load();
+        File.WriteAllText(settings, System.Text.Json.JsonSerializer.Serialize(state with { Records = [record with { QuarantinedUtc = DateTime.UtcNow.AddDays(-2) }] }));
+        string newFile = Path.Join(record.QuarantinePath, "new-local-work.txt"); File.WriteAllText(newFile, "preserve new work");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.FinalizeAsync(record.Id));
+        Assert.Equal("preserve new work", File.ReadAllText(newFile)); Assert.True(File.Exists(Path.Join(record.QuarantinePath, "source.txt")));
+        File.Delete(newFile);
+        File.AppendAllText(Path.Join(record.QuarantinePath, "source.txt"), "\nnew change");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.FinalizeAsync(record.Id));
+        Assert.Contains("new change", File.ReadAllText(Path.Join(record.QuarantinePath, "source.txt")));
+    }
+
+    [Fact]
+    public async Task FinalizationDeletesOnlyCapturedObjectsAndRetainsCommitHistory()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        string settings = Path.Join(fixture.Path, "retirement.json"); var service = new WorktreeRetirement(settings);
+        var policy = await service.EnrollAsync(repo.Checkout, "refs/heads/main", 30, 1, false);
+        var record = await service.QuarantineAsync(policy); Assert.Equal(WorktreeRetirementState.Quarantined, record.State);
+        var state = service.Load();
+        File.WriteAllText(settings, System.Text.Json.JsonSerializer.Serialize(state with { Records = [record with { QuarantinedUtc = DateTime.UtcNow.AddDays(-2) }] }));
+        var final = await service.FinalizeAsync(record.Id);
+        Assert.Equal(WorktreeRetirementState.Completed, final.State);
+        Assert.False(Directory.Exists(record.QuarantinePath));
+        Assert.Equal(record.Head, (await GitFixture.Run(repo.Main, repo.Old, "rev-parse", "old")).Trim());
+        Assert.Equal("owned tracked source", (await GitFixture.Run(repo.Main, repo.Old, "show", record.RecoveryReference + ":source.txt")).Trim());
+        Assert.DoesNotContain(record.QuarantinePath.Replace('\\', '/'), (await GitFixture.Run(repo.Main, repo.Old, "worktree", "list", "--porcelain")).Replace('\\', '/'));
+    }
+
+    internal sealed record GitFixture(string Main, string Parent, string Checkout, string Source, DateTime Old) : IDisposable
     {
         public void Dispose()
         {
@@ -337,21 +446,23 @@ public sealed class GitWorktreeAnalyzerTests
             string checkout = Path.Join(parent, "checkout"); await Run(main, old, "worktree", "add", "-b", "old", checkout, "main");
             Age(checkout, old);
             string gitDir = (await Run(checkout, old, "rev-parse", "--absolute-git-dir")).Trim();
-            File.SetLastWriteTimeUtc(Path.Join(gitDir, "logs", "HEAD"), old);
-            File.SetLastWriteTimeUtc(Path.Join(main, ".git", "logs", "refs", "heads", "old"), old);
+            await AgeReflogs(checkout, main, "old", old);
             return new(main, parent, checkout, Path.Join(checkout, "source.txt"), old);
         }
         public static void Age(string root, DateTime old)
         {
-            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)) File.SetLastWriteTimeUtc(file, old);
-            foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)) Directory.SetLastWriteTimeUtc(directory, old);
-            Directory.SetLastWriteTimeUtc(root, old);
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            { File.SetCreationTimeUtc(file, old); File.SetLastWriteTimeUtc(file, old); }
+            foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).Prepend(root))
+            { Directory.SetCreationTimeUtc(directory, old); Directory.SetLastWriteTimeUtc(directory, old); }
         }
         public static async Task AgeReflogs(string checkout, string main, string branch, DateTime old)
         {
             string gitDir = (await Run(checkout, old, "rev-parse", "--absolute-git-dir")).Trim();
+            Age(gitDir, old);
             File.SetLastWriteTimeUtc(Path.Join(gitDir, "logs", "HEAD"), old);
             File.SetLastWriteTimeUtc(Path.Join(main, ".git", "logs", "refs", "heads", branch), old);
+            File.SetCreationTimeUtc(Path.Join(main, ".git", "logs", "refs", "heads", branch), old);
         }
         public static async Task<string> Run(string root, DateTime date, params string[] arguments)
         {

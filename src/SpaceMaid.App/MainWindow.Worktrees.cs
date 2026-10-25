@@ -74,8 +74,8 @@ public partial class MainWindow
         WorktreeRuleHint.ToolTip = policy.Mode switch
         {
             WorktreeCleanupMode.Old => "Age uses file changes and Git activity, not access. Unmerged commits stay in their branches. Detached commits must be integrated. Stop agents and builds; review ignored files.",
-            WorktreeCleanupMode.Integrated => "Age is ignored. Uses local upstream/default refs, or main/master for detached checkouts; no fetch. Local changes are protected; stop agents and builds first.",
-            _ => "Age uses file changes and Git activity, not access. Uses local upstream/default refs, or main/master for detached checkouts. Stop agents and builds; review ignored files."
+            WorktreeCleanupMode.Integrated => "Age is ignored. Uses a single cached remote default, or main/master for detached checkouts; no fetch. Feature upstream retention is a separate fact. Changed and ignored local files are protected.",
+            _ => "Age uses creation, file changes and Git activity, not actual use. Uses a single cached remote default, or main/master for detached checkouts. Changed and ignored local files are protected."
         };
         WorktreeRuleHint.Text = policy.Mode == WorktreeCleanupMode.Old
             ? "Unmerged branches kept"

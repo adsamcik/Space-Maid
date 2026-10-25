@@ -6,6 +6,8 @@ namespace SpaceMaid.App;
 
 internal sealed record OptimizationSettings(OptimizationPolicy Policy, DateTime? LastRunUtc = null, string? LastSummary = null, string? LastLog = null)
 {
+    public int Cursor { get; init; }
+    public OptimizationCooldown[] Cooldowns { get; init; } = [];
     internal static OptimizationSettings Load(string path)
     {
         try
@@ -14,6 +16,9 @@ internal sealed record OptimizationSettings(OptimizationPolicy Policy, DateTime?
             if (input.Length > 128 * 1024) throw new InvalidDataException("Optimization settings are too large.");
             var settings = JsonSerializer.Deserialize<OptimizationSettings>(input) ?? throw new InvalidDataException("Invalid optimization settings.");
             if (settings.Policy is null) throw new InvalidDataException("Optimization policy is missing.");
+            if (settings.Cursor < 0 || settings.Cooldowns is null || settings.Cooldowns.Length > 32
+                || settings.Cooldowns.Any(c => c is null || string.IsNullOrEmpty(c.Path) || c.Path.Length > 2048))
+                throw new InvalidDataException("Invalid optimization progress.");
             return settings with { Policy = settings.Policy.Validate() };
         }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return new(new OptimizationPolicy()); }

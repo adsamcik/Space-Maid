@@ -1,5 +1,8 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text.Json;
 using SpaceMaid.App;
 using SpaceMaid.App.Extensions;
 using SpaceMaid.Core.Analysis;
@@ -76,8 +79,7 @@ public sealed class OptimizationTests
         File.WriteAllText(Path.Join(bin, "project.dll"), "binary"); Age(fixture.Path);
         var (scan, findings, policy) = await Inventory(fixture.Path);
         var preview = OptimizationPlanner.Create(scan, findings, policy);
-        Assert.Equal(2, preview.Files.Count);
-        Assert.All(preview.Files, f => Assert.Equal(output, f.ContainerPath));
+        Assert.Empty(preview.Files);
         Assert.Null(Assert.Single(findings, f => f.Path == bin).AutomaticCleanup);
         File.WriteAllText(Path.Join(output, "handwritten.cs"), "keep"); Age(fixture.Path);
         var updated = await Inventory(fixture.Path);
@@ -91,13 +93,22 @@ public sealed class OptimizationTests
         string cache = Directory.CreateDirectory(Path.Join(fixture.Path, ".mypy_cache")).FullName;
         File.WriteAllText(Path.Join(cache, "CACHEDIR.TAG"), "fixture cache marker");
         string version = Directory.CreateDirectory(Path.Join(cache, "3.13")).FullName;
-        File.WriteAllText(Path.Join(version, "module.meta.json"), "generated");
-        File.WriteAllText(Path.Join(version, "module.data.json"), "generated");
+        string source = Path.Join(fixture.Path, "module.py"); File.WriteAllText(source, "print('fixture')");
+        File.WriteAllText(Path.Join(version, "module.data.json"), JsonSerializer.Serialize(new Dictionary<string, object>
+            { [".class"] = "MypyFile", ["_fullname"] = "module", ["names"] = new { }, ["path"] = source }));
         File.WriteAllText(Path.Join(cache, "notes.txt"), "keep"); Age(fixture.Path);
+        File.WriteAllText(Path.Join(version, "module.meta.json"), JsonSerializer.Serialize(new
+            { id = "module", path = source, version_id = "1.18.2", mtime = new DateTimeOffset(File.GetLastWriteTimeUtc(source)).ToUnixTimeSeconds(),
+                size = new FileInfo(source).Length, hash = Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(source))).ToLowerInvariant(),
+                interface_hash = Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(Path.Join(version, "module.data.json")))), dependencies = Array.Empty<string>() }));
+        File.SetCreationTimeUtc(Path.Join(version, "module.meta.json"), DateTime.UtcNow.AddDays(-30));
+        File.SetLastWriteTimeUtc(Path.Join(version, "module.meta.json"), DateTime.UtcNow.AddDays(-30));
+        File.SetLastAccessTimeUtc(source, DateTime.UtcNow.AddDays(-30));
+        File.SetLastAccessTimeUtc(Path.Join(version, "module.data.json"), DateTime.UtcNow.AddDays(-30));
         var (scan, findings, policy) = await Inventory(fixture.Path);
         var preview = await new FileOperations().PreviewOptimizationAsync(scan, findings, policy);
-        Assert.Equal(2, preview.Files.Count);
-        Assert.Equal(2, OptimizationExecutor.Execute(preview, policy).DeletedCount);
+        Assert.True(preview.Files.Count == 1, string.Join(" | ", preview.Skipped.Select(s => s.Reason)));
+        Assert.Equal(1, OptimizationExecutor.Execute(preview, policy).DeletedCount);
         Assert.Equal("keep", File.ReadAllText(Path.Join(cache, "notes.txt")));
         Assert.True(File.Exists(Path.Join(cache, "CACHEDIR.TAG")));
     }
@@ -132,7 +143,7 @@ public sealed class OptimizationTests
         Assert.Empty(OptimizationPlanner.Create(scan, [original with { CleanupBlockReason = "managed" }], policy).Files);
         var parent = original with { DirectoryIndex = scan.RootIndex, Path = scan.RootPath, IsBuildOutput = false,
             IsWorktree = true, AutomaticCleanup = null, RuleId = "worktree" };
-        Assert.Empty(OptimizationPlanner.Create(scan, [original, parent], policy).Files);
+        Assert.Single(OptimizationPlanner.Create(scan, [original, parent], policy).Files);
     }
 
     [Fact]
@@ -244,9 +255,11 @@ public sealed class OptimizationTests
     [Fact]
     public async Task AlternateDataStreamsAreKeptEvenWhenTheScanDoesNotInventoryThem()
     {
-        using var fixture = new TestDirectory(); MakePython(fixture.Path, "example");
+        using var fixture = new TestDirectory(); MakePython(fixture.Path, "example"); Age(fixture.Path);
         string file = Path.Join(fixture.Path, "__pycache__", "example.cpython-313.pyc");
-        File.WriteAllText(file + ":notes", "unique attached notes"); Age(fixture.Path);
+        File.WriteAllText(file + ":notes", "unique attached notes");
+        var old = DateTime.UtcNow.AddDays(-30); File.SetCreationTimeUtc(file, old); File.SetLastWriteTimeUtc(file, old); File.SetLastAccessTimeUtc(file, old);
+        Assert.Equal("unique attached notes", File.ReadAllText(file + ":notes"));
         var (scan, findings, policy) = await Inventory(fixture.Path);
         var preview = await new FileOperations().PreviewOptimizationAsync(scan, findings, policy);
         Assert.Empty(preview.Files);
@@ -263,6 +276,8 @@ public sealed class OptimizationTests
         string original = Path.Join(fixture.Path, "original.png"); File.WriteAllText(original, "original");
         await using var extension = new SpaceMaid.Extensions.Photos.PhotosExtension();
         await extension.InitializeAsync(host, default); Age(fixture.Path);
+        GeneratedFileOwnership.Record(cached, "space-maid.photos", [original]);
+        File.SetLastAccessTimeUtc(cached, DateTime.UtcNow.AddDays(-30));
         var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         await using var catalog = new OpportunityCatalog(); catalog.Register("space-maid.photos", extension);
         var findings = catalog.Find(scan); var finding = Assert.Single(findings);
@@ -271,6 +286,7 @@ public sealed class OptimizationTests
         var preview = await new FileOperations().PreviewOptimizationAsync(scan, findings, policy);
         Assert.Equal(cached, Assert.Single(preview.Files).Path);
         Assert.Equal(1, OptimizationExecutor.Execute(preview, policy).DeletedCount);
+        Assert.False(File.Exists(GeneratedFileOwnership.ReceiptPath(cached)));
         Assert.Equal("original", File.ReadAllText(original)); Assert.True(Directory.Exists(host.DataDirectory));
     }
 
@@ -314,12 +330,24 @@ public sealed class OptimizationTests
     {
         File.WriteAllText(Path.Join(root, module + ".py"), "print('fixture')");
         string cache = Directory.CreateDirectory(Path.Join(root, "__pycache__")).FullName;
-        File.WriteAllText(Path.Join(cache, module + ".cpython-313.pyc"), "fixture bytecode");
+        File.WriteAllBytes(Path.Join(cache, module + ".cpython-313.pyc"), new byte[32]);
     }
     internal static void Age(string root)
     {
         BuildActivityFixture.AgeProject(root, 30);
         foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)) File.SetLastAccessTimeUtc(file, DateTime.UtcNow.AddDays(-30));
+        foreach (string file in Directory.EnumerateFiles(root, "*.cpython-313.pyc", SearchOption.AllDirectories))
+        {
+            string source = Path.Join(Path.GetDirectoryName(Path.GetDirectoryName(file)), Path.GetFileName(file).Replace(".cpython-313.pyc", ".py", StringComparison.Ordinal));
+            if (!File.Exists(source)) continue;
+            byte[] data = File.ReadAllBytes(file); if (data.Length < 17) Array.Resize(ref data, 32);
+            BinaryPrimitives.WriteUInt16LittleEndian(data, 3571); data[2] = 13; data[3] = 10;
+            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), 0);
+            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), (uint)new DateTimeOffset(File.GetLastWriteTimeUtc(source)).ToUnixTimeSeconds());
+            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(12), (uint)new FileInfo(source).Length); data[16] = 0xe3;
+            File.WriteAllBytes(file, data); File.SetCreationTimeUtc(file, DateTime.UtcNow.AddDays(-30));
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-30)); File.SetLastAccessTimeUtc(file, DateTime.UtcNow.AddDays(-30));
+        }
     }
     private sealed class Provider(Opportunity finding) : IOpportunityExtension
     { public OpportunityAnalysis Analyze(IOpportunityInventory inventory, CancellationToken token) => new([finding], new([], [])); }

@@ -124,7 +124,12 @@
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
           <DockPanel Margin="0,0,0,10">
             <Button x:Name="MoreButton" Content="&#xE712;" FontFamily="Segoe Fluent Icons" Click="More_Click" DockPanel.Dock="Right" Padding="8,4" MinWidth="32" MinHeight="28" Margin="8,0,0,0" ToolTip="More" AutomationProperties.Name="More options">
-                <Button.ContextMenu><ContextMenu FontFamily="Segoe UI"><MenuItem Header="Updates…" Click="Updates_Click" /></ContextMenu></Button.ContextMenu>
+                <Button.ContextMenu><ContextMenu FontFamily="Segoe UI">
+                    <MenuItem Header="Find duplicates and preserve storage…" Click="Duplicates_Click" />
+                    <MenuItem Header="Worktrees…" Click="WorktreeLifecycle_Click" />
+                    <MenuItem Header="Tool caches…" Click="ToolCaches_Click" />
+                    <Separator/><MenuItem Header="Updates…" Click="Updates_Click" />
+                </ContextMenu></Button.ContextMenu>
             </Button>
             <Button x:Name="UpdateButton" Content="Update available" Click="Updates_Click" DockPanel.Dock="Right" Padding="10,4" MinHeight="28" Margin="8,0,0,0" Visibility="Collapsed" />
             <Button Content="Extensions" Click="Extensions_Click" DockPanel.Dock="Right" Padding="10,4" MinHeight="28" VerticalAlignment="Center" />
@@ -304,7 +309,7 @@
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <ComboBox x:Name="WorktreeRulePicker" SelectedIndex="0" SelectionChanged="WorktreeRule_Changed" Width="250" HorizontalAlignment="Left" AutomationProperties.Name="Worktree cleanup rule"><ComboBoxItem Content="Old and already in upstream" /><ComboBoxItem Content="Old worktrees" /><ComboBoxItem Content="Already in upstream · any age" /></ComboBox>
+                        <ComboBox x:Name="WorktreeRulePicker" SelectedIndex="0" SelectionChanged="WorktreeRule_Changed" Width="250" HorizontalAlignment="Left" AutomationProperties.Name="Worktree cleanup rule"><ComboBoxItem Content="Old and integrated" /><ComboBoxItem Content="Old worktrees" /><ComboBoxItem Content="Integrated · any age" /></ComboBox>
                         <Button x:Name="CheckWorktreesButton" Grid.Column="1" Content="Check worktrees" Click="CheckWorktrees_Click" ToolTip="Check local Git status, integration and observed activity. May read local files; does not fetch remote data." IsEnabled="False" />
                         <Grid Grid.Row="1" Margin="0,16,24,14" MaxWidth="640" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="340" /><ColumnDefinition Width="80" /></Grid.ColumnDefinitions>

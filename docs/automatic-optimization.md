@@ -1,44 +1,54 @@
 # Automatic optimization
 
-The next design priorities and current precision gaps are documented in [storage optimization research](optimization-research.md). Those proposals have not expanded the automatic rules below.
+Scan a location, then choose **Auto optimize**. Select rules, preview exact files and use **Delete previewed files** for one run. Select **Optimize automatically** and **Save settings** for recurring cleanup. All automatic actions are off by default.
 
-Scan a location, then choose **Auto optimize**. Select the generated-file rules you want, preview exact paths and sizes, and use **Delete previewed files** for a single run. To repeat cleanup, select **Optimize automatically** and **Save settings**. Nothing is enabled by default.
+Generated-file eviction permanently deletes verified resources; regeneration replaces undo. Ordinary folder cleanup still uses the Recycle Bin. Keep a file or its containing resource with **Keep file** / **Keep folder**, then save the exclusion for automatic runs.
 
-Optimization permanently deletes matching files to release their storage; it does not use or empty the Recycle Bin. Regeneration replaces undo, so choose rules only where you can recreate the files. Folders and files outside each rule's patterns stay in place; original-photo locations and catalog records are outside the supported cache roots. Mixed build outputs can still contain unique matching files, including handwritten generated-looking source; the research documents this current admission gap. Ordinary cleanup retains its existing Recycle Bin behavior.
+## Producer evidence
 
-The default protects activity within 14 days and limits a run to 500 files and 512 MiB, using the larger of logical and observed allocated size for the byte limit. Each rule also has a minimum age. These are limits per run, not a target to fill. Larger files stay for manual review. Exclude any file or folder by absolute path; excluding a folder also protects its contents.
+Names and age only identify candidates. The host requires a supported producer contract, readable inputs, current native identities and exact content verification before eviction. Unknown formats and incomplete evidence remain protected.
 
-These are the currently detected patterns and expected regeneration under normal producer conditions. They do not prove ownership or rebuildability of every matching file; the research lists the missing admission checks.
-
-| Rule | Detected candidates | Expected regeneration |
+| Resource | Required evidence | Kept |
 | --- | --- | --- |
-| Python bytecode | `.pyc` / `.pyo` inside a recognized `__pycache__`, with matching `.py` metadata available | A compatible Python can recompile readable, valid source; current checks do not establish all these conditions |
-| .NET intermediate caches | `.cache`, `.g.cs`, `.g.i.cs`, `.AssemblyInfo.cs`, `.AssemblyAttributes.cs` inside `obj` beside a project file | The matching producer rebuilds its own intermediates when required inputs and tools remain available |
-| mypy type-check caches | `.data.json` / `.meta.json` inside a recognized `.mypy_cache` | mypy recreates incremental analysis |
-| Photo previews | `.png` inside Space Maid's own `thumbnails-v1` cache | Space Maid renders its generated previews from available originals; unfamiliar copied PNGs have no such producer proof |
+| CPython 3.11–3.14 bytecode | Direct recognized `__pycache__` child, matching magic and code marker, readable source, matching timestamp/size or checked source hash | Orphans, unchecked hashes, mismatches, unsupported versions/layouts |
+| .NET compiler fingerprints | Known SDK project, exact Debug/Release and target-framework/RID layout, 64-character input fingerprint and exact FileListAbsolute producer entry | Generated-looking source, arbitrary `.cache`, binaries and unknown variants |
+| mypy JSON cache | Paired 1.x metadata/data, exact data and source hashes, readable current source and bounded matching dependency records | Metadata records, unfamiliar JSON, unavailable/external dependencies and unsupported formats |
+| Space Maid photo previews | Exact producer receipt binding output SHA-256 to readable unchanged originals | Unfamiliar copied PNGs, missing receipts and unavailable/changed originals |
 
-The next import, build, type check or preview may take longer. Offline originals must become available before their previews can regenerate. Dependencies, downloaded models, worktrees, agent conversations, test evidence, personal settings, tool-managed stores and generic build folders have no automatic rule. A folder name or an old timestamp alone does not make a file disposable.
+These contracts establish resource ownership and the inputs required by the supported cache format. Space Maid does not execute project code, install build tools or guarantee that a future build succeeds. The next import, build, type check or preview may take longer. Files outside these precise contracts remain available for review or content-preserving storage actions.
 
-Automatic runs are attempted after scans and hourly while the configured scanned location remains open. A lightweight five-minute timer checks whether a run is due; disabled mode has no timer. Scans, cleanup, extension jobs and the optimizer's settings window pause automatic runs. There is no Windows background service and no work while the app is closed. Changing the open scan to a different location does not extend the configured scope. Saving settings in another scanned location explicitly changes that scope.
+## Bounds and execution
 
-Before deleting anything, the host rechecks current detection rules, folder coverage and build activity. Even logical-only previews capture native file identities. Execution checks file identity, volume, timestamps, additional streams and current attributes before deleting through the exact file's handle. New, changed, open, read-only, linked, offline, shared or otherwise protected files are kept. Current ancestor leases do not yet provide the intended rename protection, and Python source checks establish metadata availability rather than data readability; see the research's direct checks and priorities. Cancellation stops before the next file; completed deletions remain. Directories are never recursively deleted.
+Defaults retain activity within 14 days, remove at most 500 files / 512 MiB, examine at most 20,000 inventory entries and read at most 32 MiB of proof data. Each metadata/proof phase has a 20-second limit checked between bounded operations. One proof record is limited to 8 MiB and 16 held inputs. Limits are ceilings, not targets. The byte mutation limit uses the larger of logical and observed allocation size.
 
-NTFS inventories refresh affected metadata after deletion. On filesystems providing only logical inventories, a new scan is required to update estimates and resume unattended runs. Displayed removed bytes describe file contents, not a guarantee about free space: hard links, alternate streams, compression and other filesystem behavior affect allocation. Shared files are excluded by a live link-count check.
+A saved cursor advances through the inventory even when early candidates cannot be evicted. Sharing violations receive a short revision-specific cooldown. Partial inspection remains visible and can continue. Scope changes, rule changes and explicit exclusions constrain subsequent work; provider consent includes the producer contract version.
 
-Settings and the last run summary are stored locally in `optimization-settings.json`. Per-file outcomes are recorded under the app's `Logs/Optimization` folder, keeping the latest ten logs. A writable settings file and activity log are required before mutation. Invalid settings disable unattended runs. Failures are not immediately retried; the hourly interval applies to attempts too.
+The host reopens exact files and required inputs, checks volume/file IDs, revisions, contents, streams, link counts and availability, and holds effective directory-list and data leases through the operation. Metadata-only opens cannot substitute for readable source or directory rename protection. Reparse, recall/offline, shared, read-only, encrypted, replaced and otherwise unsupported files stay. Generated-file eviction never recursively deletes directories.
+
+Output verification suppresses access-time updates for its own native handle using Windows' documented `SetFileTime(-1)` sentinel, without restoring timestamps or suppressing other readers. This requires metadata attribute access; if unavailable, the file is kept. Repeated previews therefore do not make their own candidates appear newly used. [Windows per-handle access-time suppression](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfiletime).
+
+Automatic runs are attempted after scans and hourly while the configured location remains open. A five-minute timer checks whether a run is due. Scans, cleanup, extension jobs and storage dialogs pause automatic work. There is no background service or work while the app is closed. Changing the open scan does not extend the saved scope.
+
+NTFS inventories refresh affected metadata after mutation. Logical-only inventories require a new scan before unattended work resumes. Removed logical contents are reported separately from guaranteed physical reclaim. Cancellation stops subsequent files; completed deletions remain.
+
+Settings, cursor, cooldowns and the last summary live in `optimization-settings.json`. Per-file outcomes live under `Logs/Optimization`, retaining the latest ten logs. Writable settings and an activity log are required before mutation. Invalid settings disable unattended work, and attempt throttling applies to failures too.
+
+## Other optimization actions
+
+**More → Duplicates and storage** provides resumable identity-aware hashing and byte comparison, explicit NTFS compression of cold build resources, and capability-gated ReFS block sharing. Both names and payloads remain. See [duplicates and storage](duplicates-and-storage.md) for supported files, bounds and hardware limitations.
+
+**More → Tool cache maintenance** probes installed npm, pnpm, NuGet, Cargo and Gradle using fixed native commands and local metadata. Supported npm 9–11 verification and pnpm 9–10 pruning require a fresh plan and explicit confirmation. The plan binds the launcher/version and configured cache root, shows the exact command and warns about later download/private-feed costs. Commands run with bounded output/time in a neutral guarded directory; project scripts, package installs and project evaluation are excluded. Unsupported versions, wrappers or roots are protected. NuGet selective eviction and Cargo/Gradle project-cache deletion remain unavailable when the tool cannot prove a safe selective action. Old age and a lockfile alone do not authorize package removal.
+
+**More → Managed worktrees** separately checks upstream retention, an explicitly selected integration reference, patch equivalence, ignored/untracked content and operation/activity evidence. Age alone never retires a checkout. Enrollment requires a named branch and a reproducible linked checkout whose exact HEAD is retained in the configured integration target. Default inactivity is 30 days with seven days of recovery grace; automatic retirement is an additional opt-in.
+
+Retirement creates a durable recovery ref and record, then uses Git's worktree move to quarantine on the same volume. Quarantine still occupies space. Recovery can restore the checkout while it remains unchanged. After grace, finalization rechecks Git state and deletes only captured unchanged objects through native handles, retaining branches and shared Git storage. New/changed files, missing coverage, active operations, ignored data and unsupported move conditions stop retirement. No force or broad prune fallback is used. A bounded metadata preflight precedes inventory creation; each assessment has a 20-second deadline. The content ledger admits at most 4,000 objects / 256 MiB within a separate 10-second capture budget; large or ambiguous checkouts require review. Evidence means no observed recent activity, not proof that no external program cares about the checkout.
 
 ## Integrating another part of the app
 
-All parts use the same system: implement the existing `IOpportunityExtension` contract and attach an `AutomaticCleanupRule` to a detected `Opportunity`. The contribution supplies a stable ID, user-facing name, regeneration consequences, exact generated-file suffixes and a minimum age. It does not supply a deletion callback. Keep mixed or uncertain content manual; use `CleanupBlockReason` for storage owned by another tool.
+Attach an `AutomaticCleanupRule` to an `Opportunity` through `IOpportunityExtension`. Rules identify a stable provider, user-facing consequences, narrow suffixes, age and supported `GeneratedResourceKind`. The default kind is `Unverified` and cannot authorize eviction. A new producer format needs host proof support; extensions do not supply arbitrary deletion callbacks.
 
-```csharp
-finding with
-{
-    AutomaticCleanup = new AutomaticCleanupRule(
-        "compiled-preview", "Compiled previews",
-        "The app regenerates previews from available originals.",
-        [".preview-cache"], minimumAgeDays: 7)
-};
-```
+`OptimizationEvidence` separates the action, disposition, owner, producer, variant, restoration cost, required inputs and coverage. Eviction, duplicate discovery, compression, block sharing, native cache maintenance and checkout retirement have separate consequences and admission checks. A protected checkout can still contain an independently verified disposable cache, while Git's shared metadata stays protected.
 
-The host stamps provider ownership and derives per-rule consent from that identity plus a signature of patterns, minimum age, source requirements and regeneration consequences. Enabling one provider does not authorize another. Changing those semantics requires selecting the updated rule again. Providers must positively identify the generated storage; broad suffixes in arbitrary user folders are inappropriate. Shared planning, limits, exclusions, current classification, identity checks, scheduling and execution remain host-owned.
+Use `GeneratedFileOwnership.Record` after a producer successfully writes an owned cache resource. Receipts bind exact contents and source revisions; they do not confer ownership over a directory. Changing patterns, source requirements, contract kind or consequences changes per-rule consent and requires selecting the revised rule again.
+
+The [research and adversarial findings](optimization-research.md) explain the motivating precision failures and primary-source contracts. Runtime validation uses controlled local fixtures; it does not establish real-project rebuildability, actual private-feed availability or ReFS behavior without supported hardware.

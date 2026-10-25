@@ -10,10 +10,12 @@ namespace SpaceMaid.Core.Optimization;
 // through its exclusive handle. Open files, hard links and changed files stay.
 internal static partial class RegenerableFileDeleter
 {
-    internal static unsafe OptimizationFile Capture(OptimizationFile file)
+    internal static unsafe OptimizationFile Capture(OptimizationFile file, ProofBudget budget, CancellationToken token, int keepRecentDays)
     {
         using var handle = Open(OptimizationPolicy.NormalizePath(file.Path), 0x80, 7);
         var basic = Basic(handle);
+        if (basic.Accessed >= DateTime.UtcNow.AddDays(-Math.Max(keepRecentDays, file.Rule.MinimumAgeDays)).ToFileTimeUtc())
+            throw new InvalidOperationException("Recent observed access; kept until a later check.");
         byte* standard = stackalloc byte[24]; Read(handle, 1, standard, 24);
         CheckStreams(handle);
         if ((basic.Attributes & (OptimizationPlanner.UnsafeAttributes | FileAttributes.Directory)) != 0
@@ -24,10 +26,14 @@ internal static partial class RegenerableFileDeleter
         var identity = new FileIdentity(LayoutParser.U64(new(buffer, 24), 8), LayoutParser.U64(new(buffer, 24), 16));
         if (identity == default || file.Identity is { } original && original != identity)
             throw new InvalidOperationException("File identity changed; kept.");
-        return file with { Identity = identity, VolumeSerialNumber = LayoutParser.U64(new(buffer, 24), 0) };
+        using var readable = GeneratedReadLease.Open(file.Path, preserveAccessTime: true);
+        using var proof = GeneratedResourceProof.Verify(file, readable.Stream, readable.Revision, budget, token);
+        readable.Verify();
+        return file with { Identity = identity, VolumeSerialNumber = LayoutParser.U64(new(buffer, 24), 0),
+            Evidence = proof.Evidence, Inputs = proof.Inputs, ContentHash = proof.ContentHash };
     }
 
-    internal static unsafe void Delete(OptimizationFile file, OptimizationPolicy policy, CancellationToken token)
+    internal static unsafe void Delete(OptimizationFile file, OptimizationPolicy policy, CancellationToken token, ProofBudget budget)
     {
         policy = policy.Validate();
         string path = OptimizationPolicy.NormalizePath(file.Path);
@@ -45,8 +51,13 @@ internal static partial class RegenerableFileDeleter
             foreach (string parent in ancestors)
             {
                 token.ThrowIfCancellationRequested();
-                var lease = Open(parent, 0x80, 3); // READ_ATTRIBUTES; share read/write, never rename/delete.
+                using var metadata = Open(parent, 0x80, 7);
+                GeneratedReadLease.CheckLocal(metadata, directory: true);
+                var before = GeneratedReadLease.Inspect(metadata, parent);
+                var lease = Open(parent, 0x81, 3); // READ_ATTRIBUTES | LIST_DIRECTORY: effective no-rename lease.
                 leases.Add(lease);
+                var after = GeneratedReadLease.Inspect(lease, parent);
+                if (before.Volume != after.Volume || before.Identity != after.Identity) throw new IOException("Ancestor changed during lease acquisition.");
                 var info = Basic(lease);
                 if ((info.Attributes & FileAttributes.Directory) == 0
                     || (info.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x40000 | 0x400000))) != 0)
@@ -56,17 +67,9 @@ internal static partial class RegenerableFileDeleter
                     || name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Protected filesystem paths are kept.");
             }
-            using var handle = Open(path, 0x10000 | 0x80, 0); // DELETE | READ_ATTRIBUTES, exclusive.
-            string? requiredSource = file.Rule.RequiredSourcePath(path, file.ContainerPath);
-            if (file.Rule.RequiresPythonSource && requiredSource is null)
-                throw new InvalidOperationException("Unrecognized nested bytecode is kept.");
-            if (requiredSource is { } source)
-            {
-                var sourceLease = Open(source, 0x80, 3); leases.Add(sourceLease);
-                var sourceInfo = Basic(sourceLease);
-                if ((sourceInfo.Attributes & (OptimizationPlanner.UnsafeAttributes | FileAttributes.Directory)) != 0)
-                    throw new InvalidOperationException("The source needed to regenerate this file is unavailable.");
-            }
+            using var handle = Open(path, 0x80010180, 0); // READ | DELETE | READ/WRITE_ATTRIBUTES, exclusive.
+            GeneratedReadLease.SuppressAccessUpdates(handle);
+            GeneratedReadLease.CheckLocal(handle, directory: false);
             var basic = Basic(handle);
             byte* standard = stackalloc byte[24];
             Read(handle, 1, standard, 24);
@@ -80,13 +83,19 @@ internal static partial class RegenerableFileDeleter
             long cutoff = DateTime.UtcNow.AddDays(-Math.Max(policy.KeepRecentDays, file.Rule.MinimumAgeDays)).ToFileTimeUtc();
             // Access time is extra positive evidence when supplied by Windows;
             // it is never used to claim that an old file has not been used.
-            if (basic.Created <= 0 || basic.Written <= 0 || Math.Max(Math.Max(basic.Created, basic.Written), basic.Accessed) >= cutoff)
+            if (basic.Created <= 0 || basic.Written <= 0 || Math.Max(basic.Created, basic.Written) >= cutoff
+                || basic.Accessed >= cutoff)
                 throw new InvalidOperationException("Recent file activity; kept.");
             byte* identity = stackalloc byte[24]; Read(handle, 18, identity, 24);
             var id = new FileIdentity(LayoutParser.U64(new(identity, 24), 8), LayoutParser.U64(new(identity, 24), 16));
             if (id == default || file.Identity is not { } expected || id != expected
                 || file.VolumeSerialNumber is not { } expectedVolume || LayoutParser.U64(new(identity, 24), 0) != expectedVolume)
                 throw new InvalidOperationException("File identity changed; kept.");
+            if (file.Evidence?.Disposition != OptimizationDisposition.Eligible || file.ContentHash is null || file.Inputs.Count == 0)
+                throw new InvalidOperationException("Current producer evidence is required before deletion.");
+            using var borrowed = new SafeFileHandle(handle.DangerousGetHandle(), ownsHandle: false);
+            using var stream = new FileStream(borrowed, FileAccess.Read, 65536, isAsync: false);
+            using var proof = GeneratedResourceProof.Verify(file, stream, GeneratedReadLease.Inspect(handle, path), budget, token);
             token.ThrowIfCancellationRequested();
             byte delete = 1;
             if (!SetFileInformationByHandle(handle, 4, &delete, 1)) throw new Win32Exception(Marshal.GetLastPInvokeError());

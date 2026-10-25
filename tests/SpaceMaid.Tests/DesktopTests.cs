@@ -82,6 +82,7 @@ public sealed partial class DesktopTests
                 window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
                 window.CleanupSettingsPath = Path.Join(fixture.Path, "cleanup-settings.json");
                 window.OptimizationSettingsPath = Path.Join(fixture.Path, "optimization-settings.json");
+                window.WorktreeLifecycleSettingsPath = Path.Join(fixture.Path, "managed-worktrees.json");
                 window.UpdateSettingsPath = Path.Join(fixture.Path, "update-settings.json");
                 window.Operations = new(recycleBins: new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call.")));
                 window.LoadBuildCleanupSettings();
@@ -100,6 +101,10 @@ public sealed partial class DesktopTests
                     foreach (var choice in app.Windows.OfType<StartupWindow>().ToArray()) choice.Close();
                 }));
                 window.Show();
+                // Startup uses a modal choice and asynchronous extension loading.
+                // Begin interactions only once both have finished, so their
+                // focus changes cannot interrupt the path editor assertions.
+                PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
                 SetStage("keeping the build retention preference bounded and persistent");
                 var buildRetention = (TextBox)window.FindName("BuildKeepRecentDaysBox");
                 Assert.Equal("3", buildRetention.Text);
@@ -637,6 +642,12 @@ public sealed partial class DesktopTests
                 string artifactRoot = FindRepository();
                 BeginWorkflow("automatic optimization preview and execution");
                 CheckOptimization(app, artifactRoot);
+                BeginWorkflow("duplicate discovery and storage preservation");
+                CheckDuplicateWorkflow(app, artifactRoot);
+                BeginWorkflow("native tool cache maintenance");
+                CheckToolCaches(app, artifactRoot);
+                BeginWorkflow("managed worktree lifecycle");
+                CheckWorktreeLifecycle(app, artifactRoot);
                 var recyclePreview = new RecycleFolderWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
 #pragma warning disable WPF0001 // Exercise the same Fluent theme through its experimental C# API in this smoke test only.
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })

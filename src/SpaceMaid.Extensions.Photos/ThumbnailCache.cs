@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Media.Imaging;
+using SpaceMaid.Core.Optimization;
 using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.Extensions.Photos;
@@ -11,6 +12,7 @@ internal sealed class ThumbnailCache(IExtensionHost host)
     internal const long MemoryLimit = 64L * 1024 * 1024;
     internal const long DiskLimit = 512L * 1024 * 1024;
     internal const int Dimensions = 160;
+    private const string Owner = "space-maid.photos";
     private readonly object _gate = new();
     private readonly SemaphoreSlim _diskGate = new(1, 1);
     private readonly Dictionary<string, (BitmapSource Image, long Bytes, long Use)> _memory = new(StringComparer.Ordinal);
@@ -82,21 +84,26 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                     }
                 }
                 var cachePath = Path.Join(_directory, key + ".png");
-                BitmapSource? bitmap = null; var diskHit = false;
+                BitmapSource? bitmap = null; var diskHit = false; var unfamiliarCollision = false;
                 await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
                 try
                 {
                     Directory.CreateDirectory(_directory);
                     if (File.Exists(cachePath))
                     {
+                        var owned = false;
                         try
                         {
-                            using var cached = File.OpenRead(cachePath); bitmap = Decode(cached); diskHit = true;
-                            File.SetLastWriteTimeUtc(cachePath, DateTime.UtcNow);
+                            using (var cached = GeneratedFileOwnership.OpenOwned(cachePath, Owner, [row.Path]))
+                            { owned = true; bitmap = Decode(cached.Stream); cached.Verify(); diskHit = true; }
+                            GeneratedFileOwnership.TryTouchOwned(cachePath, Owner);
                         }
-                        catch (Exception error) when (error is IOException or FormatException or NotSupportedException or System.Runtime.InteropServices.COMException)
+                        catch (Exception error) when (CacheFailure(error))
                         {
-                            File.Delete(cachePath);
+                            // A cache-key-shaped name is not evidence of ownership.
+                            // Corrupt owned bytes can be removed only through their receipt.
+                            bitmap = null;
+                            unfamiliarCollision = !owned || !GeneratedFileOwnership.TryDeleteOwned(cachePath, Owner, context.Cancellation).OutputRemoved;
                             _diskBytes = null;
                         }
                     }
@@ -112,24 +119,25 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                     try
                     {
                         InitializeDisk();
-                        if (!_diskWritesDisabled)
+                        if (!_diskWritesDisabled && !unfamiliarCollision)
                         {
                             var temporary = Path.Join(_directory, key + "." + Guid.NewGuid().ToString("N") + ".tmp");
+                            GeneratedProducedFile? produced = null;
                             try
                             {
-                                using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                                using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                                 {
                                     var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(output);
+                                    produced = GeneratedFileOwnership.CaptureProduced(output, temporary);
                                 }
-                                var priorBytes = File.Exists(cachePath) ? new FileInfo(cachePath).Length : 0;
-                                var newBytes = new FileInfo(temporary).Length;
-                                File.Move(temporary, cachePath, true); _diskBytes += newBytes - priorBytes;
+                                File.Move(temporary, cachePath, overwrite: false); _diskBytes += produced.Revision.Length;
+                                GeneratedFileOwnership.Record(cachePath, Owner, [row.Path], produced);
                             }
-                            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                            catch (Exception error) when (CacheFailure(error))
                             { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-write-failed", new { Error = error.GetType().Name }); }
-                            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                            finally { if (produced is not null) GeneratedFileOwnership.TryDeleteProduced(temporary, produced); }
                             try { EvictDisk(); }
-                            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                            catch (Exception error) when (CacheFailure(error))
                             { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-eviction-failed", new { Error = error.GetType().Name }); }
                         }
                     }
@@ -189,40 +197,54 @@ internal sealed class ThumbnailCache(IExtensionHost host)
             if (bytes <= MemoryLimit) { _memory[key] = (bitmap, bytes, ++_clock); _memoryBytes += bytes; }
         }
     }
+    private static bool CacheFailure(Exception error) => error is IOException or FormatException or UnauthorizedAccessException or NotSupportedException
+        or ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException;
     private void EvictDisk()
+    { if (_diskBytes is null || _diskBytes > DiskLimit) TrimDisk(DiskLimit); }
+    internal void TrimDisk(long limit)
     {
-        // Bound the eviction working set even if a prior cache contains many tiny files.
-        if (_diskBytes <= DiskLimit) return;
-        // The shared optimizer can remove old previews while this cache is idle.
-        _diskBytes = new DirectoryInfo(_directory).EnumerateFiles("*.png").Sum(file => file.Length);
-        if (_diskBytes <= DiskLimit) return;
-        var target = DiskLimit * 9 / 10;
-        while (_diskBytes > target)
+        if (limit <= 0) throw new ArgumentOutOfRangeException(nameof(limit));
+        // One bounded pass. Unfamiliar files may exceed the budget indefinitely;
+        // they must never cause a delete loop or be treated as disposable.
+        var oldest = new PriorityQueue<FileInfo, DateTime>(Comparer<DateTime>.Create((a, b) => b.CompareTo(a)));
+        long bytes = 0; int examined = 0; var complete = true;
+        foreach (var file in new DirectoryInfo(_directory).EnumerateFiles("*.png"))
         {
-            var oldest = new PriorityQueue<FileInfo, DateTime>(Comparer<DateTime>.Create((a, b) => b.CompareTo(a)));
-            foreach (var file in new DirectoryInfo(_directory).EnumerateFiles("*.png"))
-            {
-                oldest.Enqueue(file, file.LastWriteTimeUtc); if (oldest.Count > 128) oldest.Dequeue();
-            }
-            if (oldest.Count == 0) break;
+            if (++examined > 4096) { complete = false; break; }
+            bytes = checked(bytes + file.Length);
+            if (!File.Exists(GeneratedFileOwnership.ReceiptPath(file.FullName))) continue;
+            oldest.Enqueue(file, file.LastWriteTimeUtc); if (oldest.Count > 128) oldest.Dequeue();
+        }
+        _diskBytes = bytes;
+        if (bytes > limit)
+        {
+            long target = limit * 9 / 10, checkedBytes = 0;
             foreach (var item in oldest.UnorderedItems.OrderBy(x => x.Priority))
             {
-                if (_diskBytes <= target) break;
-                var size = item.Element.Length; item.Element.Delete(); _diskBytes -= size;
+                if (_diskBytes <= target || checkedBytes >= 16 * 1024 * 1024) break;
+                checkedBytes += Math.Min(item.Element.Length, 16 * 1024 * 1024);
+                var removed = GeneratedFileOwnership.TryDeleteOwned(item.Element.FullName, Owner);
+                if (removed.OutputRemoved) _diskBytes -= removed.RemovedOutputBytes;
             }
+        }
+        // Prevent further growth when retained/unknown content fills this folder.
+        if (!complete || _diskBytes > limit) _diskWritesDisabled = true;
+        int receipts = 0;
+        const string suffix = ".spacemaid-owner.json";
+        foreach (var receipt in new DirectoryInfo(_directory).EnumerateFiles("*.png" + suffix))
+        {
+            if (++receipts > 128) break;
+            GeneratedFileOwnership.TryRemoveOrphanReceipt(receipt.FullName[..^suffix.Length], Owner);
         }
     }
     private void InitializeDisk()
     {
         if (_diskBytes is not null) return;
-        _diskBytes = 0;
         try
         {
-            foreach (var temporary in new DirectoryInfo(_directory).EnumerateFiles("*.tmp")) temporary.Delete();
-            foreach (var file in new DirectoryInfo(_directory).EnumerateFiles("*.png")) _diskBytes += file.Length;
-            EvictDisk();
+            TrimDisk(DiskLimit);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        catch (Exception error) when (CacheFailure(error))
         { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-unavailable", new { Error = error.GetType().Name }); }
     }
 }

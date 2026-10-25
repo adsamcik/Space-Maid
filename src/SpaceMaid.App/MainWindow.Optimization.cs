@@ -38,7 +38,10 @@ public partial class MainWindow
 
     private void SaveOptimizationPolicy(OptimizationPolicy policy)
     {
-        var settings = _optimizationSettings with { Policy = policy.Validate() };
+        bool reset = _optimizationSettings.Policy.ScopePath != policy.ScopePath
+            || !_optimizationSettings.Policy.EnabledRules.SequenceEqual(policy.EnabledRules);
+        var settings = _optimizationSettings with { Policy = policy.Validate(), Cursor = reset ? 0 : _optimizationSettings.Cursor,
+            Cooldowns = reset ? [] : _optimizationSettings.Cooldowns };
         settings.Save(OptimizationSettingsPath);
         _optimizationSettings = settings; _optimizationSettingsError = null; UpdateOptimizationTimer();
     }
@@ -57,7 +60,8 @@ public partial class MainWindow
     internal async Task TryAutomaticOptimizationAsync()
     {
         var policy = _optimizationSettings.Policy;
-        if (!policy.Enabled || _optimizationSettingsError is not null || _optimizationWindow is not null || !CanRestartForUpdate()
+        if (!policy.Enabled || _optimizationSettingsError is not null || _optimizationWindow is not null || _duplicateWindow is not null
+            || _toolCachesWindow is not null || _worktreeLifecycleWindow is not null || !CanRestartForUpdate()
             || _scanStale || _snapshot is not { } scan || !string.Equals(policy.ScopePath, Path.TrimEndingDirectorySeparator(Path.GetFullPath(scan.RootPath)), StringComparison.OrdinalIgnoreCase)
             || _optimizationSettings.LastRunUtc is { } last && DateTime.UtcNow - last < TimeSpan.FromHours(1)) return;
         try { await StartOptimizationAsync(scan, _rows.Select(row => row.Item).ToArray(), null, policy, _extensionLifetime.Token); }
@@ -90,7 +94,10 @@ public partial class MainWindow
             if (log.FilePath is null || log.Error is not null) throw new IOException("Optimization needs a writable activity log.");
             _optimizationSettings = _optimizationSettings with { LastRunUtc = DateTime.UtcNow, LastLog = log.FilePath };
             _optimizationSettings.Save(OptimizationSettingsPath);
-            preview ??= await Operations.PreviewOptimizationAsync(scan, findings, policy, work.Token);
+            preview ??= await Operations.PreviewOptimizationAsync(scan, findings, policy, work.Token,
+                _optimizationSettings.Cursor, _optimizationSettings.Cooldowns);
+            _optimizationSettings = _optimizationSettings with { Cursor = preview.NextCursor };
+            _optimizationSettings.Save(OptimizationSettingsPath);
             log.Record("optimization-start", new { policy.ScopePath, policy.KeepRecentDays, policy.MaxBytesPerRun, Files = preview.Files.Select(f => f.Path).ToArray() });
             if (log.Error is not null) throw new IOException("Optimization could not write its activity log.");
             var progress = new Progress<OptimizationFileResult>(result =>
@@ -101,7 +108,10 @@ public partial class MainWindow
             string summary = $"Optimization · {result.DeletedCount:N0} files deleted · {SizeText.Format(result.RemovedLogicalBytes)} in file contents removed"
                 + (result.Cancelled ? " · Cancelled" : "")
                 + $" · {result.Files.Count(f => f.Outcome != OptimizationOutcome.Deleted):N0} kept / failed";
-            _optimizationSettings = _optimizationSettings with { LastSummary = summary };
+            _optimizationSettings = _optimizationSettings with { LastSummary = summary,
+                Cooldowns = result.Files.Where(f => f.Cooldown is not null).Select(f => f.Cooldown!)
+                    .Concat(_optimizationSettings.Cooldowns.Where(c => c.RetryAfterUtc > DateTime.UtcNow))
+                    .Where(c => c.Path.Length <= 2048).DistinctBy(c => c.Path, StringComparer.OrdinalIgnoreCase).Take(32).ToArray() };
             _optimizationSettings.Save(OptimizationSettingsPath);
             log.Record("optimization-complete", new { Summary = summary });
             if (!_closing)

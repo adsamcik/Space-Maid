@@ -33,14 +33,16 @@ public static class GitWorktreeGuard
             {
                 var location = new Opportunity(scan.Entry(link).FileIndex, "Linked Git checkout", "Git worktrees", path,
                     scan.Entry(link).LogicalBytes, scan.Entry(link).AllocatedBytes, "", "", "", true);
-                var assessment = await GitWorktreeAnalyzer.AssessAsync(scan, location, token).ConfigureAwait(false);
+                var assessment = policy.IntegrationReference is { } reference
+                    ? await GitWorktreeAnalyzer.AssessAsync(scan, location, reference, token).ConfigureAwait(false)
+                    : await GitWorktreeAnalyzer.AssessAsync(scan, location, token).ConfigureAwait(false);
                 diagnostic?.Invoke("worktree-cleanup-recheck", assessment);
                 if (!policy.Matches(assessment, DateTime.UtcNow))
                 {
                     string condition = policy.Mode switch
                     {
                         WorktreeCleanupMode.Old => $"clean with observed activity at least {policy.InactiveDays} days ago",
-                        WorktreeCleanupMode.Integrated => "clean and fully integrated in the local upstream reference",
+                        WorktreeCleanupMode.Integrated => "clean and fully integrated in the selected integration reference",
                         _ => $"clean, locally integrated and with observed activity at least {policy.InactiveDays} days ago"
                     };
                     reason = $"The captured cleanup condition was not verified: {condition}. {assessment.Status}: {assessment.Reason}";

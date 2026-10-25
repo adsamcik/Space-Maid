@@ -1,0 +1,53 @@
+<Window x:Class="SpaceMaid.App.CacheMaintenanceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tool caches" Width="960" Height="730" MinWidth="740" MinHeight="620"
+        WindowStartupLocation="CenterOwner" Closing="Window_Closing">
+    <Grid Margin="20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="2*"/><RowDefinition Height="3*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,12">
+            <Button x:Name="RefreshButton" Content="Inspect" Click="Refresh_Click" DockPanel.Dock="Right" Padding="14,5" Margin="10,0,0,0"/>
+            <TextBox x:Name="SearchBox" TextChanged="Search_Changed" DockPanel.Dock="Right" Width="180" VerticalContentAlignment="Center" AutomationProperties.Name="Find a tool cache"/>
+            <TextBlock Text="Filter" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="10,0,8,0"/>
+            <StackPanel><TextBlock Text="Tool caches" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="Review native maintenance and the resources each tool owns." Margin="0,4,8,0" TextWrapping="Wrap" Opacity="0.7"/></StackPanel>
+        </DockPanel>
+        <DataGrid x:Name="CacheList" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None" SelectionChanged="Cache_Changed">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Tool" Binding="{Binding Name}" Width="85"/>
+                <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="115"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="195"/>
+                <DataGridTextColumn Header="Configured or observed location" Binding="{Binding Root}" Width="*">
+                    <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Root}"/></Style></DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+            <StackPanel>
+                <TextBlock x:Name="DetailHeading" FontSize="16" FontWeight="SemiBold"/>
+                <TextBlock x:Name="RootText" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                <TextBlock x:Name="DetailText" TextWrapping="Wrap" Margin="0,0,0,7"/>
+                <TextBlock x:Name="RestoreText" TextWrapping="Wrap" Opacity="0.75" Margin="0,0,0,8"/>
+                <DataGrid x:Name="ResourceList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="None" MaxHeight="180" Visibility="Collapsed">
+                    <DataGrid.Columns><DataGridTextColumn Header="Resource" Binding="{Binding Name}" Width="170"/><DataGridTextColumn Header="Location" Binding="{Binding Path}" Width="*">
+                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Evidence}"/></Style></DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn></DataGrid.Columns>
+                </DataGrid>
+                <Expander Header="Native command and report" Margin="0,6,0,0">
+                    <StackPanel>
+                        <TextBox x:Name="CommandText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" AutomationProperties.Name="Native maintenance command"/>
+                        <TextBox x:Name="ReportText" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="240" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent" AutomationProperties.Name="Native tool report"/>
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </ScrollViewer>
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TextBlock x:Name="StatusText" Text="Inspect tools to see their configured locations and supported maintenance." TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Margin="0,0,0,10"/>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="ReviewButton" Content="Review maintenance…" Click="Review_Click" IsEnabled="False" Padding="14,6" Margin="0,0,8,0"/>
+                <Button x:Name="CloseButton" Content="Close" Click="Close_Click" Padding="14,6"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

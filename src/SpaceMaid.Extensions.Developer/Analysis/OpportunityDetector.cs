@@ -57,12 +57,14 @@ public static partial class OpportunityDetector
         _ => null
     };
     private static readonly AutomaticCleanupRule PythonBytecode = new("python-bytecode", "Python bytecode",
-        "Python recreates bytecode from its matching source file. The next import may be slower.", [".pyc", ".pyo"], requiresPythonSource: true);
+        "Python recreates validated bytecode from readable matching source. The next import may be slower.", [".pyc"], requiresPythonSource: true,
+        resourceKind: GeneratedResourceKind.PythonBytecode);
     private static readonly AutomaticCleanupRule DotNetIntermediate = new("dotnet-intermediate", ".NET intermediate caches",
-        "dotnet build regenerates compiler caches and generated C# files. The next build may be slower.",
-        [".cache", ".g.cs", ".g.i.cs", ".AssemblyInfo.cs", ".AssemblyAttributes.cs"]);
+        "MSBuild recreates recorded compiler input hashes. Generated source and other build outputs are kept.",
+        [".CoreCompileInputs.cache", ".AssemblyInfoInputs.cache"], resourceKind: GeneratedResourceKind.DotNetCompilerCache);
     private static readonly AutomaticCleanupRule MypyCache = new("mypy-incremental", "mypy type-check caches",
-        "mypy regenerates incremental type-check data. The next check may be slower.", [".data.json", ".meta.json"]);
+        "mypy regenerates verified incremental type-check data. Producer metadata is kept; the next check may be slower.", [".data.json"],
+        resourceKind: GeneratedResourceKind.MypyIncremental);
 
     private static Rule? Classify(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name, MarkerEvidence evidence)
     {

@@ -15,6 +15,14 @@ public sealed record GitWorktreeAssessment(string Path, bool Recommended, string
     DateTime? LastReflogActivityUtc = null, string? CommonGitDirectory = null,
     bool VerifiedClean = false, bool Integrated = false, bool HasActivityEvidence = false, bool IsDetached = false)
 {
+    public string? Head { get; init; }
+    public string? UpstreamReference { get; init; }
+    public bool RetainedOnUpstream { get; init; }
+    public bool IntegrationTargetConfirmed { get; init; }
+    public bool PatchEquivalent { get; init; }
+    public bool HasIgnoredFiles { get; init; }
+    public bool OperationInProgress { get; init; }
+    public IReadOnlyList<string> IgnoredPaths { get; init; } = [];
     public DateTime? LastActivityUtc => HasActivityEvidence && LastObservedModificationUtc is { } modified
         && LastReflogActivityUtc is { } reflog ? (modified >= reflog ? modified : reflog) : null;
 }
@@ -31,10 +39,17 @@ public static partial class GitWorktreeAnalyzer
     public static Task<GitWorktreeAssessment> AssessAsync(ScanSnapshot scan, Opportunity location, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(location);
-        return Task.Run(() => AssessCoreAsync(scan, location, token), token);
+        return Task.Run(() => AssessCoreAsync(scan, location, null, token), token);
     }
 
-    private static async Task<GitWorktreeAssessment> AssessCoreAsync(ScanSnapshot scan, Opportunity location, CancellationToken token)
+    public static Task<GitWorktreeAssessment> AssessAsync(ScanSnapshot scan, Opportunity location, string integrationReference,
+        CancellationToken token = default)
+    {
+        if (!ValidIntegrationReference(integrationReference)) throw new ArgumentException("Choose a full local branch or remote-tracking reference.", nameof(integrationReference));
+        return Task.Run(() => AssessCoreAsync(scan, location, integrationReference, token), token);
+    }
+
+    private static async Task<GitWorktreeAssessment> AssessCoreAsync(ScanSnapshot scan, Opportunity location, string? approvedTarget, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -42,6 +57,9 @@ public static partial class GitWorktreeAnalyzer
         string path = location.Path; string? branch = null, target = null, commonPath = null;
         DateTime? modified = null, reflog = null;
         bool verifiedClean = false, integrated = false, hasActivityEvidence = false, detached = false;
+        string? headId = null, upstreamRef = null;
+        bool retainedUpstream = false, patchEquivalent = false, operation = false;
+        string[] ignoredPaths = [];
         try
         {
             path = Normalize(path);
@@ -70,10 +88,13 @@ public static partial class GitWorktreeAnalyzer
             guard.File(Path.Join(gitDir, "gitdir"));
             if (!Normalize(ReadSmall(Path.Join(gitDir, "gitdir")).Trim()).Equals(pointer, StringComparison.Ordinal))
                 return Result("Needs review", "The linked-worktree registration does not point back to this exact folder.");
-            guard.Tree(common, rejectNestedGit: false);
             string config = Path.Join(common, "config");
             guard.File(config); // Mandatory and held before any Git invocation.
             RejectUnsafeConfig(config);
+            guard.File(Path.Join(gitDir, "HEAD"));
+            guard.File(Path.Join(gitDir, "index"));
+            operation = OperationActive(gitDir, common);
+            if (operation) return Result("Git operation in progress", "A merge, rebase, cherry-pick, bisect or Git lock is present. Finish it before retiring the checkout.");
             if (File.Exists(Path.Join(common, "objects", "info", "alternates")))
                 return Result("Needs review", "Alternate Git object storage cannot be verified by this bounded local check.");
             var git = new GitReader(path, budget.Token);
@@ -113,17 +134,27 @@ public static partial class GitWorktreeAnalyzer
             var statusTask = git.Run("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all");
             var headTask = git.Run("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}");
             var upstreamTask = git.Run("rev-parse", "--symbolic-full-name", "@{upstream}");
-            await Task.WhenAll(statusTask, headTask, upstreamTask).ConfigureAwait(false);
+            var ignoredTask = git.Run("ls-files", "--others", "--ignored", "--exclude-standard", "-z");
+            await Task.WhenAll(statusTask, headTask, upstreamTask, ignoredTask).ConfigureAwait(false);
             var status = statusTask.Result;
             if (status.Code != 0) return Result("Needs review", "Git could not establish a clean worktree.");
             if (status.Output.Length != 0) return Result("Local changes", "Tracked changes or untracked files are present. Preserve this work before cleanup.");
             var head = headTask.Result;
             if (head.Code != 0 || !IsObjectId(head.Output.Trim()) || registration.GetValueOrDefault("HEAD") != head.Output.Trim())
                 return Result("Needs review", "The worktree HEAD changed or is not fully available locally.");
-            string integrationReason = "No configured upstream or single locally cached remote default is available. No fetch was performed.";
+            headId = head.Output.Trim();
+            if (ignoredTask.Result.Code != 0) return Result("Needs review", "Ignored local content could not be classified.");
+            ignoredPaths = ignoredTask.Result.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            string integrationReason = "No approved integration reference or single locally cached remote default is available. No fetch was performed.";
             var upstream = upstreamTask.Result;
-            if (upstream.Code == 0) target = upstream.Output.Trim();
-            else
+            if (upstream.Code == 0 && ValidIntegrationReference(upstream.Output.Trim()))
+            {
+                upstreamRef = upstream.Output.Trim();
+                var retained = await git.Run("merge-base", "--is-ancestor", headId, upstreamRef).ConfigureAwait(false);
+                retainedUpstream = retained.Code == 0;
+            }
+            target = approvedTarget;
+            if (target is null)
             {
                 var defaults = await git.Run("for-each-ref", "--format=%(refname)%00%(symref)", "refs/remotes/");
                 var candidates = defaults.Code != 0 ? [] : defaults.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
@@ -144,7 +175,7 @@ public static partial class GitWorktreeAnalyzer
             }
             GitResult? destination = null;
             bool unmerged = false;
-            if (target == fullBranch) integrationReason = "The upstream points to this same branch; an independent integration reference is required.";
+            if (target == fullBranch) integrationReason = "The selected target is this same branch; choose an independent integration reference.";
             else if (target is not null && (target.StartsWith("refs/remotes/", StringComparison.Ordinal) || target.StartsWith("refs/heads/", StringComparison.Ordinal)))
             {
                 var resolved = await git.Run("rev-parse", "--verify", "--end-of-options", target + "^{commit}");
@@ -153,6 +184,12 @@ public static partial class GitWorktreeAnalyzer
                     destination = resolved;
                     var ancestry = await git.Run("merge-base", "--is-ancestor", head.Output.Trim(), destination.Output.Trim());
                     integrated = ancestry.Code == 0; unmerged = ancestry.Code == 1;
+                    if (unmerged)
+                    {
+                        var equivalent = await git.Run("cherry", target, headId).ConfigureAwait(false);
+                        var rows = equivalent.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        patchEquivalent = equivalent.Code == 0 && rows.Length > 0 && rows.All(row => row.StartsWith("- ", StringComparison.Ordinal));
+                    }
                     integrationReason = unmerged ? detached
                         ? "This detached HEAD has commits outside the local integration branch. Create a branch or integrate the work before cleanup."
                         : "HEAD is not fully contained in the selected local integration reference. Its branch and shared Git storage will be retained."
@@ -183,7 +220,7 @@ public static partial class GitWorktreeAnalyzer
                 }
             }
             captured.ValidateCurrent();
-            guard.Tree(common, rejectNestedGit: false);
+            if (OperationActive(gitDir, common)) { operation = true; return Result("Git operation in progress", "Git operation state changed during inspection."); }
             liveModified = guard.Tree(path, rejectNestedGit: true);
             completeModificationEvidence &= liveModified is not null;
             modified = Max(modified, liveModified);
@@ -195,8 +232,11 @@ public static partial class GitWorktreeAnalyzer
             var finalBranchTask = git.Run("symbolic-ref", "--quiet", "HEAD");
             var finalTargetTask = destination is null ? null : git.Run("rev-parse", "--verify", "--end-of-options", target + "^{commit}");
             var finalRegistrationTask = git.Run("worktree", "list", "--porcelain", "-z");
+            var finalIgnoredTask = git.Run("ls-files", "--others", "--ignored", "--exclude-standard", "-z");
             await Task.WhenAll(finalStatusTask, finalHeadTask, finalBranchTask,
-                (Task?)finalTargetTask ?? Task.CompletedTask, finalRegistrationTask).ConfigureAwait(false);
+                (Task?)finalTargetTask ?? Task.CompletedTask, finalRegistrationTask, finalIgnoredTask).ConfigureAwait(false);
+            if (finalIgnoredTask.Result.Code != 0 || finalIgnoredTask.Result.Output != ignoredTask.Result.Output)
+                return Result("Needs review", "Ignored local content changed during inspection.");
             var finalStatus = finalStatusTask.Result;
             if (finalStatus.Code != 0) return Result("Needs review", "Git could not re-establish a clean worktree after inspection.");
             if (finalStatus.Output.Length != 0) return Result("Local changes", "Tracked changes or untracked files are present. Preserve this work before cleanup.");
@@ -213,6 +253,8 @@ public static partial class GitWorktreeAnalyzer
             captured.ValidateCurrent();
             verifiedClean = true;
             hasActivityEvidence = completeModificationEvidence && reflog is not null;
+            if (ignoredPaths.Length > 0) return Result("Ignored local content", "Ignored files may contain unique local data. Preserve or classify them before retiring this checkout.");
+            if (patchEquivalent) return Result("Patch-equivalent changes", "Equivalent patches exist in the selected target, but unique commit history is retained for review.");
             if (!integrated) return Result(unmerged ? "Unmerged commits" : "No integration evidence", integrationReason);
             if (!hasActivityEvidence) return Result("Activity unavailable", "Clean and integrated locally, but modification or HEAD/branch reflog activity evidence is unavailable. Commit dates do not establish inactivity.");
             if (Max(modified, reflog) > DateTime.UtcNow.AddDays(-InactiveDays))
@@ -229,7 +271,10 @@ public static partial class GitWorktreeAnalyzer
         GitWorktreeAssessment Result(string status, string reason)
         {
             var assessment = new GitWorktreeAssessment(path, false, status, reason, branch, target, modified, reflog, commonPath,
-                verifiedClean, integrated, hasActivityEvidence, detached);
+                verifiedClean, integrated, hasActivityEvidence, detached)
+            { Head = headId, UpstreamReference = upstreamRef, RetainedOnUpstream = retainedUpstream,
+                IntegrationTargetConfirmed = approvedTarget is not null, PatchEquivalent = patchEquivalent,
+                HasIgnoredFiles = ignoredPaths.Length > 0, IgnoredPaths = Array.AsReadOnly(ignoredPaths.Take(128).ToArray()), OperationInProgress = operation };
             return assessment with { Recommended = WorktreeCleanupPolicy.Default.Matches(assessment, DateTime.UtcNow) };
         }
     }
@@ -244,8 +289,8 @@ public static partial class GitWorktreeAnalyzer
             var file = scan.Records[index];
             if ((scan.EntryFlags[index] & 14) != 0) return null;
             if (((uint)file.Attributes & (0x400u | 0x1000u | 0x40000u | 0x400000u)) != 0) throw new IOException("Cloud-only or reparse entries require manual review without Git content reads.");
-            if (file.LastWriteFileTime <= 0) return null;
-            latest = Max(latest, DateTime.FromFileTimeUtc(file.LastWriteFileTime));
+            if (file.LastWriteFileTime <= 0 || file.CreationFileTime <= 0) return null;
+            latest = Max(latest, DateTime.FromFileTimeUtc(Math.Max(file.LastWriteFileTime, file.CreationFileTime)));
             if (file.IsDirectory) foreach (int link in scan.Children(index))
             {
                 token.ThrowIfCancellationRequested();
@@ -300,6 +345,13 @@ public static partial class GitWorktreeAnalyzer
         return DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
     }
     private static bool IsObjectId(string value) => value.Length is 40 or 64 && value.All(char.IsAsciiHexDigit);
+    internal static bool ValidIntegrationReference(string? value) => value is { Length: > 11 and < 512 }
+        && (value.StartsWith("refs/heads/", StringComparison.Ordinal) || value.StartsWith("refs/remotes/", StringComparison.Ordinal))
+        && !value.EndsWith("/HEAD", StringComparison.Ordinal) && !value.Contains("..", StringComparison.Ordinal)
+        && !value.Contains("@{", StringComparison.Ordinal) && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '/' or '-' or '_' or '.');
+    private static bool OperationActive(string gitDir, string common) => new[] { "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
+        "BISECT_START", "rebase-merge", "rebase-apply", "sequencer", "index.lock", "HEAD.lock" }.Any(name => File.Exists(Path.Join(gitDir, name)) || Directory.Exists(Path.Join(gitDir, name)))
+        || File.Exists(Path.Join(common, "packed-refs.lock")) || File.Exists(Path.Join(common, "config.lock"));
     private static DateTime? Max(DateTime? a, DateTime? b) => a is null ? b : b is null || a >= b ? a : b;
     private static string Normalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     private static bool Contains(string root, string path) => path.Equals(root, StringComparison.OrdinalIgnoreCase)
@@ -364,7 +416,7 @@ public static partial class GitWorktreeAnalyzer
         }
         private static SafeFileHandle Open(string path, uint access)
         {
-            var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), access, 1, 0, 3,
+            var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), access, (access & 0x80000000u) != 0 ? 1u : 3u, 0, 3,
                 NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint | 0x00100000, 0);
             if (!handle.IsInvalid) return handle;
             int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
@@ -383,7 +435,7 @@ public static partial class GitWorktreeAnalyzer
             long modified = LayoutParser.I64(new(info, 40), 16);
             long created = LayoutParser.I64(new(info, 40), 0);
             if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, info, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
-            return new((attributes & (uint)FileAttributes.Directory) != 0, modified > 0 ? DateTime.FromFileTimeUtc(modified) : null,
+            return new((attributes & (uint)FileAttributes.Directory) != 0, modified > 0 && created > 0 ? DateTime.FromFileTimeUtc(Math.Max(modified, created)) : null,
                 created, Convert.ToHexString(new ReadOnlySpan<byte>(info, 24)));
         }
         private static bool RecognizesProvider(int result) => result >= 0 || result == unchecked((int)0x800700EA);
@@ -391,8 +443,8 @@ public static partial class GitWorktreeAnalyzer
         public void Dispose() { foreach (var handle in _handles) handle.Dispose(); }
     }
 
-    private sealed record GitResult(int Code, string Output);
-    private sealed class GitReader(string path, CancellationToken token)
+    internal sealed record GitResult(int Code, string Output, string Error = "");
+    internal sealed class GitReader(string path, CancellationToken token)
     {
         public async Task<GitResult> Run(params string[] arguments)
         {
@@ -414,7 +466,7 @@ public static partial class GitWorktreeAnalyzer
             {
                 var stdout = ReadBounded(process.StandardOutput, token); var stderr = ReadBounded(process.StandardError, token);
                 await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(token)).ConfigureAwait(false);
-                return new(process.ExitCode, stdout.Result);
+                return new(process.ExitCode, stdout.Result, stderr.Result);
             }
             finally
             {
