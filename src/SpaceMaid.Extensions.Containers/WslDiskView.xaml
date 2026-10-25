@@ -1,0 +1,26 @@
+<UserControl x:Class="SpaceMaid.Extensions.Containers.WslDiskView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="AddButton" Content="Add VHDX" Click="Add_Click" Margin="0,0,8,0" />
+                <Button x:Name="FindButton" Content="Find WSL disks" Click="Find_Click" />
+            </StackPanel>
+            <TextBlock Text="Virtual disk compaction" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </DockPanel>
+        <TextBlock x:Name="StatusText" Grid.Row="1" Text="Find registered WSL2 disks, or add a Docker/custom VHDX. Host file length is not reclaimable space." TextWrapping="Wrap" Margin="0,8" AutomationProperties.LiveSetting="Polite" />
+        <DataGrid x:Name="DiskList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" SelectionChanged="Selection_Changed" EnableRowVirtualization="True" HeadersVisibility="Column" RowHeight="42" AutomationProperties.Name="Virtual disks available for compaction preview">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Owner" Binding="{Binding Owner}" Width="170" />
+                <DataGridTextColumn Header="Exact disk file" Binding="{Binding Path}" Width="*" MinWidth="220" />
+                <DataGridTextColumn Header="File length" Binding="{Binding Size}" Width="110" />
+            </DataGrid.Columns>
+        </DataGrid>
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBlock Text="Compaction preserves guest files and virtual capacity, but modifies the backing disk in place. Back up first and close its owner. Fixed, differencing, attached, sparse, compressed or encrypted disks are kept. Savings are unknown until Windows finishes." TextWrapping="Wrap" />
+            <Button x:Name="PreviewButton" Content="Preview compaction…" Click="Preview_Click" IsEnabled="False" HorizontalAlignment="Left" Margin="0,8,0,0" />
+        </StackPanel>
+    </Grid>
+</UserControl>

@@ -27,7 +27,7 @@ public sealed partial class DesktopTests
         ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var cards = (ItemsControl)window.FindName("CleanupGroupCards");
         var models = Assert.Single(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "AI models & data");
-        Assert.Equal(3, models.Children.Count); Assert.False(models.CanSelectGroup);
+        Assert.Equal(3, models.Children.Count); Assert.True(models.CanSelectGroup);
         Assert.Contains(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "Agent file checkpoints");
         ((TextBlock)window.FindName("StatusText")).Text = "Illustrative inventory · AI tools and local models";
         ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
@@ -51,7 +51,7 @@ public sealed partial class DesktopTests
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var list = (ListBox)window.FindName("OpportunityGrid");
         var row = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
-        Assert.Equal("Manage in owning tool", row.Review); Assert.Contains("ollama list", row.Item.SuggestedAction);
+        Assert.Equal("Manage in owning tool", row.Review); Assert.Contains("AI models", row.Item.SuggestedAction);
         Assert.False(row.CanSelect); Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
         row.Selected = true; Assert.False(row.Selected);
         Assert.Contains("Space Maid keeps", row.Item.Caution);

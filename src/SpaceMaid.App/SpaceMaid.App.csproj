@@ -19,6 +19,7 @@
     <BundledExtension Include="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" ExtensionId="space-maid.apps" />
     <BundledExtension Include="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" ExtensionId="space-maid.developer" />
     <BundledExtension Include="../SpaceMaid.Extensions.Containers/SpaceMaid.Extensions.Containers.csproj" ExtensionId="space-maid.containers" />
+    <BundledExtension Include="../SpaceMaid.Extensions.Models/SpaceMaid.Extensions.Models.csproj" ExtensionId="space-maid.models" />
     <BundledExtension Include="../SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" ExtensionId="space-maid.assistant" />
     <Resource Include="../../assets/branding/space-maid-visor.ico" Link="Assets/SpaceMaid.ico" />
     <Content Include="../../LICENSE;../../THIRD_PARTY_NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

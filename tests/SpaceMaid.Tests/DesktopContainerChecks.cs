@@ -38,13 +38,13 @@ public sealed partial class DesktopTests
         {
             workflow.Show();
             var list = (DataGrid)view.FindName("StorageList"); var picker = (ComboBox)view.FindName("KindPicker");
-            var copy = (Button)view.FindName("CopyButton"); var command = (TextBox)view.FindName("CommandText");
-            Assert.Empty(list.Items); Assert.False(copy.IsEnabled);
+            var cleanup = (Button)view.FindName("CleanupButton");
+            Assert.Empty(list.Items); Assert.False(cleanup.IsEnabled);
             int calls = 0; SetInspector(_ => { calls++; return completed; });
             var inspect = Inspect(); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
             Assert.Equal(1, calls); Assert.Equal(2, list.Items.Count);
             list.SelectedItem = list.Items.Cast<object>().Single(item => item.GetType().GetProperty("State")!.GetValue(item) as string == "exited");
-            Assert.True(copy.IsEnabled); Assert.Contains(" container rm ", command.Text);
+            Assert.True(cleanup.IsEnabled);
             Assert.Contains("agent work", ((TextBlock)view.FindName("DetailsText")).Text);
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
@@ -55,28 +55,91 @@ public sealed partial class DesktopTests
 #pragma warning restore WPF0001
             Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "containers-compact.png"), 740, 590);
             picker.SelectedItem = "Images";
-            list.SelectedItem = list.Items.Cast<object>().Single(item => item.GetType().GetProperty("CanCopy")!.GetValue(item) is true);
-            Assert.NotEmpty(command.Text);
+            list.SelectedItem = list.Items.Cast<object>().Single(item => item.GetType().GetProperty("CanClean")!.GetValue(item) is true);
+            Assert.True(cleanup.IsEnabled);
             picker.SelectedItem = "Build cache";
-            list.SelectedItem = list.Items.Cast<object>().Single(item => item.GetType().GetProperty("CanCopy")!.GetValue(item) is true);
-            Assert.Equal("Copy builder cleanup command", copy.Content);
-            Assert.Contains("builder-wide", ((TextBlock)view.FindName("DetailsText")).Text);
-            picker.SelectedItem = "Volumes"; list.SelectedItem = list.Items[0]; Assert.False(copy.IsEnabled); Assert.Empty(command.Text);
-            Assert.Contains("no volume deletion", ((TextBlock)view.FindName("DetailsText")).Text);
+            list.SelectedItem = list.Items.Cast<object>().Single(item => item.GetType().GetProperty("CanClean")!.GetValue(item) is true);
+            Assert.True(cleanup.IsEnabled);
+            Assert.Contains("exact cache record", ((TextBlock)view.FindName("DetailsText")).Text);
+            picker.SelectedItem = "Volumes"; list.SelectedItem = list.Items[0]; Assert.True(cleanup.IsEnabled);
+            Assert.Contains("Permanently deleting", ((TextBlock)view.FindName("DetailsText")).Text);
             ((TextBox)view.FindName("SearchBox")).Text = "missing"; Assert.Empty(list.Items);
             ((TextBox)view.FindName("SearchBox")).Text = ""; Assert.Single(list.Items.Cast<object>());
+            CheckDockerConfirmation();
             var tabs = Descendants(view).OfType<TabControl>().Single(); tabs.SelectedIndex = 1;
-            Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "containers-wsl-guide.png"), 1050, 720);
+            var disks = Assert.IsAssignableFrom<UserControl>(((ContentControl)view.FindName("WslContent")).Content);
+            CheckWslCompaction(disks, artifactRoot);
+            Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "containers-wsl-disks.png"), 1050, 720);
             tabs.SelectedIndex = 0;
             object failed = typeof(Task).GetMethods().Single(method => method.Name == "FromException" && method.IsGenericMethod)
                 .MakeGenericMethod(resultType).Invoke(null, [new IOException("Owned unavailable-engine fixture")])!;
             SetInspector(_ => failed); inspect = Inspect(); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
-            Assert.Empty(list.Items); Assert.False(copy.IsEnabled); Assert.Empty(command.Text);
+            Assert.Empty(list.Items); Assert.False(cleanup.IsEnabled);
             Assert.Contains("retry", ((TextBlock)view.FindName("StatusText")).Text);
             SetInspector(token => typeof(Task).GetMethods().Single(method => method.Name == "FromCanceled" && method.IsGenericMethod)
                 .MakeGenericMethod(resultType).Invoke(null, [new CancellationToken(true)])!);
             inspect = Inspect(); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
-            Assert.False(copy.IsEnabled); Assert.True(((Button)view.FindName("InspectButton")).IsEnabled);
+            Assert.False(cleanup.IsEnabled); Assert.True(((Button)view.FindName("InspectButton")).IsEnabled);
+
+            void CheckDockerConfirmation()
+            {
+                int executed = 0;
+                var planType = type.Assembly.GetType("SpaceMaid.Extensions.Containers.DockerCleanupPlan")!;
+                var result = type.Assembly.GetType("SpaceMaid.Extensions.Containers.DockerCleanupResult")!;
+                object TaskFor(Type valueType, object value) => typeof(Task).GetMethods().Single(method => method.Name == "FromResult")
+                    .MakeGenericMethod(valueType).Invoke(null, [value])!;
+                void SetFunction(string propertyName, Func<object, CancellationToken, object> provider)
+                {
+                    var property = type.GetProperty(propertyName, BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    var signature = property.PropertyType.GetMethod("Invoke")!;
+                    var target = Expression.Parameter(signature.GetParameters()[0].ParameterType); var token = Expression.Parameter(typeof(CancellationToken));
+                    property.SetValue(view, Expression.Lambda(property.PropertyType, Expression.Convert(Expression.Invoke(Expression.Constant(provider),
+                        Expression.Convert(target, typeof(object)), token), signature.ReturnType), target, token).Compile());
+                }
+                SetFunction("Preparer", (target, _) => TaskFor(planType, Activator.CreateInstance(planType, ["fixture-engine", target])!));
+                SetFunction("Executor", (_, _) => { executed++; return TaskFor(result, Activator.CreateInstance(result, [true, "Owned fixture removal confirmed", null])!); });
+                foreach (bool confirm in new[] { false, true })
+                {
+                    picker.SelectedItem = confirm ? "Containers" : "Volumes";
+                    list.SelectedItem = list.Items.Cast<object>().First(item => item.GetType().GetProperty("CanClean")!.GetValue(item) is true);
+                    Exception? failure = null; bool reviewed = false;
+                    var timer = new System.Windows.Threading.DispatcherTimer(TimeSpan.FromMilliseconds(20), System.Windows.Threading.DispatcherPriority.Background, (_, _) =>
+                    {
+                        var preview = app.Windows.Cast<Window>().FirstOrDefault(candidate => candidate.Title == "Review Docker cleanup" && candidate.IsVisible);
+                        if (preview is null) return;
+                        try
+                        {
+                            if (reviewed) { preview.Close(); return; }
+                            reviewed = true;
+                            var action = (Button)preview.FindName("ConfirmButton"); Assert.False(action.IsEnabled);
+                            ((CheckBox)preview.FindName("PreservedCheck")).IsChecked = true;
+                            if (!confirm)
+                            {
+                                var name = (TextBox)preview.FindName("VolumeNameBox"); Assert.False(action.IsEnabled);
+                                name.Text = "wrong-volume"; Assert.False(action.IsEnabled);
+                                name.Text = "agent-models-and-results"; Assert.True(action.IsEnabled);
+                                ((Button)preview.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            }
+                            else
+                            {
+                                Assert.True(action.IsEnabled);
+                                Render(preview, Path.Join(artifactRoot, "artifacts", "ui", "containers-cleanup-preview.png"), 660, 540);
+                                action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            }
+                        }
+                        catch (Exception error) { failure = error; preview.Close(); }
+                    }, System.Windows.Threading.Dispatcher.CurrentDispatcher);
+                    timer.Start();
+                    try
+                    {
+                        var review = (Task)type.GetMethod("ReviewCleanupAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, null)!;
+                        PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(5)); review.GetAwaiter().GetResult();
+                        if (failure is not null) throw failure;
+                        Assert.True(reviewed); Assert.Equal(confirm ? 1 : 0, executed);
+                    }
+                    finally { timer.Stop(); }
+                }
+            }
         }
         finally { workflow.Content = null; workflow.Close(); }
     }

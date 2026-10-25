@@ -22,7 +22,7 @@ public sealed class AiStorageTests
         yield return Case(".local/share/opencode/log", "opencode.log", "OpenCode logs", "Agent files");
         yield return Case(".local/share/opencode", "opencode.db", "OpenCode session storage", "Agent files", true);
         yield return Case(".cache/opencode", "package.json", "OpenCode download cache", "Tool caches");
-        yield return Case(".lmstudio/models/publisher/model", "weights.gguf", "LM Studio model downloads", "AI models & data", true);
+        yield return Case(".lmstudio/models/publisher/model", "weights.gguf", "LM Studio model downloads", "AI models & data");
 
         static object[] Case(string path, string file, string title, string category, bool blocked = false)
             => [path, file, title, category, blocked];
@@ -53,7 +53,7 @@ public sealed class AiStorageTests
         var scan = AiStorageFixture.Inventory([path + "/snapshots/revision/weights.bin"], [path + (blobs ? "/blobs" : "/refs")]);
         var finding = Assert.Single(OpportunityDetector.Find(scan));
         Assert.Equal(AiStorageFixture.Full(path), finding.Path);
-        Assert.Equal("Hugging Face repository downloads", finding.Title); Assert.NotEmpty(finding.CleanupBlockReason);
+        Assert.Equal("Hugging Face repository downloads", finding.Title); Assert.Empty(finding.CleanupBlockReason);
         Assert.Contains("Windows", finding.Caution);
         Assert.Empty(OpportunityDetector.Find(AiStorageFixture.Inventory([path + "/snapshots/revision/weights.bin"])));
     }
@@ -94,13 +94,13 @@ public sealed class AiStorageTests
         Assert.Contains(groups, group => group.Key == "cleanup:agent" && group.Children!.Any(child => child.Name == "Claude Code"));
         Assert.Contains(groups, group => group.Key == "cleanup:checkpoints" && group.Children!.Any(child => child.Name == "Claude Code"));
         var models = Assert.Single(groups, group => group.Key == "cleanup:models");
-        Assert.False(models.CanSelectGroup); Assert.Equal(3, models.Children!.Count);
+        Assert.True(models.CanSelectGroup); Assert.Equal(3, models.Children!.Count);
         Assert.All(models.Children, tool =>
         {
-            Assert.False(tool.CanSelectGroup);
-            Assert.All(tool.Children!, project => Assert.False(project.CanSelectGroup));
+            Assert.Equal(tool.Name != "Ollama", tool.CanSelectGroup);
+            Assert.All(tool.Children!, project => Assert.Equal(tool.Name != "Ollama", project.CanSelectGroup));
         });
-        Assert.All(models.Locations, item => Assert.NotEmpty(item.CleanupBlockReason));
+        Assert.Single(models.Locations, item => item.CleanupBlockReason.Length > 0);
         var history = Assert.Single(groups, group => group.Key == "cleanup:agent");
         var rows = history.Locations.Select(item => new OpportunityRow(item, true)).ToArray();
         foreach (var row in rows) row.Selected = true;

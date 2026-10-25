@@ -12,28 +12,23 @@ namespace SpaceMaid.Tests;
 public sealed class ContainerStorageTests
 {
     [Fact]
-    public void DockerReportSeparatesObservedStorageAndAllowsOnlyScopedNonForcedAdvice()
+    public void DockerReportKeepsUnsafeObjectsOutOfCleanup()
     {
         var rows = DockerUsage.Parse(ContainerStorageFixture.Report);
         Assert.Equal(7, rows.Count);
         var stopped = Assert.Single(rows, row => row.State == "exited");
         Assert.Equal(2048, stopped.Bytes); Assert.Contains("Dev container", stopped.Details);
-        Assert.EndsWith(" container rm " + ContainerStorageFixture.ContainerId, stopped.Command);
-        Assert.Null(Assert.Single(rows, row => row.State == "running").Command);
-        Assert.Null(Assert.Single(rows, row => row.State == "Usage unknown" && row.Kind == "Images").Command);
+        Assert.True(stopped.CanClean);
+        Assert.False(Assert.Single(rows, row => row.State == "running").CanClean);
+        Assert.False(Assert.Single(rows, row => row.State == "Usage unknown" && row.Kind == "Images").CanClean);
         var unused = Assert.Single(rows, row => row.State == "Unused by containers");
-        Assert.Contains(" image rm sha256:", unused.Command); Assert.Contains("shared layers", unused.Details);
-        var cache = Assert.Single(rows, row => row.Kind == "Build cache" && row.CanCopy);
-        Assert.Equal(DockerUsage.CacheCleanup, cache.Command); Assert.Contains("builder-wide", cache.Details);
-        Assert.Null(Assert.Single(rows, row => row.Kind == "Build cache" && row.State == "In use").Command);
+        Assert.True(unused.CanClean); Assert.Contains("shared layers", unused.Details);
+        var cache = Assert.Single(rows, row => row.Kind == "Build cache" && row.CanClean);
+        Assert.Contains("exact cache record", cache.Details);
+        Assert.False(Assert.Single(rows, row => row.Kind == "Build cache" && row.State == "In use").CanClean);
         var volume = Assert.Single(rows, row => row.Kind == "Volumes");
-        Assert.Equal("Unattached · kept", volume.State); Assert.Null(volume.Command);
-        Assert.All(rows.Where(row => row.CanCopy), row =>
-        {
-            Assert.StartsWith(DockerUsage.LocalDocker, row.Command);
-            Assert.DoesNotContain("--force", row.Command); Assert.DoesNotContain("--volumes", row.Command);
-            Assert.DoesNotContain("system prune", row.Command);
-        });
+        Assert.Equal("Unattached", volume.State); Assert.True(volume.CanClean);
+        Assert.Contains("Back it up first", volume.Details);
     }
 
     [Fact]
@@ -45,7 +40,7 @@ public sealed class ContainerStorageTests
              "BuildCache":[{"ID":"cache","Size":"huge"}],"Volumes":[{"Name":"models","UsageData":{"Size":-1,"RefCount":-1}}]}
             """);
         var rows = DockerUsage.Parse(json);
-        Assert.All(rows, row => { Assert.Null(row.Command); Assert.Null(row.Bytes); });
+        Assert.All(rows, row => { Assert.False(row.CanClean); Assert.Null(row.Bytes); });
         Assert.Throws<InvalidDataException>(() => DockerUsage.Parse(Encoding.UTF8.GetBytes("{\"Containers\":[]}")));
         Assert.Throws<OperationCanceledException>(() => DockerUsage.Parse(json, new(true)));
     }
@@ -153,6 +148,6 @@ internal static class ContainerStorageFixture
             new { ID = "cache-one", Description = "Install agent dependencies", InUse = false, Shared = true, Size = 4L << 30 },
             new { ID = "cache-two", Description = "Current research build", InUse = true, Shared = false, Size = 1L << 30 }
         },
-        Volumes = new[] { new { Name = "agent-models-and-results", UsageData = new { Size = 8L << 30, RefCount = 0 } } }
+        Volumes = new[] { new { Name = "agent-models-and-results", Driver = "local", CreatedAt = "2026-10-24T10:00:00Z", Mountpoint = "/var/lib/docker/volumes/agent-models-and-results/_data", Options = new Dictionary<string, string>(), UsageData = new { Size = 8L << 30, RefCount = 0 } } }
     });
 }

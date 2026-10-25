@@ -2,7 +2,17 @@
   <PropertyGroup><UseWPF>true</UseWPF><EnableDynamicLoading>true</EnableDynamicLoading></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
+    <ProjectReference Include="../SpaceMaid.DiskHelper/SpaceMaid.DiskHelper.csproj" ReferenceOutputAssembly="false" Private="false" />
     <None Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>
+  <Target Name="CopyDiskHelper" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../SpaceMaid.DiskHelper/SpaceMaid.DiskHelper.csproj" Targets="Build;GetTargetPath" Properties="Configuration=$(Configuration);ArtifactsPath=$(ArtifactsPath)">
+      <Output TaskParameter="TargetOutputs" ItemName="DiskHelperTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <DiskHelperFiles Include="%(DiskHelperTarget.RootDir)%(DiskHelperTarget.Directory)SpaceMaid.DiskHelper.*" />
+      <Content Include="@(DiskHelperFiles)" Link="DiskHelper/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -9,6 +9,8 @@
     <Project Path="src/SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Containers/SpaceMaid.Extensions.Containers.csproj" />
+    <Project Path="src/SpaceMaid.Extensions.Models/SpaceMaid.Extensions.Models.csproj" />
+    <Project Path="src/SpaceMaid.DiskHelper/SpaceMaid.DiskHelper.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" />
     <Project Path="src/SpaceMaid.LocalModel/SpaceMaid.LocalModel.csproj" />
     <Project Path="src/SpaceMaid.ModelWorker/SpaceMaid.ModelWorker.csproj" />

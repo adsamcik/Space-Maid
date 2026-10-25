@@ -1,0 +1,8 @@
+{
+  "id": "space-maid.models",
+  "name": "AI models",
+  "version": "1.0.0",
+  "contractVersion": 1,
+  "entryAssembly": "SpaceMaid.Extensions.Models.dll",
+  "entryType": "SpaceMaid.Extensions.Models.ModelsExtension"
+}

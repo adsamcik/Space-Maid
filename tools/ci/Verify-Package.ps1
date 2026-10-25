@@ -10,6 +10,11 @@ $required = @(
     'Extensions/space-maid.apps/extension.json', 'Extensions/space-maid.apps/SpaceMaid.Extensions.Apps.dll',
     'Extensions/space-maid.developer/extension.json', 'Extensions/space-maid.developer/SpaceMaid.Extensions.Developer.dll',
     'Extensions/space-maid.containers/extension.json', 'Extensions/space-maid.containers/SpaceMaid.Extensions.Containers.dll',
+    'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.exe',
+    'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.dll',
+    'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.runtimeconfig.json',
+    'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.deps.json',
+    'Extensions/space-maid.models/extension.json', 'Extensions/space-maid.models/SpaceMaid.Extensions.Models.dll',
     'Extensions/space-maid.assistant/extension.json', 'Extensions/space-maid.assistant/SpaceMaid.Extensions.Assistant.dll',
     'Extensions/space-maid.assistant/Worker/SpaceMaid.ModelWorker.exe',
     'Extensions/space-maid.assistant/Worker/coreclr.dll',
@@ -23,6 +28,7 @@ foreach ($relative in $required) {
     }
 }
 foreach ($relative in @('SpaceMaid.App.exe', 'ScanHelper/SpaceMaid.ScanHelper.exe',
+        'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.exe',
         'Extensions/space-maid.assistant/Worker/SpaceMaid.ModelWorker.exe')) {
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead((Join-Path $package $relative)))
     try {

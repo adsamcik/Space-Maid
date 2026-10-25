@@ -29,7 +29,7 @@ public static class CleanupGrouping
             ("environments", "Python environments", "Review first", "Virtual environments can be recreated if their interpreter and dependencies are recorded."),
             ("agent", "Agent logs & history", "Review first", "Coding-agent sessions, tool results and diagnostic logs. Keep conversations, project memory and recovery information you still need."),
             ("checkpoints", "Agent file checkpoints", "Keep recovery copies", "File snapshots used to undo agent edits. Preserve unique and untracked work before removing rollback history."),
-            ("models", "AI models & data", "Review in the owning tool", "Local model weights, dataset downloads and cached revisions. Keep offline copies and companion files; use the owning tool to manage shared blobs and revisions."),
+            ("models", "AI models & data", "Review complete repositories", "Review whole Hugging Face and LM Studio repositories for recycling; keep offline copies and companion files together. Use the AI models workflow for individual Ollama models."),
             ("containers", "Containers & virtual disks", "Manage in Docker or WSL", "Host folders holding virtual disks and engine data. Sizes include live data and free guest blocks, not guaranteed savings. Open the Containers & WSL extension for inspection and safe cleanup guidance."),
             ("worktrees", "Other worktrees", "Outside this rule or not checked", "These checkouts do not yet match the chosen cleanup rule. Check worktrees or view folders for activity, upstream status and reasons."),
             ("other", "Other development folders", "Review first", "Other detected development folders. Inspect their contents before cleanup.")
@@ -127,7 +127,7 @@ public static class CleanupGrouping
         "downloads" => "Downloads needed again", "editor" => "Local settings may be lost",
         "dependencies" => "Keep local changes", "old-worktrees" => "Includes ignored files · Branches kept",
         "environments" => "Keep dependency records", "agent" => "Keep recovery history",
-        "checkpoints" => "Keep recovery copies", "models" => "Review in owning tool",
+        "checkpoints" => "Keep recovery copies", "models" => "Review full repositories",
         "containers" => "Manage in Docker or WSL",
         "worktrees" => "Check before selecting", _ => kind
     };

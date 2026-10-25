@@ -8,7 +8,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 - **Apps** — installation folders, measured sizes and quick access in Explorer.
 - **Photos** — collections, exact duplicate review and related RAW/JPEG/sidecar files.
 - **Extensions** — trusted local workflows, including an optional local assistant.
-  [Containers & WSL](docs/containers-and-wsl.md) inspects local Docker usage and provides reviewed cleanup commands and virtual-disk guidance.
+  [Containers & WSL](docs/containers-and-wsl.md) and AI models provide fresh previews and confirmed in-app cleanup, including virtual-disk compaction.
 
 ## Download and run
 

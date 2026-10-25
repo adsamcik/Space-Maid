@@ -68,21 +68,19 @@ public static partial class OpportunityDetector
         bool hubRepository = RepositoryName(name, "models--") || RepositoryName(name, "datasets--") || RepositoryName(name, "spaces--");
         if (hubRepository && evidence.Has(directory, Markers.Snapshots) && evidence.Any(directory, Markers.Refs | Markers.Blobs))
             return new("Hugging Face repository downloads", "AI models & data", "A Hub repository cache with snapshots and refs or blobs; also recognizes relocated cache roots.",
-                "Space Maid keeps this repository cache. Revisions can share blobs; Windows without symlinks can duplicate snapshots. Keep offline or unavailable models and datasets.",
-                "Review with hf cache ls and use Hugging Face cache commands to remove selected repositories or revisions; do not delete individual blobs.", true,
-                "Manage repository revisions with Hugging Face cache commands; shared model and dataset storage is kept.");
+                "This selects the whole repository: all revisions, snapshots and its blobs. Keep offline or unavailable models and datasets. Close tools using this cache first. Revisions can share blobs; Windows without symlinks can duplicate snapshots.",
+                "Review this complete repository folder and move it to the Recycle Bin here. Individual revisions and blobs are kept together; restore the whole folder if needed.", true);
         if ((direct & (Markers.Blobs | Markers.Manifests)) == (Markers.Blobs | Markers.Manifests)
             && evidence.HasNested(directory, "blobs", Markers.OllamaBlob))
             return new("Ollama model library", "AI models & data", "A model store with manifests and sha256-named blobs, including relocated OLLAMA_MODELS stores.",
                 "Space Maid keeps this model library. Models can share blobs and be needed offline; partial downloads may belong to active pulls. Do not remove individual blob files.",
-                "Review models with ollama list and remove unwanted models with ollama rm. Verify OLLAMA_MODELS before moving a library.", true,
-                "Manage models with ollama list and ollama rm; the shared model library is kept.");
+                "Open Extensions → AI models to inspect local Ollama models and review deletion of an individual model. The shared library folder stays protected.", true,
+                "Use the AI models workflow to remove individual Ollama models; the shared model library folder is kept.");
         if (ParentNamed(scan, Parent(scan, parent), "models")
             && ParentNamed(scan, Parent(scan, Parent(scan, parent)), ".lmstudio") && evidence.Has(directory, Markers.ModelWeights))
             return new("LM Studio model downloads", "AI models & data", "A .lmstudio/models/<publisher>/<repository> folder containing GGUF weights.",
-                "Space Maid keeps these model files. Split weights and vision projectors belong together; imported files may have no available download.",
-                "Review models and the active storage directory in LM Studio's My Models view. Keep needed quantizations and companion files together.", true,
-                "Manage models in LM Studio's My Models view; model weights and companion files are kept.");
+                "This selects all model variants and companion files in this repository. Close LM Studio and other model users first. Imported models may have no available download; preserve offline copies.",
+                "Review this complete model repository and move it to the Recycle Bin here. Split weights and vision projectors remain together; restore the whole folder if needed.", true);
         return null;
     }
 

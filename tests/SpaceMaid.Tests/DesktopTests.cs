@@ -899,6 +899,7 @@ public sealed partial class DesktopTests
                 CheckAiStorage(window, app, artifactRoot);
                 BeginWorkflow("Containers and WSL");
                 CheckContainers(window, app, artifactRoot);
+                CheckModels(window, app, artifactRoot);
                 BeginWorkflow("Cleanup review and execution");
                 SetStage("validating stale selections before cleanup review");
                 CheckOpportunityValidation(window, app, artifactRoot);
