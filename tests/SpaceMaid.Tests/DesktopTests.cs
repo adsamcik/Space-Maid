@@ -897,6 +897,8 @@ public sealed partial class DesktopTests
                 CheckAdditionalCleanupCategories(window, app, artifactRoot);
                 SetStage("browsing agent history, checkpoints and model libraries");
                 CheckAiStorage(window, app, artifactRoot);
+                BeginWorkflow("Containers and WSL");
+                CheckContainers(window, app, artifactRoot);
                 BeginWorkflow("Cleanup review and execution");
                 SetStage("validating stale selections before cleanup review");
                 CheckOpportunityValidation(window, app, artifactRoot);

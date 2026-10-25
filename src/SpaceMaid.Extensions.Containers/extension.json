@@ -1,0 +1,8 @@
+{
+  "id": "space-maid.containers",
+  "name": "Containers & WSL",
+  "version": "1.0.0",
+  "contractVersion": 1,
+  "entryAssembly": "SpaceMaid.Extensions.Containers.dll",
+  "entryType": "SpaceMaid.Extensions.Containers.ContainersExtension"
+}

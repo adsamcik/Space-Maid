@@ -49,6 +49,10 @@ public static partial class OpportunityDetector
 
     private static Rule? Classify(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name, MarkerEvidence evidence)
     {
+        var direct = evidence.DirectFiles(directory);
+        // Backing disks and engine stores take precedence over incidental project
+        // markers, so broad dependency/environment cleanup cannot admit them.
+        if (ContainerStorage(scan, directory, direct) is { } managed) return managed;
         if ((Is(name, "bin") || Is(name, "obj")) && evidence.Has(parent, Markers.DotNetProject))
             return new(".NET build output", "Build output", "A bin/obj directory beside a .NET project file.",
                 "Build outputs may include files copied by hand. Review them and stop running builds first.", "Rebuild with dotnet build after cleanup.");
@@ -58,7 +62,6 @@ public static partial class OpportunityDetector
         if ((Is(name, ".next") || Is(name, "dist") || Is(name, "build")) && evidence.Has(parent, Markers.PackageJson))
             return new("Possible Node build output", "Build output", "A common build directory beside package.json.",
                 "The project may keep authored files here. The directory name does not prove every file is generated.", "Check the project's build configuration before removing anything.", true);
-        var direct = evidence.DirectFiles(directory);
         if ((direct & Markers.PythonEnvironment) != 0)
             return new("Python virtual environment", "Python environments", "The directory contains pyvenv.cfg.",
                 "Recreation needs the correct interpreter and dependency list. Locally installed or edited packages may be unique.", "Record the environment requirements before recreating it.", true);
@@ -195,7 +198,9 @@ public static partial class OpportunityDetector
         JsonLines = 1UL << 34, GeminiSession = 1UL << 35, StateDatabase = 1UL << 36,
         ModelWeights = 1UL << 37, Snapshots = 1UL << 38, Refs = 1UL << 39,
         Blobs = 1UL << 40, Manifests = 1UL << 41, OllamaBlob = 1UL << 42,
-        AgentMessages = 1UL << 43, OpenCodeDatabase = 1UL << 44
+        AgentMessages = 1UL << 43, OpenCodeDatabase = 1UL << 44,
+        VirtualDisk = 1UL << 45, LinuxDisk = 1UL << 46, DockerDisk = 1UL << 47,
+        DockerContainers = 1UL << 48, DockerImages = 1UL << 49, DockerVolumes = 1UL << 50, DockerLayers = 1UL << 51
     }
 
     // One compact record per actual candidate or its immediate parent. General
@@ -237,12 +242,14 @@ public static partial class OpportunityDetector
                 {
                     if (Is(name, "blobs")) flags |= Markers.Blobs;
                     if (Is(name, "manifests")) flags |= Markers.Manifests;
+                    flags |= ContainerDirectoryMarker(name);
                     continue;
                 }
                 if (Is(name, "pyvenv.cfg")) flags |= Markers.PythonEnvironment;
                 if (Is(name, ".git")) flags |= Markers.GitPointer;
                 if (Is(name, "CMakeCache.txt")) flags |= Markers.CMakeCache;
                 if (Is(name, "CMakeLists.txt")) flags |= Markers.CMakeSource;
+                flags |= VirtualDiskMarker(name);
             }
             return flags;
         }
@@ -264,6 +271,7 @@ public static partial class OpportunityDetector
                     if (Is(name, "refs")) flags |= Markers.Refs;
                     if (Is(name, "blobs")) { flags |= Markers.Blobs; blobs = file; }
                     if (Is(name, "manifests")) flags |= Markers.Manifests;
+                    flags |= ContainerDirectoryMarker(name);
                     if (Is(name, ".fingerprint")) flags |= Markers.Fingerprint;
                     if (Is(name, "classes")) flags |= Markers.Classes;
                     if (Is(name, "maven-status")) flags |= Markers.MavenStatus;
@@ -310,6 +318,7 @@ public static partial class OpportunityDetector
                 if (Is(name, "api_conversation_history.json") || Is(name, "ui_messages.json")) flags |= Markers.AgentMessages;
                 if (name.StartsWith("sha256-", StringComparison.OrdinalIgnoreCase) && name.Length == 71
                     && name[7..].IndexOfAnyExcept("0123456789abcdefABCDEF") < 0) flags |= Markers.OllamaBlob;
+                flags |= VirtualDiskMarker(name);
             }
             var result = new CandidateMarkers(flags, debug, release, deps, blobs); _candidates.Add(directory, result); return result;
         }

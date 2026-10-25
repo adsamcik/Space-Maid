@@ -10,6 +10,7 @@
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" />
+    <ProjectReference Include="../../src/SpaceMaid.Extensions.Containers/SpaceMaid.Extensions.Containers.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.Extensions.Assistant/SpaceMaid.Extensions.Assistant.csproj" />
     <ProjectReference Include="../../src/SpaceMaid.LocalModel/SpaceMaid.LocalModel.csproj" />
   </ItemGroup>

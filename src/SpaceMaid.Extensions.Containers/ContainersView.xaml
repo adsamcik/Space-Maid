@@ -1,0 +1,55 @@
+<UserControl x:Class="SpaceMaid.Extensions.Containers.ContainersView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <TabControl Margin="16">
+        <TabItem Header="Docker">
+            <Grid Margin="0,12,0,0">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="8,0" Visibility="Collapsed" />
+                        <Button x:Name="InspectButton" Content="Inspect local Docker" Click="Inspect_Click" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <ComboBox x:Name="KindPicker" Width="150" HorizontalAlignment="Left" SelectionChanged="Filter_Changed" AutomationProperties.Name="Docker storage type" />
+                    <TextBox x:Name="SearchBox" Margin="8,0,12,0" MinWidth="120" TextChanged="Search_Changed" ToolTip="Search names, IDs and state" AutomationProperties.Name="Search Docker storage" />
+                </DockPanel>
+                <TextBlock x:Name="StatusText" Grid.Row="1" Margin="0,8,0,8" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Text="Inspect the local engine to see containers, images, build cache and volumes." />
+                <DataGrid x:Name="StorageList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" SelectionChanged="Selection_Changed"
+                          EnableRowVirtualization="True" HeadersVisibility="Column" RowHeight="40" AutomationProperties.Name="Docker objects and observed sizes">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="3*" MinWidth="180" />
+                        <DataGridTextColumn Header="State" Binding="{Binding State}" Width="2*" MinWidth="140" />
+                        <DataGridTextColumn Header="Observed size" Binding="{Binding SizeText}" Width="110" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Grid.Row="3" Margin="0,10,0,0">
+                    <TextBlock x:Name="DetailsText" TextWrapping="Wrap" MaxHeight="150" />
+                    <TextBox x:Name="CommandText" IsReadOnly="True" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" AutomationProperties.Name="Cleanup command to review and run yourself" />
+                    <Button x:Name="CopyButton" Content="Copy cleanup command" IsEnabled="False" HorizontalAlignment="Left" Click="Copy_Click" Margin="0,8,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Row="4" Margin="0,10,0,0">
+                    <TextBlock Text="Local engine only · Sizes overlap and exclude some logs/mounts · Commands are copied, never run here" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+                    <Expander x:Name="Diagnostics" Header="Inspection details" Margin="0,6,0,0"><TextBox x:Name="DiagnosticText" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="90" VerticalScrollBarVisibility="Auto" /></Expander>
+                </StackPanel>
+            </Grid>
+        </TabItem>
+        <TabItem Header="WSL &amp; virtual disks">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+                <StackPanel Margin="0,0,12,12">
+                    <TextBlock Text="Clean inside first; then check the Windows disk allocation." FontWeight="SemiBold" FontSize="16" />
+                    <TextBlock Text="Scan the drive in Opportunities to find recognized Docker/WSL disk folders. They are kept. Host file size, Linux free space and virtual disk capacity are different measurements." TextWrapping="Wrap" Margin="0,8,0,16" />
+                    <TextBlock Text="1. Find the right distribution and disk" FontWeight="SemiBold" />
+                    <TextBox IsReadOnly="True" Text="wsl.exe --list --verbose" Margin="0,8,0,4" AutomationProperties.Name="Read-only WSL distribution list command" />
+                    <TextBox IsReadOnly="True" Text="Get-ChildItem HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss | Get-ItemProperty | Select-Object DistributionName, BasePath" TextWrapping="Wrap" AutomationProperties.Name="Read-only WSL disk location command" />
+                    <TextBlock Text="For imported or moved distributions, use the registered BasePath. Docker Desktop may manage its own disk without a docker-desktop-data distribution; confirm its location in Settings → Resources → Advanced." TextWrapping="Wrap" Margin="0,6,0,16" />
+                    <TextBlock Text="2. Review data inside Linux or Docker" FontWeight="SemiBold" />
+                    <TextBlock Text="Check df -h / inside the chosen distribution. Preserve source, agent work, models and databases before removing caches. For Docker, inspect individual objects in the Docker tab; keep volumes and bind-mounted work. Do not add Docker object sizes to the host virtual-disk size." TextWrapping="Wrap" Margin="0,8,0,16" />
+                    <TextBlock Text="3. Reclaim host space only after backup" FontWeight="SemiBold" />
+                    <TextBlock Text="Guest cleanup may leave the host disk file unchanged. Compare size on disk with file length, especially for sparse disks. Use Docker Desktop's supported storage controls for its disk. For a WSL disk, back up the distribution, stop agents and services, and quit Docker Desktop before wsl --shutdown. Shutdown interrupts all WSL distributions and dependent containers. Compact only the verified, detached or read-only dynamic disk with Microsoft's documented procedure; results depend on free blocks and disk type." TextWrapping="Wrap" Margin="0,8,0,16" />
+                    <TextBlock Text="Never delete a VHDX, unregister a distribution, reset Docker Desktop or prune volumes just to reclaim space. Space Maid does not shut down, mount, compact or delete virtual disks." TextWrapping="Wrap" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,14,0,0"><Hyperlink NavigateUri="https://learn.microsoft.com/en-us/windows/wsl/disk-space" RequestNavigate="Guide_Navigate">WSL disk guide</Hyperlink><Run Text="  ·  " /><Hyperlink NavigateUri="https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/compact-vdisk" RequestNavigate="Guide_Navigate">Compaction prerequisites</Hyperlink><Run Text="  ·  " /><Hyperlink NavigateUri="https://docs.docker.com/engine/manage-resources/pruning/" RequestNavigate="Guide_Navigate">Docker cleanup guide</Hyperlink></TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+    </TabControl>
+</UserControl>

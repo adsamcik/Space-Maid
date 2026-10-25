@@ -27,7 +27,7 @@ Existing Node/Python dependency, uv/pip/npm cache, build-output and Playwright b
 
 ## Limits
 
-Detection is scoped to the selected scan and visible metadata. Conventional agent paths require their owning ancestors in the inventory. Relocated Hugging Face and Ollama stores have recognizable layouts; arbitrary custom agent homes, editor profiles and LM Studio roots are not inferred from environment or configuration. WSL/Docker virtual disks, container images/volumes, RAG/vector databases, generic model files, and incomplete model downloads remain visible in Explore but have no new cleanup rule. Application processes, actual model use and download activity are not checked. Space Maid does not compact databases, execute suggested commands, change retention settings or remove real AI-tool data during detection or tests.
+Detection is scoped to the selected scan and visible metadata. Conventional agent paths require their owning ancestors in the inventory. Relocated Hugging Face and Ollama stores have recognizable layouts; arbitrary custom agent homes, editor profiles and LM Studio roots are not inferred from environment or configuration. [Containers and WSL coverage](containers-and-wsl.md) adds protected backing disks, local Docker inspection and cleanup guidance. RAG/vector databases, generic model files and incomplete model downloads have no new cleanup rule. Application processes, actual model use and download activity are not checked. Space Maid does not compact databases, execute suggested commands, change retention settings or remove real AI-tool data during detection or tests.
 
 ## Verification
 

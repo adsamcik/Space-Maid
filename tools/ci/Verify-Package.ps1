@@ -9,6 +9,7 @@ $required = @(
     'Extensions/space-maid.photos/e_sqlite3.dll',
     'Extensions/space-maid.apps/extension.json', 'Extensions/space-maid.apps/SpaceMaid.Extensions.Apps.dll',
     'Extensions/space-maid.developer/extension.json', 'Extensions/space-maid.developer/SpaceMaid.Extensions.Developer.dll',
+    'Extensions/space-maid.containers/extension.json', 'Extensions/space-maid.containers/SpaceMaid.Extensions.Containers.dll',
     'Extensions/space-maid.assistant/extension.json', 'Extensions/space-maid.assistant/SpaceMaid.Extensions.Assistant.dll',
     'Extensions/space-maid.assistant/Worker/SpaceMaid.ModelWorker.exe',
     'Extensions/space-maid.assistant/Worker/coreclr.dll',

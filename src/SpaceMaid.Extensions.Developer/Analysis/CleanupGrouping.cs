@@ -30,6 +30,7 @@ public static class CleanupGrouping
             ("agent", "Agent logs & history", "Review first", "Coding-agent sessions, tool results and diagnostic logs. Keep conversations, project memory and recovery information you still need."),
             ("checkpoints", "Agent file checkpoints", "Keep recovery copies", "File snapshots used to undo agent edits. Preserve unique and untracked work before removing rollback history."),
             ("models", "AI models & data", "Review in the owning tool", "Local model weights, dataset downloads and cached revisions. Keep offline copies and companion files; use the owning tool to manage shared blobs and revisions."),
+            ("containers", "Containers & virtual disks", "Manage in Docker or WSL", "Host folders holding virtual disks and engine data. Sizes include live data and free guest blocks, not guaranteed savings. Open the Containers & WSL extension for inspection and safe cleanup guidance."),
             ("worktrees", "Other worktrees", "Outside this rule or not checked", "These checkouts do not yet match the chosen cleanup rule. Check worktrees or view folders for activity, upstream status and reasons."),
             ("other", "Other development folders", "Review first", "Other detected development folders. Inspect their contents before cleanup.")
         };
@@ -86,6 +87,7 @@ public static class CleanupGrouping
             "Agent files" => "agent",
             "Agent checkpoints" => "checkpoints",
             "AI models & data" => "models",
+            "Containers & virtual disks" => "containers",
             "Git worktrees" => oldIntegratedWorktrees?.Contains(item.Path) == true ? "old-worktrees" : "worktrees",
             _ => "other"
         };
@@ -105,6 +107,7 @@ public static class CleanupGrouping
         "agent" => "Sessions and logs · Keep recovery information",
         "checkpoints" => "File snapshots · Keep recovery copies",
         "models" => "Models and datasets · Keep needed offline copies",
+        "containers" => "Backing disks and engine data · Kept",
         "worktrees" => "Check activity and upstream status before cleanup",
         _ => "Inspect contents before cleanup"
     };
@@ -114,7 +117,7 @@ public static class CleanupGrouping
         "build" => "\uE7C1", "cache" => "\uE8B7", "tools" => "\uE713",
         "tests" => "\uE73E", "downloads" => "\uE896", "editor" => "\uE70F",
         "dependencies" => "\uE8EC", "old-worktrees" or "worktrees" => "\uE8AD",
-        "environments" => "\uE943", "agent" or "checkpoints" => "\uE8F2", "models" => "\uE943", _ => "\uE8B7"
+        "environments" => "\uE943", "agent" or "checkpoints" => "\uE8F2", "models" => "\uE943", "containers" => "\uEDA2", _ => "\uE8B7"
     };
 
     private static string Status(string key, string kind) => key switch
@@ -125,6 +128,7 @@ public static class CleanupGrouping
         "dependencies" => "Keep local changes", "old-worktrees" => "Includes ignored files · Branches kept",
         "environments" => "Keep dependency records", "agent" => "Keep recovery history",
         "checkpoints" => "Keep recovery copies", "models" => "Review in owning tool",
+        "containers" => "Manage in Docker or WSL",
         "worktrees" => "Check before selecting", _ => kind
     };
 }

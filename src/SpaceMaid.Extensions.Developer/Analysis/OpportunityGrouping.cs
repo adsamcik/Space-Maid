@@ -76,7 +76,8 @@ public static class OpportunityGrouping
         }
         var breakdowns = new Dictionary<string, IReadOnlyList<OpportunityGroup>>(StringComparer.Ordinal);
         foreach (var (category, key) in new[] { ("Tool caches", "cleanup:tools"), ("Test artifacts", "cleanup:tests"),
-            ("Agent files", "cleanup:agent"), ("Agent checkpoints", "cleanup:checkpoints"), ("AI models & data", "cleanup:models") })
+            ("Agent files", "cleanup:agent"), ("Agent checkpoints", "cleanup:checkpoints"), ("AI models & data", "cleanup:models"),
+            ("Containers & virtual disks", "cleanup:containers") })
         {
             var toolGroups = new List<OpportunityGroup>();
             var candidates = projects.SelectMany(project => project.Locations.Where(item => item.Category == category)
@@ -124,6 +125,9 @@ public static class OpportunityGrouping
             "Hugging Face repository downloads" => "Hugging Face",
             "Ollama model library" => "Ollama",
             "LM Studio model downloads" => "LM Studio",
+            "Docker virtual disk storage" or "Docker engine data store" => "Docker",
+            "Linux virtual disk storage" => "Linux / WSL (verify owner)",
+            "Virtual disk storage" => "Other virtual disks",
             _ => "Other tools"
         };
 
