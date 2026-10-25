@@ -33,10 +33,10 @@ internal static class AgentFileTarget
         }
     }
 
-    internal static AgentFileIdentity Capture(string path)
+    internal static AgentFileIdentity Capture(string path, bool directory = false)
     {
         path = ValidatePath(path); ValidateAncestors(path);
-        using var handle = Open(path, 7, directory: false);
+        using var handle = Open(path, 7, directory);
         return Read(handle);
     }
 

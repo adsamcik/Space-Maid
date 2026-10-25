@@ -902,6 +902,8 @@ public sealed partial class DesktopTests
                 CheckModels(window, app, artifactRoot);
                 BeginWorkflow("agent transcript and log cleanup");
                 CheckAgents(window, app, artifactRoot);
+                BeginWorkflow("OpenCode session cleanup");
+                CheckOpenCodeSessions(window, app, artifactRoot);
                 BeginWorkflow("Cleanup review and execution");
                 SetStage("validating stale selections before cleanup review");
                 CheckOpportunityValidation(window, app, artifactRoot);

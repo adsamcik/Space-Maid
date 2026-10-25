@@ -27,7 +27,7 @@ public static class CleanupGrouping
             ("dependencies", "Installed dependencies", "Reinstall before working", "Project node_modules folders. Keep local changes and make sure you can reinstall packages."),
             ("old-worktrees", worktreeGroup.Item1, worktreeGroup.Item2, worktreeGroup.Item3),
             ("environments", "Python environments", "Review first", "Virtual environments can be recreated if their interpreter and dependencies are recorded."),
-            ("agent", "Agent logs & history", "Review individual old files", "Use Extensions → Agent cleanup for old Codex, Claude Code and Gemini transcripts and logs. Keep conversations, project memory and recovery information you still need."),
+            ("agent", "Agent logs & history", "Review individual old files", "Use Extensions → Agent cleanup for supported agent transcripts, logs and Cursor CLI chat folders, or local OpenCode session removal. Keep project memory and recovery information you still need."),
             ("checkpoints", "Agent file checkpoints", "Keep recovery copies", "File snapshots used to undo agent edits. Preserve unique and untracked work before removing rollback history."),
             ("models", "AI models & data", "Review complete repositories", "Review whole Hugging Face and LM Studio repositories for recycling; keep offline copies and companion files together. Use the AI models workflow for individual Ollama models."),
             ("containers", "Containers & virtual disks", "Manage in Docker or WSL", "Host folders holding virtual disks and engine data. Sizes include live data and free guest blocks, not guaranteed savings. Open the Containers & WSL extension for inspection and safe cleanup guidance."),

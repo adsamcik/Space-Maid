@@ -1,0 +1,41 @@
+<UserControl x:Class="SpaceMaid.Extensions.Agents.OpenCodeSessionsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <DockPanel>
+            <Button x:Name="InspectButton" DockPanel.Dock="Right" Content="Inspect sessions" Click="Inspect_Click" Margin="12,0,0,0" />
+            <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="Cancel" Visibility="Collapsed" Click="Cancel_Click" Margin="8,0,0,0" />
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Last changed at least" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBox x:Name="AgeBox" Text="30" Width="55" VerticalContentAlignment="Center" AutomationProperties.Name="OpenCode session age in days" TextChanged="Inputs_Changed" />
+                <TextBlock Text="days ago" VerticalAlignment="Center" Margin="6,0,0,0" />
+            </StackPanel>
+        </DockPanel>
+        <TextBlock Grid.Row="1" x:Name="StatusText" Text="Inspect sessions in the local OpenCode server's current project folder. Start its server if needed; nothing is selected automatically." Margin="0,8" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+        <DataGrid Grid.Row="2" x:Name="SessionList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
+                  SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="Selection_Changed" EnableRowVirtualization="True" HeadersVisibility="Column" RowHeight="38" AutomationProperties.Name="Local OpenCode sessions">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Session" Binding="{Binding Title, Mode=OneWay}" Width="2*" MinWidth="150" />
+                <DataGridTextColumn Header="Project folder" Binding="{Binding Directory, Mode=OneWay}" Width="3*" MinWidth="180" />
+                <DataGridTextColumn Header="Last changed" Binding="{Binding LastChanged, Mode=OneWay, StringFormat={}{0:g}}" Width="145" />
+                <DataGridTextColumn Header="State" Binding="{Binding State, Mode=OneWay}" Width="145" />
+            </DataGrid.Columns>
+        </DataGrid>
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBlock x:Name="DetailsText" Text="Only old idle standalone sessions without sharing or managed workspaces can be removed. Disk recovery is unknown." TextWrapping="Wrap" />
+            <Button x:Name="ReviewButton" Content="Review cleanup…" IsEnabled="False" Click="Review_Click" HorizontalAlignment="Left" Margin="0,8,0,0" />
+            <Expander Header="Local server and inspection details" Margin="0,6,0,0">
+                <StackPanel>
+                    <TextBlock Text="Uses only http://127.0.0.1:4096 and OpenCode's version 1 session API. Run opencode serve separately if needed. The server manages its database; it is never recycled or edited directly." TextWrapping="Wrap" Margin="0,4" />
+                    <StackPanel x:Name="PasswordRow" Orientation="Horizontal" Margin="0,5">
+                        <TextBlock Text="Server password (optional)" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <PasswordBox x:Name="ServerPassword" Width="190" AutomationProperties.Name="Local OpenCode server password" PasswordChanged="Password_Changed" />
+                    </StackPanel>
+                    <TextBlock Text="Default username: opencode. The password stays in memory for this view and is never saved. Pause other clients and automation before confirming; the API cannot atomically check idle state and delete." TextWrapping="Wrap" Margin="0,4" />
+                    <TextBox x:Name="DiagnosticText" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="100" VerticalScrollBarVisibility="Auto" />
+                </StackPanel>
+            </Expander>
+        </StackPanel>
+    </Grid>
+</UserControl>

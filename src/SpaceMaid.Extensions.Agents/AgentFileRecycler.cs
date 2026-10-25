@@ -88,6 +88,8 @@ internal static class AgentFileRecycler
 
     private static void Validate(AgentHistoryItem item)
     {
+        AgentOwnerProtection.RequireStopped(item.Home.Tool);
+        item.SessionEvidence?.Validate(item, default);
         if (AgentFileTarget.Capture(item.Path) != item.Identity) throw new IOException("This history file changed after confirmation. Inspect again.");
     }
 

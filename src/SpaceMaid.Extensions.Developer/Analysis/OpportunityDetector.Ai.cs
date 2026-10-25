@@ -20,7 +20,8 @@ public static partial class OpportunityDetector
         if (Is(name, "session-state") && ParentNamed(scan, parent, ".copilot"))
             return Agent("GitHub Copilot session history", "The .copilot/session-state directory used by Copilot CLI and the Copilot app.",
                 "Contains resumable sessions and task artifacts. Deleting folders directly can leave the session index out of sync.",
-                "Use Copilot's session management to review and delete individual sessions; preserve any history you need.");
+                "Open Extensions → Agent cleanup to review old local transcript files. App indexes, plans, artifacts and synced copies stay in place.")
+                with { BlockReason = "Use Agent cleanup for old local files; the whole session-state folder is kept." };
         if (Is(name, "chats") && ParentNamed(scan, Parent(scan, parent), "tmp")
             && ParentNamed(scan, Parent(scan, Parent(scan, parent)), ".gemini") && evidence.Has(directory, Markers.GeminiSession))
             return Agent("Gemini CLI session history", "A .gemini/tmp/<project>/chats folder containing session JSON files.",
@@ -34,7 +35,8 @@ public static partial class OpportunityDetector
             && evidence.Has(directory, Markers.StateDatabase))
             return Agent("Cursor workspace history", "A Cursor/User/workspaceStorage workspace containing state.vscdb.",
                 "Includes chat navigation and personal workspace state. Deleting the database can lose access to conversations.",
-                "Review chats in Cursor and preserve this workspace's state before any cleanup; close Cursor first.");
+                "Manage editor chats in Cursor. Agent cleanup supports individual Cursor CLI chat folders; the editor's shared database stays protected.")
+                with { BlockReason = "This editor database also holds workspace state. Use Cursor's chat controls or Agent cleanup for separate CLI chats." };
         if (Is(name, "globalStorage") && CursorUser(scan, parent) && evidence.Has(directory, Markers.StateDatabase))
             return Agent("Cursor global chat storage", "Cursor/User/globalStorage contains state.vscdb alongside extension state.",
                 "Space Maid keeps this folder. It includes chat data, extension settings and potentially credentials. Deleting it can reset the editor and lose conversations.",
@@ -48,7 +50,8 @@ public static partial class OpportunityDetector
             && evidence.Has(directory, Markers.AgentMessages))
             return Agent(tool + " task history", "An extension task folder containing conversation or UI-message metadata.",
                 "Task conversations, attachments and checkpoints may be the only recovery copy of work. They cannot be regenerated.",
-                "Review and remove individual tasks in " + tool + " after preserving conversations and checkpointed work.");
+                "Open Extensions → Agent cleanup to review old transcript files after stopping the editor and background agents. Task metadata and checkpoints stay in place.")
+                with { BlockReason = "Use Agent cleanup for individual old files; task folders and their recovery data are kept." };
         if (Is(name, "checkpoints") && ParentNamed(scan, parent, "saoudrizwan.claude-dev")
             && ParentNamed(scan, Parent(scan, parent), "globalStorage"))
             return Checkpoints("Cline file checkpoints", "Cline's extension checkpoint directory under globalStorage.", "Cline");
@@ -56,12 +59,13 @@ public static partial class OpportunityDetector
         if (Is(name, "log") && OpenCodeData(scan, parent))
             return Agent("OpenCode logs", "The .local/share/opencode/log diagnostic directory.",
                 "Logs may contain useful diagnostics or private context. Stop active OpenCode sessions and preserve evidence you need.",
-                "Run opencode debug paths to verify the active log location; review logs before cleanup.");
+                "Open Extensions → Agent cleanup for old logs, or its OpenCode sessions tab for local server-managed session removal.")
+                with { BlockReason = "Use Agent cleanup for individual old logs; the full log folder stays in place." };
         if (OpenCodeData(scan, directory) && evidence.Has(directory, Markers.OpenCodeDatabase))
             return Agent("OpenCode session storage", "The .local/share/opencode data directory containing opencode.db.",
                 "Space Maid keeps this folder. It contains sessions, messages and authentication data; removing it can lose history and sign-in state.",
-                "Run opencode debug paths and manage sessions in OpenCode. Preserve history and credentials; Space Maid keeps this folder.")
-                with { BlockReason = "Manage sessions in OpenCode; this store also contains authentication and application data." };
+                "Open Extensions → Agent cleanup → OpenCode sessions to review removal through the local server. Space Maid keeps the database, credentials and shared storage folder.")
+                with { BlockReason = "Use Agent cleanup's OpenCode sessions tab; this folder also contains credentials and shared application data." };
         if (Is(name, "opencode") && ParentNamed(scan, parent, ".cache"))
             return new("OpenCode download cache", "Tool caches", "The .cache/opencode tool cache, separate from session data and authentication.",
                 "Close OpenCode and review custom files first. Cached plugins or providers may require downloads again.",

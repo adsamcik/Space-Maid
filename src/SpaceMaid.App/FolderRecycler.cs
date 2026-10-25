@@ -2,7 +2,11 @@ using System.IO;
 using System.Runtime.InteropServices;
 using SpaceMaid.Core.Analysis;
 
+#if SPACEMAID_AGENT_RECYCLER
+namespace SpaceMaid.Extensions.Agents;
+#else
 namespace SpaceMaid.App;
+#endif
 
 internal sealed record RecycleResult(bool Cancelled, string? RecycledPath);
 
@@ -15,12 +19,12 @@ internal static class FolderRecycler
     private const uint OperationFlags = 0x00080000 | 0x20000000 | 0x00000400 | 0x00100000 | 0x00000010 | 0x00004000;
 
     public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
-        Action<string, object>? diagnostic = null)
+        Action<string, object>? diagnostic = null, Action? validateContents = null)
     {
         var completion = new TaskCompletionSource<RecycleResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { completion.SetResult(Recycle(target, owner, token, diagnostic)); }
+            try { completion.SetResult(Recycle(target, owner, token, diagnostic, validateContents)); }
             catch (Exception ex) { completion.SetException(ex); }
         }) { IsBackground = true, Name = "Space Maid recycling" };
         thread.SetApartmentState(ApartmentState.STA);
@@ -29,14 +33,15 @@ internal static class FolderRecycler
     }
 
     private static RecycleResult Recycle(FolderDeletionTarget target, nint owner, CancellationToken token,
-        Action<string, object>? diagnostic)
+        Action<string, object>? diagnostic, Action? validateContents)
     {
         token.ThrowIfCancellationRequested();
         target.ValidateCurrent();
+        validateContents?.Invoke();
         IFileOperation? operation = null;
         IShellItem? item = null;
         uint cookie = 0;
-        var sink = new RecycleSink(target, token, diagnostic);
+        var sink = new RecycleSink(target, token, diagnostic, validateContents);
         try
         {
             var type = Type.GetTypeFromCLSID(new("3AD05575-8857-4850-9277-11B85BDB8E09"), throwOnError: true)!;
@@ -52,6 +57,7 @@ internal static class FolderRecycler
             operation.DeleteItem(item, null);
             token.ThrowIfCancellationRequested();
             target.ValidateCurrent();
+            validateContents?.Invoke();
             diagnostic?.Invoke("recycle-native-start", new { target.Path, Flags = $"0x{OperationFlags:X8}" });
             int result = operation.PerformOperations();
             operation.GetAnyOperationsAborted(out bool aborted);
@@ -117,7 +123,7 @@ internal static class FolderRecycler
 
     [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
     private sealed class RecycleSink(FolderDeletionTarget target, CancellationToken token,
-        Action<string, object>? diagnostic) : IFileOperationProgressSink
+        Action<string, object>? diagnostic, Action? validateContents) : IFileOperationProgressSink
     {
         public bool CannotRecycle { get; private set; }
         public string? ValidationError { get; private set; }
@@ -138,7 +144,7 @@ internal static class FolderRecycler
             try
             {
                 item.GetDisplayName(0x80058000, out string path);
-                if (path.Equals(target.Path, StringComparison.OrdinalIgnoreCase)) target.ValidateCurrent();
+                if (path.Equals(target.Path, StringComparison.OrdinalIgnoreCase)) { target.ValidateCurrent(); validateContents?.Invoke(); }
                 else if (!path.StartsWith(target.Path + "\\", StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Windows requested a folder outside the confirmed location.");
                 // A recursive callback belongs to the operation already

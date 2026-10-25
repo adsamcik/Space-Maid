@@ -1,6 +1,9 @@
 <UserControl x:Class="SpaceMaid.Extensions.Agents.AgentsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:SpaceMaid.Extensions.Agents">
+    <TabControl x:Name="AgentTabs">
+    <TabItem Header="Files &amp; Cursor CLI">
     <Grid Margin="16">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <DockPanel>
@@ -9,6 +12,7 @@
             <StackPanel Orientation="Horizontal">
                 <ComboBox x:Name="ToolPicker" SelectedIndex="0" Width="165" SelectionChanged="Source_Changed" AutomationProperties.Name="Agent history source">
                     <ComboBoxItem Content="Standard homes" /><ComboBoxItem Content="Codex" /><ComboBoxItem Content="Claude Code" /><ComboBoxItem Content="Gemini CLI" />
+                    <ComboBoxItem Content="Cursor CLI" /><ComboBoxItem Content="Copilot" /><ComboBoxItem Content="Cline" /><ComboBoxItem Content="Roo Code" /><ComboBoxItem Content="OpenCode logs" />
                 </ComboBox>
                 <TextBlock Text="Last changed at least" VerticalAlignment="Center" Margin="12,0,6,0" />
                 <TextBox x:Name="AgeBox" Text="30" Width="55" VerticalContentAlignment="Center" AutomationProperties.Name="History age in days" TextChanged="Age_Changed" />
@@ -17,7 +21,8 @@
         </DockPanel>
         <DockPanel Grid.Row="1" x:Name="HomeRow" Visibility="Collapsed" Margin="0,8,0,0">
             <Button Content="Choose home…" DockPanel.Dock="Right" Click="Browse_Click" Margin="8,0,0,0" />
-            <TextBox x:Name="HomeBox" AutomationProperties.Name="Agent home folder" TextChanged="Home_Changed" />
+            <TextBlock Text="Custom home (optional)" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox x:Name="HomeBox" AutomationProperties.Name="Custom agent home folder" ToolTip="Leave blank for all standard locations for this tool. For relocated Cline/Roo data, choose the extension's own folder under globalStorage." TextChanged="Home_Changed" />
         </DockPanel>
         <TextBlock Grid.Row="2" x:Name="StatusText" Text="Inspect old transcripts and diagnostic logs. Nothing is selected automatically." Margin="0,8" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
         <DataGrid Grid.Row="3" x:Name="HistoryList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
@@ -35,10 +40,13 @@
             <Button x:Name="ReviewButton" Content="Review cleanup…" IsEnabled="False" Click="Review_Click" HorizontalAlignment="Left" Margin="0,8,0,0" />
             <Expander Header="Scope and inspection details" Margin="0,6,0,0">
                 <StackPanel>
-                    <TextBlock Text="Recycles selected transcript or log files only. App indexes, related task files, memory, checkpoints and credentials are kept. History entries may remain in the agent app; related files may still use space." TextWrapping="Wrap" Margin="0,4" />
+                    <TextBlock Text="A blank custom home uses all standard locations for the selected tool. Recycles listed transcript/log files or whole Cursor CLI chat folders. Separate indexes, memory, checkpoints, credentials and cloud copies are kept. Cursor editor databases stay protected; use its own chat controls. Roo tasks must be completed and independent. Close editors, clients and background agents; unrecognized hosts or restarted clients may evade process checks." TextWrapping="Wrap" Margin="0,4" />
                     <TextBox x:Name="DiagnosticText" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="100" VerticalScrollBarVisibility="Auto" />
                 </StackPanel>
             </Expander>
         </StackPanel>
     </Grid>
+    </TabItem>
+    <TabItem Header="OpenCode sessions"><local:OpenCodeSessionsView x:Name="OpenCodeView" /></TabItem>
+    </TabControl>
 </UserControl>

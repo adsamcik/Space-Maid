@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><UseWPF>true</UseWPF><EnableDynamicLoading>true</EnableDynamicLoading></PropertyGroup>
+  <PropertyGroup><UseWPF>true</UseWPF><EnableDynamicLoading>true</EnableDynamicLoading><DefineConstants>$(DefineConstants);SPACEMAID_AGENT_RECYCLER</DefineConstants></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
+    <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
+    <Compile Include="../SpaceMaid.App/FolderRecycler.cs" Link="CursorFolderRecycler.cs" />
     <None Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>

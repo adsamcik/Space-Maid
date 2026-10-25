@@ -23,10 +23,16 @@ public sealed partial class DesktopTests
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "sessions", "2026", "08", "01")).FullName;
         string transcript = Path.Join(folder, "rollout-2026-08-01T10-00-00-owned-session.jsonl");
         File.WriteAllBytes(transcript, new byte[32768]); File.SetLastWriteTimeUtc(transcript, DateTime.UtcNow.AddDays(-60));
+        string cursorChat = Directory.CreateDirectory(Path.Join(fixture.Path, "chats", new string('a', 32), "ee298949-0c12-4054-8010-81d8214eaf0e")).FullName;
+        File.WriteAllText(Path.Join(cursorChat, "store.db"), "owned CLI database fixture");
+        File.WriteAllText(Path.Join(cursorChat, "store.db-wal"), "owned CLI sidecar fixture");
+        foreach (string file in Directory.EnumerateFiles(cursorChat)) File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-60));
+        Directory.SetLastWriteTimeUtc(cursorChat, DateTime.UtcNow.AddDays(-60));
         var homeType = assembly.GetType("SpaceMaid.Extensions.Agents.AgentHome")!;
         var toolType = assembly.GetType("SpaceMaid.Extensions.Agents.AgentTool")!;
-        var homes = Array.CreateInstance(homeType, 1);
+        var homes = Array.CreateInstance(homeType, 2);
         homes.SetValue(Activator.CreateInstance(homeType, [Enum.ToObject(toolType, 0), fixture.Path]), 0);
+        homes.SetValue(Activator.CreateInstance(homeType, [Enum.ToObject(toolType, 3), fixture.Path]), 1);
         var cleanupType = assembly.GetType("SpaceMaid.Extensions.Agents.AgentHistoryCleanup")!;
         object snapshot = cleanupType.GetMethod("Inspect", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [homes, 30, DateTime.UtcNow, CancellationToken.None])!;
         int inspections = 0, executions = 0;
@@ -42,8 +48,17 @@ public sealed partial class DesktopTests
                 Expression.Convert(Expression.Invoke(Expression.Constant(provider), values), invoke.ReturnType), parameters).Compile());
         }
         var inspector = type.GetProperty("Inspector", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object? inspectedHomes = null;
         var executor = type.GetProperty("Executor", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        SetDelegate("Inspector", _ => { inspections++; return Completed(inspector, snapshot); });
+        var preparer = type.GetProperty("Preparer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var originalPreparer = (Delegate)preparer.GetValue(view)!;
+        SetDelegate("Preparer", values =>
+        {
+            var chosen = ((System.Collections.IEnumerable)values[0]!).Cast<object>().First();
+            if (chosen.GetType().GetProperty("Folder")!.GetValue(chosen) is null) return originalPreparer.DynamicInvoke(values)!;
+            return Completed(preparer, Activator.CreateInstance(assembly.GetType("SpaceMaid.Extensions.Agents.AgentHistoryPlan")!, [values[0], values[1]])!);
+        });
+        SetDelegate("Inspector", values => { inspections++; inspectedHomes = values[0]; return Completed(inspector, snapshot); });
         SetDelegate("Executor", _ =>
         {
             executions++;
@@ -60,8 +75,9 @@ public sealed partial class DesktopTests
             var list = (DataGrid)view.FindName("HistoryList"); var review = (Button)view.FindName("ReviewButton");
             Assert.Empty(list.Items); Assert.Equal(0, inspections); Assert.False(review.IsEnabled);
             var inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
-            Assert.Equal(1, inspections); Assert.Single(list.Items); Assert.Empty(list.SelectedItems);
-            list.SelectedItem = list.Items[0]; Assert.True(review.IsEnabled);
+            Assert.Equal(1, inspections); Assert.Equal(2, list.Items.Count); Assert.Empty(list.SelectedItems);
+            object selected = list.Items.Cast<object>().Single(item => (string)item.GetType().GetProperty("Path")!.GetValue(item)! == transcript);
+            list.SelectedItem = selected; Assert.True(review.IsEnabled);
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
             {
@@ -70,14 +86,29 @@ public sealed partial class DesktopTests
             }
 #pragma warning restore WPF0001
             Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "agents-compact.png"), 740, 590);
+            string expectedPath = cursorChat;
+            list.SelectedItem = list.Items.Cast<object>().Single(item => item.GetType().GetProperty("Folder")!.GetValue(item) is not null);
+            Preview(confirm: false); Assert.Equal(0, executions);
+            list.SelectedItem = selected; expectedPath = transcript;
             Preview(confirm: false); Assert.Equal(0, executions); Assert.Single(list.SelectedItems);
             Preview(confirm: true); Assert.Equal(1, executions); Assert.Empty(list.Items);
             Assert.Contains("cleanup completed", ((TextBlock)view.FindName("StatusText")).Text);
             Assert.True(File.Exists(transcript)); // The desktop executor is deliberately inert.
+            var tools = (ComboBox)view.FindName("ToolPicker"); var customHome = (TextBox)view.FindName("HomeBox");
+            tools.SelectedIndex = 6; Assert.Equal("", customHome.Text); Assert.Empty(list.Items); Assert.False(review.IsEnabled);
+            inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+            var standardHomes = ((System.Collections.IEnumerable)inspectedHomes!).Cast<object>().ToArray();
+            Assert.True(standardHomes.Length > 1);
+            Assert.All(standardHomes, home => Assert.Equal("Cline", home.GetType().GetProperty("Tool")!.GetValue(home)!.ToString()));
+            customHome.Text = fixture.Path;
+            inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+            var custom = Assert.Single(((System.Collections.IEnumerable)inspectedHomes!).Cast<object>());
+            Assert.Equal(fixture.Path, custom.GetType().GetProperty("Path")!.GetValue(custom));
+            tools.SelectedIndex = 5; tools.SelectedIndex = 6; Assert.Equal(fixture.Path, customHome.Text);
             ((TextBox)view.FindName("AgeBox")).Text = "0";
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
             Assert.Contains("1 through 3650", ((TextBlock)view.FindName("StatusText")).Text);
-            Assert.Equal(1, inspections);
+            Assert.Equal(3, inspections);
 
             void Preview(bool confirm)
             {
@@ -89,11 +120,17 @@ public sealed partial class DesktopTests
                     try
                     {
                         shown = true;
-                        Assert.Contains(Descendants(dialog).OfType<TextBlock>(), block => block.Text == transcript);
+                        Assert.Contains(Descendants(dialog).OfType<TextBlock>(), block => block.Text == expectedPath);
+                        if (expectedPath == cursorChat)
+                        {
+                            var contents = Assert.Single(Descendants(dialog).OfType<Expander>(), expander => Equals(expander.Header, "Folder contents") && expander.Visibility == Visibility.Visible);
+                            contents.IsExpanded = true; dialog.UpdateLayout();
+                            Assert.Contains(Descendants(dialog).OfType<TextBlock>(), block => block.Text.Contains("store.db-wal", StringComparison.Ordinal));
+                        }
                         var action = (Button)dialog.FindName("RecycleButton"); Assert.False(action.IsEnabled);
                         if (!confirm)
                         {
-                            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "agents-cleanup-preview.png"), 740, 590);
+                            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", expectedPath == cursorChat ? "cursor-cli-cleanup-preview.png" : "agents-cleanup-preview.png"), 740, 590);
                             dialog.DialogResult = false;
                         }
                         else

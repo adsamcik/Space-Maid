@@ -12,14 +12,14 @@ public sealed class AiStorageTests
     {
         yield return Case(".claude/projects/project", "session.jsonl", "Claude Code project history", "Agent files", true);
         yield return Case(".claude/file-history", "session/file@v1", "Claude Code file checkpoints", "Agent checkpoints");
-        yield return Case(".copilot/session-state", "session/events.jsonl", "GitHub Copilot session history", "Agent files");
+        yield return Case(".copilot/session-state", "session/events.jsonl", "GitHub Copilot session history", "Agent files", true);
         yield return Case(".gemini/tmp/project/chats", "session-2026.json", "Gemini CLI session history", "Agent files", true);
-        yield return Case("AppData/Roaming/Cursor/User/workspaceStorage/project", "state.vscdb", "Cursor workspace history", "Agent files");
+        yield return Case("AppData/Roaming/Cursor/User/workspaceStorage/project", "state.vscdb", "Cursor workspace history", "Agent files", true);
         yield return Case("AppData/Roaming/Cursor/User/globalStorage", "state.vscdb", "Cursor global chat storage", "Agent files", true);
-        yield return Case("AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/task", "api_conversation_history.json", "Cline task history", "Agent files");
+        yield return Case("AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/task", "api_conversation_history.json", "Cline task history", "Agent files", true);
         yield return Case("AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/checkpoints", "repo/objects/snapshot", "Cline file checkpoints", "Agent checkpoints");
-        yield return Case("AppData/Roaming/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/tasks/task", "ui_messages.json", "Roo Code task history", "Agent files");
-        yield return Case(".local/share/opencode/log", "opencode.log", "OpenCode logs", "Agent files");
+        yield return Case("AppData/Roaming/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/tasks/task", "ui_messages.json", "Roo Code task history", "Agent files", true);
+        yield return Case(".local/share/opencode/log", "opencode.log", "OpenCode logs", "Agent files", true);
         yield return Case(".local/share/opencode", "opencode.db", "OpenCode session storage", "Agent files", true);
         yield return Case(".cache/opencode", "package.json", "OpenCode download cache", "Tool caches");
         yield return Case(".lmstudio/models/publisher/model", "weights.gguf", "LM Studio model downloads", "AI models & data");
@@ -107,7 +107,7 @@ public sealed class AiStorageTests
         Assert.All(rows.Where(row => row.Item.CleanupBlockReason.Length > 0), row => Assert.False(row.Selected));
         var historyRow = new OpportunityGroupRow(history, rows);
         historyRow.SetSelectedCount(rows.Count(row => row.Selected));
-        Assert.True(historyRow.Checked); // Kept rows do not leave an otherwise fully selected group indeterminate.
+        Assert.False(historyRow.Checked); // Whole history stores stay kept; individual items use Agent cleanup.
         Assert.Contains(analysis.Findings, item => item.IsWorktree);
         Assert.DoesNotContain(analysis.Findings, item => item.Path.EndsWith("worktrees", StringComparison.OrdinalIgnoreCase));
     }

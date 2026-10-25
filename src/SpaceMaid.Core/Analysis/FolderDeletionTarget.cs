@@ -23,6 +23,22 @@ public sealed class FolderDeletionTarget
         _identity = identity; _volume = volume;
     }
 
+    private FolderDeletionTarget(string path, long logicalBytes, FileIdentity identity, ulong volume)
+    {
+        Path = path; LogicalBytes = logicalBytes; _identity = identity; _volume = volume;
+    }
+
+    // Explicit, bounded extension inspections capture their complete contents
+    // separately. This factory retains the same live root/ancestor safeguards
+    // and native Shell identity checks as inventory-based folder recycling.
+    public static FolderDeletionTarget CaptureCurrent(string path, long logicalBytes)
+    {
+        if (logicalBytes < 0) throw new ArgumentOutOfRangeException(nameof(logicalBytes));
+        path = ValidatePath(path);
+        var live = ReadIdentity(path);
+        return new(path, logicalBytes, live.Identity, live.Volume);
+    }
+
     public static FolderDeletionTarget FromScan(ScanSnapshot scan, int link)
     {
         var (entry, path) = ResolveSelection(scan, link);

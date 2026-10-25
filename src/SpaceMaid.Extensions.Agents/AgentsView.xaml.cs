@@ -23,7 +23,7 @@ public partial class AgentsView : UserControl
 
     internal AgentsView(CancellationToken lifetime)
     {
-        _lifetime = lifetime; InitializeComponent();
+        _lifetime = lifetime; InitializeComponent(); OpenCodeView.Initialize(lifetime);
         Loaded += (_, _) => AttachOwner();
         Unloaded += (_, _) => { if (!_recycling) { _work?.Cancel(); DetachOwner(); } };
     }
@@ -46,7 +46,8 @@ public partial class AgentsView : UserControl
         {
             HomeRow.Visibility = ToolPicker.SelectedIndex == 0 ? Visibility.Collapsed : Visibility.Visible;
             if (ToolPicker.SelectedIndex > 0)
-                HomeBox.Text = _homes.GetValueOrDefault(ToolPicker.SelectedIndex) ?? AgentHistoryCleanup.DefaultHomes()[ToolPicker.SelectedIndex - 1].Path;
+                HomeBox.Text = _homes.GetValueOrDefault(ToolPicker.SelectedIndex)
+                    ?? "";
         }
         finally { _changingSource = false; }
         Invalidate();
@@ -68,8 +69,13 @@ public partial class AgentsView : UserControl
         var picker = new OpenFolderDialog { Title = "Choose this agent's home folder" };
         if (picker.ShowDialog(Window.GetWindow(this)) == true) HomeBox.Text = picker.FolderName;
     }
-    private IReadOnlyList<AgentHome> CurrentHomes() => ToolPicker.SelectedIndex <= 0 ? AgentHistoryCleanup.DefaultHomes()
-        : [new((AgentTool)(ToolPicker.SelectedIndex - 1), HomeBox.Text)];
+    private IReadOnlyList<AgentHome> CurrentHomes()
+    {
+        if (ToolPicker.SelectedIndex <= 0) return AgentHistoryCleanup.DefaultHomes();
+        var tool = (AgentTool)(ToolPicker.SelectedIndex - 1);
+        return string.IsNullOrWhiteSpace(HomeBox.Text) ? AgentHistoryCleanup.DefaultHomes().Where(home => home.Tool == tool).ToArray()
+            : [new(tool, HomeBox.Text)];
+    }
     private int CurrentAge()
     {
         if (!int.TryParse(AgeBox.Text, out int days) || days is < 1 or > 3650)
@@ -83,7 +89,7 @@ public partial class AgentsView : UserControl
         HistoryList.ItemsSource = null; StatusText.Text = "Inspecting agent file metadata…";
         var snapshot = await Inspector(sources, age, token); token.ThrowIfCancellationRequested();
         _observedAge = age; HistoryList.ItemsSource = snapshot.Items;
-        StatusText.Text = $"{snapshot.Items.Count:N0} {(snapshot.Items.Count == 1 ? "file" : "files")} last changed at least {age:N0} days ago";
+        StatusText.Text = $"{snapshot.Items.Count:N0} {(snapshot.Items.Count == 1 ? "item" : "items")} last changed at least {age:N0} days ago";
         DiagnosticText.Text = string.Join(Environment.NewLine, snapshot.Warnings);
         if (snapshot.Warnings.Count > 0) StatusText.Text += " · Some paths were kept or not inspected; see details";
     });
@@ -94,12 +100,12 @@ public partial class AgentsView : UserControl
         if (selected.Length == 0) return Task.CompletedTask;
         return RunAsync(async token =>
         {
-            StatusText.Text = "Rechecking the selected history files…";
+            StatusText.Text = "Rechecking selected items and related session activity…";
             var plan = await Preparer(selected, _observedAge, token); token.ThrowIfCancellationRequested();
             var preview = new AgentHistoryPreview(plan) { Owner = Window.GetWindow(this) };
             if (preview.ShowDialog() != true) { StatusText.Text = "Cleanup cancelled. No files moved."; return; }
             token.ThrowIfCancellationRequested(); _recycling = true; AttachOwner();
-            StatusText.Text = "Moving the confirmed files to the Recycle Bin…";
+            StatusText.Text = "Moving the confirmed items to the Recycle Bin…";
             var result = await Executor(plan, new WindowInteropHelper(Window.GetWindow(this)).Handle, token);
             HistoryList.ItemsSource = null; StatusText.Text = result.Message;
         });
@@ -137,10 +143,10 @@ public partial class AgentsView : UserControl
         if (DetailsText is null || ReviewButton is null) return;
         var selected = HistoryList.SelectedItems.Cast<AgentHistoryItem>().ToArray();
         ReviewButton.IsEnabled = _work is null && selected.Length is > 0 and <= 500;
-        DetailsText.Text = selected.Length == 1 ? selected[0].Path : selected.Length > 0
-            ? $"{selected.Length:N0} files selected · {AgentHistoryCleanup.Size(selected.Sum(item => item.Identity.Length))} observed · Review at most 500 at once"
+        DetailsText.Text = selected.Length == 1 ? selected[0].Scope + " · " + selected[0].Path : selected.Length > 0
+            ? $"{selected.Length:N0} items selected · {AgentHistoryCleanup.Size(selected.Sum(item => item.Bytes))} observed · Review at most 500 at once"
             : "Choose files to review. Age identifies candidates; it does not prove they are unused.";
     }
     internal async Task ShutdownAsync()
-    { _work?.Cancel(); if (_operation is { } operation) await operation; DetachOwner(); }
+    { _work?.Cancel(); if (_operation is { } operation) await operation; await OpenCodeView.ShutdownAsync(); DetachOwner(); }
 }
