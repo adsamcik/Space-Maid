@@ -10,10 +10,10 @@ public sealed class AiStorageTests
 {
     public static IEnumerable<object[]> Patterns()
     {
-        yield return Case(".claude/projects/project", "session.jsonl", "Claude Code project history", "Agent files");
+        yield return Case(".claude/projects/project", "session.jsonl", "Claude Code project history", "Agent files", true);
         yield return Case(".claude/file-history", "session/file@v1", "Claude Code file checkpoints", "Agent checkpoints");
         yield return Case(".copilot/session-state", "session/events.jsonl", "GitHub Copilot session history", "Agent files");
-        yield return Case(".gemini/tmp/project/chats", "session-2026.json", "Gemini CLI session history", "Agent files");
+        yield return Case(".gemini/tmp/project/chats", "session-2026.json", "Gemini CLI session history", "Agent files", true);
         yield return Case("AppData/Roaming/Cursor/User/workspaceStorage/project", "state.vscdb", "Cursor workspace history", "Agent files");
         yield return Case("AppData/Roaming/Cursor/User/globalStorage", "state.vscdb", "Cursor global chat storage", "Agent files", true);
         yield return Case("AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/task", "api_conversation_history.json", "Cline task history", "Agent files");
@@ -110,6 +110,23 @@ public sealed class AiStorageTests
         Assert.True(historyRow.Checked); // Kept rows do not leave an otherwise fully selected group indeterminate.
         Assert.Contains(analysis.Findings, item => item.IsWorktree);
         Assert.DoesNotContain(analysis.Findings, item => item.Path.EndsWith("worktrees", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(".codex/sessions/2026/08/01/rollout-owned.jsonl")]
+    [InlineData(".codex/log/codex-tui.log")]
+    [InlineData(".claude/projects/project/owned.jsonl")]
+    [InlineData(".claude/debug/owned.txt")]
+    [InlineData(".gemini/tmp/project/chats/session-owned.json")]
+    public void WholeAgentHistoriesAndSelectedAncestorsCannotBypassFileReview(string transcript)
+    {
+        var scan = AiStorageFixture.Inventory(["environment/pyvenv.cfg", "environment/" + transcript]);
+        var found = OpportunityDetector.Find(scan);
+        Assert.Contains(found, finding => finding.CleanupBlockReason.Contains("Agent cleanup", StringComparison.Ordinal));
+        var plan = CleanupPlanner.Prepare(scan, found.Select(item => item with { CleanupBlockReason = "" }).ToArray(),
+            discover: DeveloperOpportunityFixture.Find);
+        Assert.False(plan.CanExecute); Assert.Empty(plan.Targets);
+        Assert.Equal(found.Count, plan.BlockedLocations.Count);
     }
 
     [Fact]

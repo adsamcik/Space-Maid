@@ -15,6 +15,7 @@ $required = @(
     'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.runtimeconfig.json',
     'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper.deps.json',
     'Extensions/space-maid.models/extension.json', 'Extensions/space-maid.models/SpaceMaid.Extensions.Models.dll',
+    'Extensions/space-maid.agents/extension.json', 'Extensions/space-maid.agents/SpaceMaid.Extensions.Agents.dll',
     'Extensions/space-maid.assistant/extension.json', 'Extensions/space-maid.assistant/SpaceMaid.Extensions.Assistant.dll',
     'Extensions/space-maid.assistant/Worker/SpaceMaid.ModelWorker.exe',
     'Extensions/space-maid.assistant/Worker/coreclr.dll',

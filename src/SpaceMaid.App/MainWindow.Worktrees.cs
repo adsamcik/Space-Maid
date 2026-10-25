@@ -17,9 +17,9 @@ public partial class MainWindow
 
     private static string DescribeWorktreePolicy(WorktreeCleanupPolicy policy) => policy.Mode switch
     {
-        WorktreeCleanupMode.Old => $"clean with no observed activity for at least {policy.InactiveDays} days (unmerged branches kept)",
-        WorktreeCleanupMode.Integrated => "clean and already in cached upstream, any age",
-        _ => $"clean, already in cached upstream and no observed activity for at least {policy.InactiveDays} days"
+        WorktreeCleanupMode.Old => $"clean with no observed activity for at least {policy.InactiveDays} days (branches kept; detached commits must be integrated)",
+        WorktreeCleanupMode.Integrated => "clean and already in a local integration branch, any age",
+        _ => $"clean, already in a local integration branch and no observed activity for at least {policy.InactiveDays} days"
     };
 
     private void WorktreeRule_Changed(object sender, SelectionChangedEventArgs e) => WorktreeOptionsChanged();
@@ -73,13 +73,13 @@ public partial class MainWindow
         WorktreeAgeText.Text = ageApplies ? $"{policy.InactiveDays} {(policy.InactiveDays == 1 ? "day" : "days")}" : "Any age";
         WorktreeRuleHint.ToolTip = policy.Mode switch
         {
-            WorktreeCleanupMode.Old => "Age uses file changes and Git activity, not access. Unmerged commits stay in their branches. Local changes are protected.",
-            WorktreeCleanupMode.Integrated => "Age is ignored. Uses locally cached upstream/default refs; no fetch. Local changes are protected; branches are kept.",
-            _ => "Age uses file changes and Git activity, not access. Uses cached upstream refs. Local changes are protected; branches are kept."
+            WorktreeCleanupMode.Old => "Age uses file changes and Git activity, not access. Unmerged commits stay in their branches. Detached commits must be integrated. Stop agents and builds; review ignored files.",
+            WorktreeCleanupMode.Integrated => "Age is ignored. Uses local upstream/default refs, or main/master for detached checkouts; no fetch. Local changes are protected; stop agents and builds first.",
+            _ => "Age uses file changes and Git activity, not access. Uses local upstream/default refs, or main/master for detached checkouts. Stop agents and builds; review ignored files."
         };
         WorktreeRuleHint.Text = policy.Mode == WorktreeCleanupMode.Old
             ? "Unmerged branches kept"
-            : "Cached refs · Changed worktrees kept";
+            : "Local refs · Changed worktrees kept";
         var matchedGroups = _cleanupGroups.Where(item => item.Role == OpportunityGroupRole.MatchedWorktrees).ToArray();
         SelectWorktreeMatchesButton.IsEnabled = matchedGroups.Any(group => group.Locations.Count > 0);
         WorktreeCheckSummary.Text = _worktreeAssessments.Count == 0

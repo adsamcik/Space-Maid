@@ -13,7 +13,8 @@ public static partial class OpportunityDetector
             && evidence.Has(directory, Markers.JsonLines))
             return Agent("Claude Code project history", "A project folder under .claude/projects containing JSONL transcripts.",
                 "Contains conversations, tool results and possibly auto memory. Removing this folder loses session resumption and project memory.",
-                "Review the project in Claude Code; preserve transcripts and memory before removing its local history.");
+                "Open Extensions → Agent cleanup to review individual old transcripts. Project memory, checkpoints and the project folder stay in place.")
+                with { BlockReason = "Use Agent cleanup for individual old transcripts; the project history folder can also contain memory." };
         if (Is(name, "file-history") && ParentNamed(scan, parent, ".claude"))
             return Checkpoints("Claude Code file checkpoints", "The .claude/file-history snapshot directory.", "Claude Code");
         if (Is(name, "session-state") && ParentNamed(scan, parent, ".copilot"))
@@ -24,7 +25,8 @@ public static partial class OpportunityDetector
             && ParentNamed(scan, Parent(scan, Parent(scan, parent)), ".gemini") && evidence.Has(directory, Markers.GeminiSession))
             return Agent("Gemini CLI session history", "A .gemini/tmp/<project>/chats folder containing session JSON files.",
                 "Despite the tmp path, these are resumable conversations and tool results, not disposable temporary files.",
-                "Review sessions with gemini --list-sessions and use Gemini's session retention or deletion controls.");
+                "Open Extensions → Agent cleanup to review individual old transcripts. Related plans, artifacts and application indexes are kept.")
+                with { BlockReason = "Use Agent cleanup for individual old transcripts; the whole chat folder is kept." };
 
         // Global storage also holds extension state and credentials. Show its
         // size, but never offer folder-wide recycling for the shared store.

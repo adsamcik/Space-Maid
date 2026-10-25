@@ -8,7 +8,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 - **Apps** — installation folders, measured sizes and quick access in Explorer.
 - **Photos** — collections, exact duplicate review and related RAW/JPEG/sidecar files.
 - **Extensions** — trusted local workflows, including an optional local assistant.
-  [Containers & WSL](docs/containers-and-wsl.md) and AI models provide fresh previews and confirmed in-app cleanup, including virtual-disk compaction.
+  [Agent cleanup](docs/ai-storage-coverage.md), [Containers & WSL](docs/containers-and-wsl.md) and AI models provide previews and confirmed in-app cleanup, including old transcripts, logs and virtual-disk compaction.
 
 ## Download and run
 
@@ -24,7 +24,7 @@ The same helper accelerates folder scans, cleanup review, rechecks and app-size 
 
 The host's shared `FileOperations` API chooses the available metadata backend per request. Scanning, folder measurement, cleanup review/planning, worktree and build-activity checks, refreshes and extension metadata discovery use that service. Photo discovery streams bounded batches of current directory metadata; size measurements can use scoped NTFS queries. Recycling, emptying the bin and making files online-only use their Windows Shell or sync-provider APIs through the same entrypoint, retaining confirmation and live identity checks. Callers do not select backends or request elevation themselves.
 
-Cleanup moves selected folders to the Recycle Bin after review and confirmation. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Photos cleanup is currently disabled.
+Folder and agent-file cleanup move the confirmed items to the Recycle Bin. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Photos cleanup is currently disabled.
 
 ## Build from source
 

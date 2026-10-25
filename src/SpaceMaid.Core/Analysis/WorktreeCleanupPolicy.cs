@@ -22,6 +22,9 @@ public sealed record WorktreeCleanupPolicy
         ArgumentNullException.ThrowIfNull(assessment);
         if (utcNow.Kind != DateTimeKind.Utc) throw new ArgumentException("A UTC comparison time is required.", nameof(utcNow));
         if (!assessment.VerifiedClean) return false;
+        // A detached checkout has no branch retaining its unique commits.
+        // Even the age-only rule must not admit unintegrated detached work.
+        if (assessment.IsDetached && !assessment.Integrated) return false;
         bool old = assessment.LastActivityUtc is { } activity && activity <= utcNow.AddDays(-InactiveDays);
         return Mode switch
         {

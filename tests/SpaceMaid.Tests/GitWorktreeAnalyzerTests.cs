@@ -249,6 +249,64 @@ public sealed class GitWorktreeAnalyzerTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new WorktreeCleanupPolicy((WorktreeCleanupMode)99));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DetachedAgentWorktreesRequireRetainedCommitsAndFreshCleanState(bool localMainFallback)
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        await GitFixture.Run(repo.Checkout, repo.Old, "switch", "--detach");
+        if (localMainFallback)
+            await GitFixture.Run(repo.Main, repo.Old, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
+        string gitDir = (await GitFixture.Run(repo.Checkout, repo.Old, "rev-parse", "--absolute-git-dir")).Trim();
+        File.SetLastWriteTimeUtc(Path.Join(gitDir, "logs", "HEAD"), repo.Old);
+        GitFixture.Age(repo.Checkout, repo.Old);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var location = Finding(scan, repo.Checkout);
+        var assessment = await GitWorktreeAnalyzer.AssessAsync(scan, location);
+        Assert.True(assessment.IsDetached); Assert.True(assessment.VerifiedClean, assessment.Reason);
+        Assert.True(assessment.Integrated, assessment.Reason); Assert.True(assessment.Recommended, assessment.Reason);
+        Assert.Equal("Detached HEAD", assessment.Branch);
+        Assert.Equal(localMainFallback ? "refs/heads/main" : "refs/remotes/origin/main", assessment.IntegrationTarget);
+        Assert.Empty(await GitWorktreeGuard.CheckAsync(scan, [location], [repo.Checkout]));
+
+        File.AppendAllText(repo.Source, "\nunique detached work");
+        await GitFixture.Run(repo.Checkout, repo.Old, "add", "--", "source.txt");
+        await GitFixture.Run(repo.Checkout, repo.Old, "commit", "-m", "owned detached commit");
+        File.SetLastWriteTimeUtc(Path.Join(gitDir, "logs", "HEAD"), repo.Old);
+        GitFixture.Age(repo.Checkout, repo.Old);
+        var unique = await GitWorktreeAnalyzer.AssessAsync(scan, location);
+        Assert.True(unique.VerifiedClean, unique.Reason); Assert.False(unique.Integrated); Assert.True(unique.IsDetached);
+        foreach (var mode in Enum.GetValues<WorktreeCleanupMode>())
+            Assert.False(new WorktreeCleanupPolicy(mode, 1).Matches(unique, DateTime.UtcNow));
+        var blocked = await GitWorktreeGuard.CheckAsync(scan, [location],
+            new Dictionary<string, WorktreeCleanupPolicy> { [repo.Checkout] = new(WorktreeCleanupMode.Old, 1) });
+        Assert.Contains(repo.Checkout, blocked.Keys);
+        Assert.Contains("unique detached work", File.ReadAllText(repo.Source), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DetachedWorktreesKeepRecentActivityUntrackedFilesAndMissingIntegrationEvidence()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        await GitFixture.Run(repo.Checkout, DateTime.UtcNow, "switch", "--detach");
+        GitFixture.Age(repo.Checkout, repo.Old);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var location = Finding(scan, repo.Checkout);
+        var recent = await GitWorktreeAnalyzer.AssessAsync(scan, location);
+        Assert.True(recent.IsDetached); Assert.True(recent.Integrated); Assert.False(recent.Recommended);
+        Assert.True(recent.LastActivityUtc > DateTime.UtcNow.AddDays(-1));
+        string untracked = Path.Join(repo.Checkout, "keep-me.txt"); File.WriteAllText(untracked, "unique local data");
+        var changed = await GitWorktreeAnalyzer.AssessAsync(scan, location);
+        Assert.False(changed.VerifiedClean); Assert.Equal("Local changes", changed.Status);
+        File.Delete(untracked);
+        await GitFixture.Run(repo.Main, repo.Old, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
+        await GitFixture.Run(repo.Main, repo.Old, "branch", "-m", "main", "personal");
+        var unavailable = await GitWorktreeAnalyzer.AssessAsync(scan, location);
+        Assert.False(unavailable.Integrated); Assert.Null(unavailable.IntegrationTarget);
+        Assert.False(new WorktreeCleanupPolicy(WorktreeCleanupMode.Old, 1).Matches(unavailable, DateTime.UtcNow));
+    }
+
     private static Opportunity Finding(ScanSnapshot scan, string path) => Assert.Single(OpportunityDetector.Find(scan), finding => finding.Path == path);
 
     private sealed record GitFixture(string Main, string Parent, string Checkout, string Source, DateTime Old) : IDisposable

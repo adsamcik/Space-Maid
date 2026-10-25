@@ -12,8 +12,8 @@ public static class CleanupGrouping
         var policy = worktreePolicy ?? WorktreeCleanupPolicy.Default;
         var worktreeGroup = policy.Mode switch
         {
-            WorktreeCleanupMode.Old => ("Old clean worktrees", "Checked locally · Branches retained", $"Clean checkouts with no observed file changes or Git activity for at least {policy.InactiveDays} days. Unmerged commits stay in their branches; cleanup includes ignored files."),
-            WorktreeCleanupMode.Integrated => ("Worktrees already in upstream", "Checked locally · Any age", "Clean checkouts whose commits are contained in a locally cached upstream/default branch. Cleanup includes ignored files; branches are kept."),
+            WorktreeCleanupMode.Old => ("Old clean worktrees", "Checked locally · Branches retained", $"Clean checkouts with no observed file changes or Git activity for at least {policy.InactiveDays} days. Unmerged commits stay in their branches; detached commits must be integrated. Cleanup includes ignored files."),
+            WorktreeCleanupMode.Integrated => ("Worktrees already in upstream", "Checked locally · Any age", "Clean checkouts whose commits are contained in a local integration branch. Detached checkouts can use main/master when no cached remote default exists. Cleanup includes ignored files; branches are kept."),
             _ => ("Old integrated worktrees", "Checked locally · Review ignored files", $"Clean checkouts already in a local upstream/default branch, with no observed file changes or Git activity for at least {policy.InactiveDays} days. Cleanup includes ignored files.")
         };
         var definitions = new[]
@@ -27,7 +27,7 @@ public static class CleanupGrouping
             ("dependencies", "Installed dependencies", "Reinstall before working", "Project node_modules folders. Keep local changes and make sure you can reinstall packages."),
             ("old-worktrees", worktreeGroup.Item1, worktreeGroup.Item2, worktreeGroup.Item3),
             ("environments", "Python environments", "Review first", "Virtual environments can be recreated if their interpreter and dependencies are recorded."),
-            ("agent", "Agent logs & history", "Review first", "Coding-agent sessions, tool results and diagnostic logs. Keep conversations, project memory and recovery information you still need."),
+            ("agent", "Agent logs & history", "Review individual old files", "Use Extensions → Agent cleanup for old Codex, Claude Code and Gemini transcripts and logs. Keep conversations, project memory and recovery information you still need."),
             ("checkpoints", "Agent file checkpoints", "Keep recovery copies", "File snapshots used to undo agent edits. Preserve unique and untracked work before removing rollback history."),
             ("models", "AI models & data", "Review complete repositories", "Review whole Hugging Face and LM Studio repositories for recycling; keep offline copies and companion files together. Use the AI models workflow for individual Ollama models."),
             ("containers", "Containers & virtual disks", "Manage in Docker or WSL", "Host folders holding virtual disks and engine data. Sizes include live data and free guest blocks, not guaranteed savings. Open the Containers & WSL extension for inspection and safe cleanup guidance."),

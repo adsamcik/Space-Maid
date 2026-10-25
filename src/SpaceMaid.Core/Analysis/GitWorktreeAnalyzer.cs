@@ -13,7 +13,7 @@ namespace SpaceMaid.Core.Analysis;
 public sealed record GitWorktreeAssessment(string Path, bool Recommended, string Status, string Reason,
     string? Branch = null, string? IntegrationTarget = null, DateTime? LastObservedModificationUtc = null,
     DateTime? LastReflogActivityUtc = null, string? CommonGitDirectory = null,
-    bool VerifiedClean = false, bool Integrated = false, bool HasActivityEvidence = false)
+    bool VerifiedClean = false, bool Integrated = false, bool HasActivityEvidence = false, bool IsDetached = false)
 {
     public DateTime? LastActivityUtc => HasActivityEvidence && LastObservedModificationUtc is { } modified
         && LastReflogActivityUtc is { } reflog ? (modified >= reflog ? modified : reflog) : null;
@@ -41,7 +41,7 @@ public static partial class GitWorktreeAnalyzer
         budget.CancelAfter(TimeSpan.FromSeconds(10));
         string path = location.Path; string? branch = null, target = null, commonPath = null;
         DateTime? modified = null, reflog = null;
-        bool verifiedClean = false, integrated = false, hasActivityEvidence = false;
+        bool verifiedClean = false, integrated = false, hasActivityEvidence = false, detached = false;
         try
         {
             path = Normalize(path);
@@ -92,9 +92,10 @@ public static partial class GitWorktreeAnalyzer
             if (registration is null || registration.ContainsKey("bare") || registration.ContainsKey("locked") || registration.ContainsKey("prunable"))
                 return Result("Needs review", "The worktree is unregistered, locked or prunable. Review it in Git first.");
             branch = registration.GetValueOrDefault("branch");
-            if (branch?.StartsWith("refs/heads/", StringComparison.Ordinal) != true)
-                return Result("Needs review", "Detached or unresolved branches need manual review.");
-            string fullBranch = branch; branch = branch["refs/heads/".Length..];
+            detached = registration.ContainsKey("detached") && branch is null;
+            if (!detached && branch?.StartsWith("refs/heads/", StringComparison.Ordinal) != true)
+                return Result("Needs review", "The registered branch could not be resolved.");
+            string? fullBranch = branch; branch = detached ? "Detached HEAD" : branch!["refs/heads/".Length..];
             // These independent, read-only queries share the same protected
             // paths and deadline. Overlap process startup rather than spending
             // the bounded check waiting for each Git process in turn.
@@ -129,6 +130,17 @@ public static partial class GitWorktreeAnalyzer
                     .Select(line => line.TrimEnd('\r').Split('\0')).Where(parts => parts.Length == 2 && parts[0].EndsWith("/HEAD", StringComparison.Ordinal)
                         && parts[1].StartsWith("refs/remotes/", StringComparison.Ordinal)).Select(parts => parts[1]).Distinct(StringComparer.Ordinal).ToArray();
                 if (candidates.Length == 1) target = candidates[0];
+                // Agent worktrees commonly have detached HEADs. A local main or
+                // master is a fallback only for these checkouts; ancestry must
+                // still prove that no detached commit is unique.
+                else if (detached && candidates.Length == 0)
+                {
+                    foreach (string candidate in new[] { "refs/heads/main", "refs/heads/master" })
+                    {
+                        var local = await git.Run("rev-parse", "--verify", "--end-of-options", candidate + "^{commit}");
+                        if (local.Code == 0 && IsObjectId(local.Output.Trim())) { target = candidate; break; }
+                    }
+                }
             }
             GitResult? destination = null;
             bool unmerged = false;
@@ -141,22 +153,34 @@ public static partial class GitWorktreeAnalyzer
                     destination = resolved;
                     var ancestry = await git.Run("merge-base", "--is-ancestor", head.Output.Trim(), destination.Output.Trim());
                     integrated = ancestry.Code == 0; unmerged = ancestry.Code == 1;
-                    integrationReason = unmerged ? "HEAD is not fully contained in the selected local integration reference. Its branch and shared Git storage will be retained."
+                    integrationReason = unmerged ? detached
+                        ? "This detached HEAD has commits outside the local integration branch. Create a branch or integrate the work before cleanup."
+                        : "HEAD is not fully contained in the selected local integration reference. Its branch and shared Git storage will be retained."
                         : "Git could not verify local ancestry. Remote freshness is unknown.";
                 }
                 else integrationReason = "The integration reference is not fully available locally. No fetch was performed.";
             }
-            string headLogPath = Path.Join(gitDir, "logs", "HEAD"), branchLogPath = Normalize(Path.Join(common, "logs", fullBranch));
-            if (File.Exists(headLogPath) && File.Exists(branchLogPath) && new FileInfo(headLogPath).Length != 0 && new FileInfo(branchLogPath).Length != 0)
+            string headLogPath = Path.Join(gitDir, "logs", "HEAD");
+            string? branchLogPath = fullBranch is null ? null : Normalize(Path.Join(common, "logs", fullBranch));
+            if (File.Exists(headLogPath) && new FileInfo(headLogPath).Length != 0
+                && (detached || File.Exists(branchLogPath) && new FileInfo(branchLogPath!).Length != 0))
             {
-                DateTime? headLogModified = guard.File(headLogPath), branchLogModified = guard.File(branchLogPath);
+                DateTime? headLogModified = guard.File(headLogPath);
                 var headLogTask = git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", "HEAD");
-                var branchLogTask = git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", fullBranch);
-                await Task.WhenAll(headLogTask, branchLogTask).ConfigureAwait(false);
-                var headLog = headLogTask.Result; var branchLog = branchLogTask.Result;
-                DateTime? headActivity = ReflogTime(headLog), branchActivity = ReflogTime(branchLog);
-                if (headActivity is not null && branchActivity is not null && headLogModified is not null && branchLogModified is not null)
-                    reflog = Max(Max(headActivity, branchActivity), Max(headLogModified, branchLogModified));
+                if (detached)
+                {
+                    DateTime? headActivity = ReflogTime(await headLogTask.ConfigureAwait(false));
+                    if (headActivity is not null && headLogModified is not null) reflog = Max(headActivity, headLogModified);
+                }
+                else
+                {
+                    DateTime? branchLogModified = guard.File(branchLogPath!);
+                    var branchLogTask = git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", fullBranch!);
+                    await Task.WhenAll(headLogTask, branchLogTask).ConfigureAwait(false);
+                    DateTime? headActivity = ReflogTime(headLogTask.Result), branchActivity = ReflogTime(branchLogTask.Result);
+                    if (headActivity is not null && branchActivity is not null && headLogModified is not null && branchLogModified is not null)
+                        reflog = Max(Max(headActivity, branchActivity), Max(headLogModified, branchLogModified));
+                }
             }
             captured.ValidateCurrent();
             guard.Tree(common, rejectNestedGit: false);
@@ -179,9 +203,12 @@ public static partial class GitWorktreeAnalyzer
             var finalHead = finalHeadTask.Result; var finalBranch = finalBranchTask.Result;
             var finalTarget = finalTargetTask?.Result; var finalRegistration = finalRegistrationTask.Result;
             var finalEntry = finalRegistration.Code == 0 ? Registered(finalRegistration.Output, path) : null;
-            if (finalHead.Code != 0 || finalHead.Output != head.Output || finalBranch.Code != 0 || finalBranch.Output.Trim() != fullBranch
+            bool sameBranch = detached ? finalBranch.Code == 1 && finalBranch.Output.Length == 0
+                : finalBranch.Code == 0 && finalBranch.Output.Trim() == fullBranch;
+            if (finalHead.Code != 0 || finalHead.Output != head.Output || !sameBranch
                 || (destination is not null && (finalTarget is null || finalTarget.Code != 0 || finalTarget.Output != destination.Output)) || finalEntry is null || finalEntry.ContainsKey("locked")
-                || finalEntry.ContainsKey("prunable") || finalEntry.GetValueOrDefault("HEAD") != head.Output.Trim() || finalEntry.GetValueOrDefault("branch") != fullBranch)
+                || finalEntry.ContainsKey("prunable") || finalEntry.ContainsKey("detached") != detached
+                || finalEntry.GetValueOrDefault("HEAD") != head.Output.Trim() || finalEntry.GetValueOrDefault("branch") != fullBranch)
                 return Result("Needs review", "Git references or worktree registration changed during inspection. Check again.");
             captured.ValidateCurrent();
             verifiedClean = true;
@@ -202,7 +229,7 @@ public static partial class GitWorktreeAnalyzer
         GitWorktreeAssessment Result(string status, string reason)
         {
             var assessment = new GitWorktreeAssessment(path, false, status, reason, branch, target, modified, reflog, commonPath,
-                verifiedClean, integrated, hasActivityEvidence);
+                verifiedClean, integrated, hasActivityEvidence, detached);
             return assessment with { Recommended = WorktreeCleanupPolicy.Default.Matches(assessment, DateTime.UtcNow) };
         }
     }

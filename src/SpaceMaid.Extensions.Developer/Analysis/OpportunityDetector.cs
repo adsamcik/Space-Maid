@@ -84,14 +84,17 @@ public static partial class OpportunityDetector
             return new(Is(name, "log") || Is(name, "logs") ? "Codex logs" : "Codex session history", "Agent files",
                 "A known Codex log or session-history directory.",
                 "Session files can preserve useful conversations and recovery context. Age is not proof that they are disposable.",
-                "Review in Codex and preserve any history you need.", true);
+                "Open Extensions → Agent cleanup to review individual old transcripts or logs. Databases, indexes and the history folder stay in place.", true,
+                "Use Agent cleanup for individual old files; the complete history and log folders are kept.");
         if (Is(name, "debug") && ParentNamed(scan, parent, ".claude"))
             return new("Claude Code debug files", "Agent files", "The .claude/debug directory.",
-                "Debug files may be useful for investigating a current issue.", "Review the files and close active agent sessions before cleanup.", true);
+                "Debug files may be useful for investigating a current issue.",
+                "Open Extensions → Agent cleanup to review individual old debug files after closing Claude Code.", true,
+                "Use Agent cleanup for individual old files; the complete debug folder is kept.");
         if ((direct & Markers.GitPointer) != 0)
             return new("Linked Git checkout", "Git worktrees", "The checkout contains a .git pointer file; it may be a worktree or submodule.",
-                "It may contain source changes or untracked work. No disposable/abandoned status is inferred.",
-                "Review with git status and git worktree list; remove through Git or the owning app after preserving work.", true);
+                "Stop agents, editors and builds using this checkout. Cleanup includes ignored files, which may be unique. Clean Git status does not prove the checkout is unused. Detached commits must already be in a local integration branch.",
+                "Check worktrees here, review the exact folder and move it to the Recycle Bin. Branches and Git registration are kept for recovery. Restore to the original path before reusing it.", true);
         return AiStorage(scan, directory, parent, name, direct, evidence) ?? Additional(scan, directory, parent, name, direct, evidence);
     }
 
