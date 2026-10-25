@@ -40,13 +40,20 @@ public partial class MainWindow
             {
                 if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
             };
-            string? blocked = _scanStale ? "Rescan before deleting another folder."
+            string? recycleRoot = RecycleBinService.RootForFolder(path);
+            string? blocked = recycleRoot is not null ? null : _scanStale ? "Rescan before deleting another folder."
                 : FolderDeletionTarget.SelectionBlockReason(scan, link);
-            var recycle = new MenuItem { Header = "Move to Recycle Bin", IsEnabled = blocked is null, ToolTip = blocked };
+            var recycle = new MenuItem
+            {
+                Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
+                ToolTip = recycleRoot is null ? blocked : $"Permanently deletes your recycled items on {recycleRoot}"
+            };
             ToolTipService.SetShowOnDisabled(recycle, true);
             recycle.Click += async (_, _) =>
             {
-                if (CanUseFolderMenu(scan)) await DeleteFolderAsync(scan, link);
+                if (!CanUseFolderMenu(scan)) return;
+                if (recycleRoot is not null) await EmptyRecycleBinAsync(recycleRoot);
+                else await DeleteFolderAsync(scan, link);
             };
             menu.Items.Add(open); menu.Items.Add(recycle);
             var recheck = new MenuItem { Header = "Recheck this folder" };

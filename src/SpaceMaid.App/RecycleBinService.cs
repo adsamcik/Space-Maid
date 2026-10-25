@@ -63,6 +63,14 @@ internal sealed class RecycleBinService
         return completion.Task;
     }
 
+    internal static string? RootForFolder(string path)
+    {
+        if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' || path[2] != '\\') return null;
+        string folder = path[3..].TrimEnd('\\');
+        return folder.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)
+            || folder.Equals("Recycler", StringComparison.OrdinalIgnoreCase) ? ValidateRoot(path[..3]) : null;
+    }
+
     internal static string ValidateRoot(string root)
     {
         if (root is null || root.Length != 3 || !char.IsAsciiLetter(root[0]) || root[1] != ':' || root[2] != '\\')

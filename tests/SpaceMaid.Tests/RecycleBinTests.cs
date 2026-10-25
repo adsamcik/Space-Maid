@@ -9,6 +9,21 @@ namespace SpaceMaid.Tests;
 public sealed class RecycleBinTests
 {
     [Theory]
+    [InlineData(@"G:\$Recycle.Bin", @"G:\")]
+    [InlineData(@"c:\$recycle.bin\", @"C:\")]
+    [InlineData(@"G:\Recycler", @"G:\")]
+    [InlineData(@"G:\", null)]
+    [InlineData(@"G:\folder\$Recycle.Bin", null)]
+    [InlineData(@"G:\$Recycle.Bin\S-1-current", null)]
+    [InlineData(@"G:\$Recycle.Bin-backup", null)]
+    [InlineData(@"G:\folder\..\$Recycle.Bin", null)]
+    [InlineData(@"\\server\share\$Recycle.Bin", null)]
+    [InlineData(@"\\?\G:\$Recycle.Bin", null)]
+    [InlineData("", null)]
+    public void OnlyDriveRecycleBinFoldersOfferDriveCleanup(string path, string? expectedRoot) =>
+        Assert.Equal(expectedRoot, RecycleBinService.RootForFolder(path));
+
+    [Theory]
     [InlineData(typeof(RecycleBinService.QueryInfo32), 20, 4, 12)]
     [InlineData(typeof(RecycleBinService.QueryInfo64), 24, 8, 16)]
     public void NativeQueryLayoutsMatchWindowsSdk(Type type, int size, int bytesOffset, int itemsOffset)

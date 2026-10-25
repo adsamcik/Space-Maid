@@ -45,17 +45,18 @@ public partial class MainWindow
     private async void EmptyRecycleBin_Click(object sender, RoutedEventArgs e) => await EmptySelectedRecycleBinAsync();
     private async void RefreshRecycleBin_Click(object sender, RoutedEventArgs e) => await RefreshRecycleBinAsync();
 
-    internal async Task EmptySelectedRecycleBinAsync()
+    internal Task EmptySelectedRecycleBinAsync() => EmptyRecycleBinAsync(Path.GetPathRoot(_currentPath) ?? "");
+
+    private async Task EmptyRecycleBinAsync(string root)
     {
         if (_closing || _work is not null || _browsing || _openingPath) return;
-        var task = EmptyRecycleBinCoreAsync(); _cleanupTask = task;
+        var task = EmptyRecycleBinCoreAsync(root); _cleanupTask = task;
         try { await task; }
         finally { if (ReferenceEquals(_cleanupTask, task)) _cleanupTask = null; UpdateUpdateButton(); }
     }
 
-    private async Task EmptyRecycleBinCoreAsync()
+    private async Task EmptyRecycleBinCoreAsync(string root)
     {
-        string root = Path.GetPathRoot(_currentPath) ?? "";
         var scan = _snapshot; string? scannedVolume = _snapshotVolumeId, confirmedVolume = null;
         var operations = Operations;
         using var work = new CancellationTokenSource();
