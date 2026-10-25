@@ -366,6 +366,32 @@ public sealed class GitWorktreeAnalyzerTests
     }
 
     [Fact]
+    public async Task UnrelatedAncestorActivityDoesNotInvalidateAnIntegratedCheckout()
+    {
+        using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        using var stop = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long changes = 0;
+        var activity = Task.Factory.StartNew(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                Directory.SetLastWriteTimeUtc(fixture.Path, repo.Old.AddTicks(Interlocked.Increment(ref changes)));
+                started.TrySetResult(); Thread.Yield();
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var assessment = await GitWorktreeAnalyzer.AssessAsync(scan, Finding(scan, repo.Checkout), "refs/heads/main");
+            Assert.True(assessment.Recommended, assessment.Reason); Assert.True(assessment.Integrated);
+            Assert.True(Interlocked.Read(ref changes) > 1);
+        }
+        finally { stop.Cancel(); await activity.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
+    [Fact]
     public async Task ManagedQuarantineAndRestorePreserveTheExactBranchAndPauseAutomaticRetirement()
     {
         using var fixture = new TestDirectory(); using var repo = await GitFixture.Create(fixture.Path);

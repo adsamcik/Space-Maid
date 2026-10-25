@@ -91,16 +91,21 @@ internal sealed class AppUpdates : IDisposable
         if (_stopped || !Supported) return Task.CompletedTask;
         if (Operation is not null) return Operation;
         _operationCancellation = new();
-        Operation = RunAsync(work, _operationCancellation.Token);
+        // Publish ownership before a fast continuation can finish and clear it.
+        // Task.Yield alone can race this assignment on a posted context.
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = RunAsync(work, _operationCancellation.Token, start.Task);
+        Operation = operation;
+        start.SetResult();
         Notify();
-        return Operation;
+        return operation;
     }
 
-    private async Task RunAsync(Func<CancellationToken, Task> work, CancellationToken token)
+    private async Task RunAsync(Func<CancellationToken, Task> work, CancellationToken token, Task start)
     {
-        await Task.Yield();
+        await start;
         Error = null;
-        try { await work(token); }
+        try { token.ThrowIfCancellationRequested(); await work(token); }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         { Status = Ready ? "Ready to restart" : "Cancelled"; _log.Record("update-cancelled", new { }); }
         catch (Exception error)

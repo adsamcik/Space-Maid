@@ -140,7 +140,11 @@ internal static class CursorChatCleanup
         var stable = Open(path, directory, directory ? 0x81u : 0x80000080u, share);
         try
         {
-            if (Read(stable, directory) != before) throw new IOException("A Cursor path changed before its stable lease was acquired.");
+            var after = Read(stable, directory);
+            // Ancestor metadata changes when unrelated siblings are created.
+            // Every selected chat member is still compared in full by Lease.
+            if (directory ? !before.IsSameObjectAs(after) : after != before)
+                throw new IOException("A Cursor path changed before its stable lease was acquired.");
             return stable;
         }
         catch { stable.Dispose(); throw; }

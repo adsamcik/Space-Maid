@@ -410,7 +410,8 @@ public static partial class GitWorktreeAnalyzer
             // then pin this exact identity against data writes and replacement.
             var data = Open(path, before.Directory ? 0x81u : 0x80000080u); _handles.Add(data);
             var after = ReadMetadata(data);
-            if (before != after) throw new IOException("A Git path changed before its stable read lease could be acquired.");
+            if (before.Directory ? !after.Directory || before.Identity != after.Identity : before != after)
+                throw new IOException("A Git path changed before its stable read lease could be acquired.");
             _paths.Add(path, data);
             return (after.Directory, after.Modified);
         }

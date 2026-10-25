@@ -11,6 +11,31 @@ namespace SpaceMaid.Tests;
 
 public sealed class UpdateTests
 {
+    [Fact]
+    public async Task FastCompletionDoesNotLeaveTheUpdaterBusyOrPreventTheNextOperation()
+    {
+        using var fixture = new TestDirectory();
+        var manager = new StubUpdateManager(fixture.Path);
+        using var updates = new AppUpdates(manager, Path.Join(fixture.Path, "settings.json"), Path.Join(fixture.Path, "Logs"));
+        var previous = SynchronizationContext.Current;
+        Task check;
+        try
+        {
+            // A posted continuation can finish before its caller resumes.
+            // Make that ordering deterministic instead of relying on load.
+            SynchronizationContext.SetSynchronizationContext(new ImmediateContext());
+            check = updates.CheckAsync();
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        await check;
+        Assert.False(updates.Busy); Assert.Null(updates.Operation);
+        await updates.DownloadAsync();
+        Assert.True(updates.Ready); Assert.Equal(1, manager.Downloads); Assert.False(updates.Busy);
+    }
+
+    private sealed class ImmediateContext : SynchronizationContext
+    { public override void Post(SendOrPostCallback callback, object? state) => callback(state); }
+
     [Theory]
     [InlineData("owner/Space-Maid", "https://github.com/owner/Space-Maid")]
     [InlineData("https://github.com/owner/repo", null)]

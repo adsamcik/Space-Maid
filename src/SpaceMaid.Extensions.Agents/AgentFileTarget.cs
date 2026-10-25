@@ -6,7 +6,10 @@ using Microsoft.Win32.SafeHandles;
 
 namespace SpaceMaid.Extensions.Agents;
 
-internal sealed record AgentFileIdentity(ulong Volume, ulong Low, ulong High, long Length, long LastWriteFileTime);
+internal sealed record AgentFileIdentity(ulong Volume, ulong Low, ulong High, long Length, long LastWriteFileTime)
+{
+    internal bool IsSameObjectAs(AgentFileIdentity other) => Volume == other.Volume && Low == other.Low && High == other.High;
+}
 
 internal static class AgentFileTarget
 {
@@ -82,11 +85,7 @@ internal static class AgentFileTarget
         try
         {
             var data = Metadata(handle);
-            const FileAttributes cloud = (FileAttributes)(0x1000 | 0x40000 | 0x400000);
-            var attributes = (FileAttributes)data.Attributes;
-            if ((attributes & (FileAttributes.ReparsePoint | cloud)) != 0 || attributes.HasFlag(FileAttributes.Directory) != directory
-                || !directory && (data.Links != 1 || attributes.HasFlag(FileAttributes.ReadOnly)))
-                throw new IOException("Linked, cloud-only, read-only or multiply linked history is kept.");
+            ValidateMetadata(data, directory);
             if (!lockData) return handle;
             var before = Read(handle);
             // FILE_READ_ATTRIBUTES alone does not enforce data-write sharing.
@@ -97,12 +96,24 @@ internal static class AgentFileTarget
             if (stable.IsInvalid) { stable.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "The history file is in use. Close all agent clients before cleanup."); }
             try
             {
-                if (Read(stable) != before) throw new IOException("An agent path changed before its stable lease could be acquired.");
+                var after = Read(stable, directory);
+                // Sibling activity can update ancestor directory size/time.
+                // Pin its native object; selected files still need an exact revision.
+                if (directory ? !before.IsSameObjectAs(after) : after != before)
+                    throw new IOException("An agent path changed before its stable lease could be acquired.");
                 handle.Dispose(); return stable;
             }
             catch { stable.Dispose(); throw; }
         }
         catch { handle.Dispose(); throw; }
+    }
+    private static void ValidateMetadata(FileMetadata data, bool directory)
+    {
+        const FileAttributes cloud = (FileAttributes)(0x1000 | 0x40000 | 0x400000);
+        var attributes = (FileAttributes)data.Attributes;
+        if ((attributes & (FileAttributes.ReparsePoint | cloud)) != 0 || attributes.HasFlag(FileAttributes.Directory) != directory
+            || !directory && (data.Links != 1 || attributes.HasFlag(FileAttributes.ReadOnly)))
+            throw new IOException("Linked, cloud-only, read-only or multiply linked history is kept.");
     }
     private static FileMetadata Metadata(SafeFileHandle handle)
     {
@@ -114,9 +125,11 @@ internal static class AgentFileTarget
         return metadata;
     }
     private static bool RecognizesProvider(int result) => result >= 0 || result == unchecked((int)0x800700EA);
-    private static AgentFileIdentity Read(SafeFileHandle handle)
+    private static AgentFileIdentity Read(SafeFileHandle handle, bool? directory = null)
     {
-        var data = Metadata(handle); byte[] identity = new byte[24];
+        var data = Metadata(handle);
+        if (directory is { } expectedDirectory) ValidateMetadata(data, expectedDirectory);
+        byte[] identity = new byte[24];
         if (!GetFileInformationByHandleEx(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
         ulong low = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(8)), high = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(16));
         if (low == 0 && high == 0) throw new IOException("Windows did not provide a usable file identity.");
