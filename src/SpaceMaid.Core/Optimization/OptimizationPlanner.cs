@@ -13,17 +13,19 @@ public static class OptimizationPlanner
         var files = new List<OptimizationFile>(); var skipped = new List<OptimizationSkipped>();
         int examined = 0, next = scan.FileCount == 0 ? 0 : Math.Max(0, cursor) % scan.FileCount;
         long bytes = 0, mutationBudget = 0; bool limited = false;
-        if (policy.ScopePath.Length == 0 || scan.FileCount == 0) return Result(true);
+        if (policy.ScopePath.Length == 0 || scan.FileCount == 0) { next = 0; return Result(true); }
         DateTime now = nowUtc ?? DateTime.UtcNow;
         var enabled = policy.EnabledRules.ToHashSet(StringComparer.Ordinal);
         var locations = findings.Where(f => f.AutomaticCleanup is { } rule && enabled.Contains(rule.ConsentKey(f.ProviderId))
                 && OptimizationPolicy.Covers(policy.ScopePath, f.Path)).GroupBy(f => f.DirectoryIndex)
             .ToDictionary(g => g.Key, g => g.OrderBy(f => f.ProviderId, StringComparer.Ordinal).ToArray());
-        if (locations.Count == 0) return Result(true);
+        if (locations.Count == 0) { next = 0; return Result(true); }
         // Checkout retirement and exact generated-file eviction are separate actions.
         var toolManaged = findings.Where(f => f.CleanupBlockReason.Length > 0).Select(f => f.Path).ToArray();
         var seen = new HashSet<int>(); var watch = Stopwatch.StartNew(); int index = next;
-        for (int visited = 0; visited < scan.FileCount; visited++, index = (index + 1) % scan.FileCount)
+        // A continuation finishes the current sweep at the end of the scan.
+        // Wrapping here repeatedly re-proves old candidates on proof-limited pages.
+        for (; index < scan.FileCount; index++)
         {
             token.ThrowIfCancellationRequested();
             if (examined >= policy.MaxEntriesPerRun || watch.Elapsed.TotalSeconds >= policy.MaxInspectionSeconds) return Result(false);
@@ -60,12 +62,18 @@ public static class OptimizationPlanner
                     || Math.Max(input.LastWriteFileTime, input.CreationFileTime) >= cutoff) continue;
             }
             long estimate = scan.HasAllocationData ? record.AllocatedBytes : record.LogicalBytes; long cost = Math.Max(estimate, record.LogicalBytes);
-            if (cost < 0 || cost > policy.MaxBytesPerRun - mutationBudget) { limited = true; continue; }
+            if (cost < 0 || cost > policy.MaxBytesPerRun)
+            {
+                limited = true;
+                if (skipped.Count < 128) skipped.Add(new(path, "This file exceeds the full run size limit; kept."));
+                continue;
+            }
+            if (cost > policy.MaxBytesPerRun - mutationBudget) { next = index; return Result(false); }
             files.Add(new(path, location.Path, rule.ConsentKey(location.ProviderId), record.LogicalBytes, estimate,
                 record.LastWriteFileTime, record.CreationFileTime, scan.HasAllocationData ? record.Identity : null, rule)
                 { ProviderId = location.ProviderId, ScanRecordIndex = index });
             bytes = checked(bytes + estimate); mutationBudget += cost;
-            if (files.Count >= policy.MaxFilesPerRun) return Result(false);
+            if (files.Count >= policy.MaxFilesPerRun) return Result(index == scan.FileCount - 1);
         }
         return Result(true);
 

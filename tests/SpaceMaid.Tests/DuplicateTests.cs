@@ -9,6 +9,21 @@ namespace SpaceMaid.Tests;
 public sealed class DuplicateTests
 {
     [Fact]
+    public async Task LaterPagesRetainEarlierIssuesWithoutChangingEarlierResults()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 3; i++) File.WriteAllBytes(Path.Join(fixture.Path, i + ".bin"), new byte[4096]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1, MaximumFiles = 1, MaximumReadBytes = 1 });
+        var first = await session.ContinueAsync(); Assert.Empty(first.Issues);
+        var second = await session.ContinueAsync(); Assert.Equal(2, second.Issues.Count);
+        var last = await session.ContinueAsync();
+        Assert.False(session.CanContinue); Assert.False(last.Complete); Assert.Equal(3, last.Issues.Count);
+        Assert.Empty(first.Issues); Assert.Equal(2, second.Issues.Count);
+        Assert.All(second.Issues, issue => Assert.Contains(issue, last.Issues));
+    }
+
+    [Fact]
     public async Task TimedOutContentStaysUnknownWhileOtherPairsCanProgress()
     {
         using var fixture = new TestDirectory();

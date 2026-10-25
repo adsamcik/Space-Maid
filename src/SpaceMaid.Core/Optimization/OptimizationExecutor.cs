@@ -11,8 +11,9 @@ public static class OptimizationExecutor
         var files = new List<OptimizationFile>(); var skipped = preview.Skipped.ToList(); int next = preview.NextCursor;
         var limits = (policy ?? new()).Validate();
         var budget = new ProofBudget(limits.MaxProofBytesPerRun, TimeSpan.FromSeconds(limits.MaxInspectionSeconds));
-        foreach (var file in preview.Files)
+        for (int index = 0; index < preview.Files.Count; index++)
         {
+            var file = preview.Files[index];
             token.ThrowIfCancellationRequested();
             try { files.Add(RegenerableFileDeleter.Capture(file, budget, token, limits.KeepRecentDays)); }
             catch (Exception error) when (Expected(error)) { skipped.Add(new(file.Path, error.Message)); }
@@ -20,7 +21,9 @@ public static class OptimizationExecutor
             {
                 // Progress past evidence that cannot fit this page. A later
                 // sweep may retry it, without starving later candidates.
-                if (file.ScanRecordIndex >= 0) next = file.ScanRecordIndex + 1;
+                // If this was the last candidate, retain the planner's cursor
+                // instead of restarting an already inspected tail of the scan.
+                if (index + 1 < preview.Files.Count && file.ScanRecordIndex >= 0) next = file.ScanRecordIndex + 1;
                 break;
             }
         }

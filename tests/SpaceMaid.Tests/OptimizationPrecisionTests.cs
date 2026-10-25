@@ -15,6 +15,70 @@ namespace SpaceMaid.Tests;
 public sealed class OptimizationPrecisionTests
 {
     [Fact]
+    public async Task ByteLimitedPagesReachEveryFittingFileAndKeepOversizedFilesExplicit()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 3; i++) OptimizationTests.MakePython(fixture.Path, "small_" + i);
+        OptimizationTests.MakePython(fixture.Path, "oversized");
+        string large = Path.Join(fixture.Path, "__pycache__", "oversized.cpython-313.pyc");
+        using (var output = File.OpenWrite(large)) output.SetLength(32 * 1024);
+        OptimizationTests.Age(fixture.Path);
+        var (scan, findings, policy) = await Read(fixture.Path);
+        var expected = OptimizationPlanner.Create(scan, findings, policy).Files.Where(file => file.Path != large).ToArray();
+        Assert.Equal(3, expected.Length);
+        policy = policy with { MaxBytesPerRun = expected.Max(file => Math.Max(file.LogicalBytes, file.EstimatedBytes)) };
+        var eligible = new HashSet<string>(); var skipped = new List<OptimizationSkipped>(); int cursor = 0;
+        for (int page = 0; page <= scan.FileCount; page++)
+        {
+            var preview = await new FileOperations().PreviewOptimizationAsync(scan, findings, policy, cursor: cursor);
+            Assert.InRange(preview.EstimatedBytes, 0, policy.MaxBytesPerRun);
+            foreach (var file in preview.Files) Assert.True(eligible.Add(file.Path));
+            skipped.AddRange(preview.Skipped);
+            if (preview.NextCursor == 0) break;
+            Assert.True(preview.NextCursor > cursor); cursor = preview.NextCursor;
+        }
+        Assert.True(expected.Select(file => file.Path).ToHashSet().SetEquals(eligible));
+        Assert.Contains(skipped, item => item.Path == large && item.Reason.Contains("full run size limit", StringComparison.Ordinal));
+        Assert.True(File.Exists(large)); Assert.All(eligible, path => Assert.True(File.Exists(path)));
+    }
+
+    [Fact]
+    public async Task ProofLimitedSweepFinishesWithoutRevisitingEarlierCandidates()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 8; i++) OptimizationTests.MakePython(fixture.Path, "module_" + i);
+        OptimizationTests.Age(fixture.Path);
+        var (scan, findings, policy) = await Read(fixture.Path);
+        var expected = OptimizationPlanner.Create(scan, findings, policy).Files.Select(file => file.Path).ToHashSet();
+        policy = policy with { MaxProofBytesPerRun = 1 };
+        var attempted = new HashSet<string>(); var operations = new FileOperations(); int cursor = 0;
+        OptimizationPreview? last = null;
+        for (int page = 0; page <= scan.FileCount; page++)
+        {
+            last = await operations.PreviewOptimizationAsync(scan, findings, policy, cursor: cursor);
+            Assert.Empty(last.Files);
+            foreach (var item in last.Skipped.Where(item => expected.Contains(item.Path))) Assert.True(attempted.Add(item.Path), item.Path);
+            if (last.NextCursor == 0) break;
+            Assert.True(last.NextCursor > cursor); cursor = last.NextCursor;
+        }
+        Assert.NotNull(last); Assert.Equal(0, last.NextCursor);
+        Assert.False(last.CoverageComplete); Assert.True(last.Limited);
+        Assert.True(expected.SetEquals(attempted)); Assert.Equal(8, attempted.Count);
+        Assert.All(expected, path => Assert.True(File.Exists(path)));
+    }
+
+    [Fact]
+    public async Task TerminalPlannerPagesResetTheCursorInsteadOfWrapping()
+    {
+        using var fixture = new TestDirectory(); OptimizationTests.MakePython(fixture.Path, "module"); OptimizationTests.Age(fixture.Path);
+        var (scan, findings, policy) = await Read(fixture.Path);
+        var tail = OptimizationPlanner.Create(scan, findings, policy with { MaxEntriesPerRun = 1, MaxFilesPerRun = 1 }, cursor: scan.FileCount - 1);
+        Assert.True(tail.CoverageComplete); Assert.Equal(0, tail.NextCursor); Assert.Equal(1, tail.ExaminedEntries);
+        var noRules = OptimizationPlanner.Create(scan, [], policy, cursor: 1);
+        Assert.True(noRules.CoverageComplete); Assert.Equal(0, noRules.NextCursor);
+    }
+
+    [Fact]
     public async Task MypyNamespaceDirectoriesNeverSubstituteForHashedSourceFiles()
     {
         using var fixture = new TestDirectory();

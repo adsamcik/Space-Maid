@@ -75,7 +75,7 @@ public partial class OptimizationWindow : Window
             _previewPolicy = policy;
             _preview = await _operations.PreviewOptimizationAsync(_scan, _findings, _previewPolicy, work.Token, cursor: _cursor);
             _cursor = _preview.NextCursor;
-            PreviewButton.Content = _preview.CoverageComplete ? "Preview" : "Continue preview";
+            PreviewButton.Content = !_preview.CoverageComplete && _preview.NextCursor > 0 ? "Continue preview" : "Preview";
             FileList.ItemsSource = _preview.Files.Select(f => new DisplayFile(f.Path, Path.GetRelativePath(_scan.RootPath, f.Path),
                 SizeText.Format(f.EstimatedBytes), f.Rule.Name + (f.Evidence?.Variant is { Length: > 0 } variant && variant != "." ? " · " + variant : ""), f.ContainerPath)).ToArray();
             ShowResults(_preview.Skipped);

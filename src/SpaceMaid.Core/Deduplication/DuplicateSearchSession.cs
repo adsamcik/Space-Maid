@@ -15,6 +15,7 @@ public sealed class DuplicateSearchSession : IDisposable
     private readonly Dictionary<long, List<Captured>> _sizes = [];
     private readonly Dictionary<(long Bytes, string Hash), List<DuplicateFile>> _hashes = [];
     private readonly Dictionary<(long Bytes, string Hash), List<DuplicateFile>> _verified = [];
+    private readonly List<DuplicateSearchIssue> _issues = [];
     private int _cursor, _aliases;
     private bool _inputComplete, _capacityReached, _unknown, _disposed;
     public bool CanContinue { get; private set; } = true;
@@ -47,7 +48,7 @@ public sealed class DuplicateSearchSession : IDisposable
     private DuplicateSearchResult Page(IProgress<DuplicateSearchProgress>? progress, CancellationToken token)
     {
         var budget = new DuplicateFinder.ReadBudget(_policy.MaximumReadBytes, _policy.MaximumTime, token);
-        var issues = new List<DuplicateSearchIssue>(); int examined = 0;
+        int examined = 0;
         try
         {
             // Retained matches get a turn before another hash can exhaust the
@@ -133,10 +134,10 @@ public sealed class DuplicateSearchSession : IDisposable
             : "Comparison complete for this scan. Physical savings remain separate from redundant content.";
         var groups = _verified.Where(g => g.Value.Count > 1).Select(g => new DuplicateGroup(g.Key.Hash, g.Key.Bytes, Array.AsReadOnly(g.Value.ToArray())))
             .OrderByDescending(g => g.RedundantLogicalBytes).ToArray();
-        return new(groups, issues.AsReadOnly(), examined, budget.Bytes, _aliases, complete, token.IsCancellationRequested,
+        return new(groups, Array.AsReadOnly(_issues.ToArray()), examined, budget.Bytes, _aliases, complete, token.IsCancellationRequested,
             CanContinue ? _cursor : -1, note);
 
-        void Issue(string path, string reason) { _unknown = true; if (issues.Count < 500) issues.Add(new(path, reason)); }
+        void Issue(string path, string reason) { _unknown = true; if (_issues.Count < 500) _issues.Add(new(path, reason)); }
 
         void ComparePending()
         {

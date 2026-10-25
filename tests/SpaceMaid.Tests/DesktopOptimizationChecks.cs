@@ -24,6 +24,7 @@ public sealed partial class DesktopTests
         var policy = new OptimizationPolicy { ScopePath = fixture.Path, EnabledRules = [rule.ConsentKey(DeveloperOpportunityFixture.ProviderId)] };
         string settingsPath = Path.Join(settingsFixture.Path, "optimization-settings.json");
         var operations = new FileOperations(); int executions = 0;
+        CheckProofLimitedPreviewCompletion(scan, findings, operations, policy);
         var window = new OptimizationWindow(scan, findings, operations, new(policy),
             p => new OptimizationSettings(p).Save(settingsPath), async (preview, chosen, token) =>
             { executions++; return await operations.OptimizeAsync(scan, findings, preview, chosen, DeveloperOpportunityFixture.Find, token, (_, _) => { }); });
@@ -69,6 +70,30 @@ public sealed partial class DesktopTests
         }
         finally { window.Close(); }
         CheckAutomaticOptimizationSchedule(app);
+    }
+
+    private static void CheckProofLimitedPreviewCompletion(ScanSnapshot scan,
+        IReadOnlyList<SpaceMaid.Core.Analysis.Opportunity> findings, FileOperations operations, OptimizationPolicy policy)
+    {
+        var window = new OptimizationWindow(scan, findings, operations, new(policy with { MaxProofBytesPerRun = 1 }),
+            _ => throw new InvalidOperationException("Preview must not save settings."),
+            (_, _, _) => throw new InvalidOperationException("Preview must not run cleanup."));
+        try
+        {
+            window.ShowActivated = false; window.ShowInTaskbar = false;
+            window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -10000; window.Top = -10000; window.Show();
+            var preview = (Button)window.FindName("PreviewButton"); var run = (Button)window.FindName("RunButton");
+            int pages = 0;
+            do
+            {
+                preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10)); pages++;
+                Assert.False(run.IsEnabled);
+            } while ((string)preview.Content == "Continue preview" && pages < 25);
+            Assert.Equal(24, pages); Assert.Equal("Preview", preview.Content);
+            Assert.Contains("Partial inspection", ((TextBlock)window.FindName("PreviewText")).Text);
+        }
+        finally { window.Close(); }
     }
 
     private static void CheckAutomaticOptimizationSchedule(Application app)
