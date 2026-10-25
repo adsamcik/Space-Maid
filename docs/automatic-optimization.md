@@ -1,23 +1,27 @@
 # Automatic optimization
 
+The next design priorities and current precision gaps are documented in [storage optimization research](optimization-research.md). Those proposals have not expanded the automatic rules below.
+
 Scan a location, then choose **Auto optimize**. Select the generated-file rules you want, preview exact paths and sizes, and use **Delete previewed files** for a single run. To repeat cleanup, select **Optimize automatically** and **Save settings**. Nothing is enabled by default.
 
-Optimization permanently deletes matching files to release their storage; it does not use or empty the Recycle Bin. Regeneration replaces undo, so choose rules only where you can recreate the files. Original photos, source files, catalogs, folders and files outside each rule's patterns stay in place. Ordinary cleanup retains its existing Recycle Bin behavior.
+Optimization permanently deletes matching files to release their storage; it does not use or empty the Recycle Bin. Regeneration replaces undo, so choose rules only where you can recreate the files. Folders and files outside each rule's patterns stay in place; original-photo locations and catalog records are outside the supported cache roots. Mixed build outputs can still contain unique matching files, including handwritten generated-looking source; the research documents this current admission gap. Ordinary cleanup retains its existing Recycle Bin behavior.
 
 The default protects activity within 14 days and limits a run to 500 files and 512 MiB, using the larger of logical and observed allocated size for the byte limit. Each rule also has a minimum age. These are limits per run, not a target to fill. Larger files stay for manual review. Exclude any file or folder by absolute path; excluding a folder also protects its contents.
 
-| Rule | Generated files | How they return |
+These are the currently detected patterns and expected regeneration under normal producer conditions. They do not prove ownership or rebuildability of every matching file; the research lists the missing admission checks.
+
+| Rule | Detected candidates | Expected regeneration |
 | --- | --- | --- |
-| Python bytecode | `.pyc` / `.pyo` inside a recognized `__pycache__`, with the matching `.py` source still available | Python recompiles the source |
-| .NET intermediate caches | `.cache`, `.g.cs`, `.g.i.cs`, `.AssemblyInfo.cs`, `.AssemblyAttributes.cs` inside `obj` beside a project file | `dotnet build` rebuilds them |
+| Python bytecode | `.pyc` / `.pyo` inside a recognized `__pycache__`, with matching `.py` metadata available | A compatible Python can recompile readable, valid source; current checks do not establish all these conditions |
+| .NET intermediate caches | `.cache`, `.g.cs`, `.g.i.cs`, `.AssemblyInfo.cs`, `.AssemblyAttributes.cs` inside `obj` beside a project file | The matching producer rebuilds its own intermediates when required inputs and tools remain available |
 | mypy type-check caches | `.data.json` / `.meta.json` inside a recognized `.mypy_cache` | mypy recreates incremental analysis |
-| Photo previews | `.png` inside Space Maid's own `thumbnails-v1` cache | Space Maid renders them again from available originals |
+| Photo previews | `.png` inside Space Maid's own `thumbnails-v1` cache | Space Maid renders its generated previews from available originals; unfamiliar copied PNGs have no such producer proof |
 
 The next import, build, type check or preview may take longer. Offline originals must become available before their previews can regenerate. Dependencies, downloaded models, worktrees, agent conversations, test evidence, personal settings, tool-managed stores and generic build folders have no automatic rule. A folder name or an old timestamp alone does not make a file disposable.
 
 Automatic runs are attempted after scans and hourly while the configured scanned location remains open. A lightweight five-minute timer checks whether a run is due; disabled mode has no timer. Scans, cleanup, extension jobs and the optimizer's settings window pause automatic runs. There is no Windows background service and no work while the app is closed. Changing the open scan to a different location does not extend the configured scope. Saving settings in another scanned location explicitly changes that scope.
 
-Before deleting anything, the host rechecks current detection rules, folder coverage and build activity. Even logical-only previews capture native file identities. Execution pins ancestor directories against replacement and takes an exclusive handle to each exact file. New, changed, open, read-only, linked, offline, shared or otherwise protected files are kept. Python source must remain present. Cancellation stops before the next file; completed deletions remain. Directories are never recursively deleted.
+Before deleting anything, the host rechecks current detection rules, folder coverage and build activity. Even logical-only previews capture native file identities. Execution checks file identity, volume, timestamps, additional streams and current attributes before deleting through the exact file's handle. New, changed, open, read-only, linked, offline, shared or otherwise protected files are kept. Current ancestor leases do not yet provide the intended rename protection, and Python source checks establish metadata availability rather than data readability; see the research's direct checks and priorities. Cancellation stops before the next file; completed deletions remain. Directories are never recursively deleted.
 
 NTFS inventories refresh affected metadata after deletion. On filesystems providing only logical inventories, a new scan is required to update estimates and resume unattended runs. Displayed removed bytes describe file contents, not a guarantee about free space: hard links, alternate streams, compression and other filesystem behavior affect allocation. Shared files are excluded by a live link-count check.
 
