@@ -166,6 +166,7 @@ public partial class MainWindow
             if (!_closing && log.Error is not null) BackendStatusText.Text += $" · Logging unavailable: {log.Error}";
             _work = null;
             if (!_closing) SetBusy(false);
+            if (!_closing) _ = Dispatcher.BeginInvoke(new Action(async () => await TryAutomaticOptimizationAsync()));
         }
     }
 

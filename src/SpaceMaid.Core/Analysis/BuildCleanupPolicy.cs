@@ -24,7 +24,7 @@ public static class BuildCleanupProtection
 {
     private static readonly string[] AuthoredSuffixes = [".cs", ".fs", ".vb", ".py", ".rs", ".java", ".kt", ".cpp", ".h", ".hpp", ".csproj", ".fsproj", ".vbproj", ".sln", ".slnx", ".psd", ".blend"];
     public static IReadOnlyDictionary<int, BuildCleanupAssessment> Assess(ScanSnapshot scan, IReadOnlyList<Opportunity> locations,
-        BuildCleanupPolicy policy, CancellationToken token = default, DateTime? nowUtc = null)
+        BuildCleanupPolicy policy, CancellationToken token = default, DateTime? nowUtc = null, bool includeDirectoryActivity = true)
     {
         var result = new Dictionary<int, BuildCleanupAssessment>();
         var subtrees = new Dictionary<int, Activity>();
@@ -132,7 +132,8 @@ public static class BuildCleanupProtection
             bool unknown = record.LastWriteFileTime <= 0 || record.LastWriteFileTime > maximum
                 || record.CreationFileTime < 0 || record.CreationFileTime > maximum
                 || (record.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Offline)) != 0;
-            return new(unknown ? 0 : Math.Max(record.LastWriteFileTime, record.CreationFileTime), unknown);
+            return new(unknown ? 0 : record.IsDirectory && !includeDirectoryActivity ? record.CreationFileTime
+                : Math.Max(record.LastWriteFileTime, record.CreationFileTime), unknown);
         }
     }
 

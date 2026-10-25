@@ -128,6 +128,7 @@
             </Button>
             <Button x:Name="UpdateButton" Content="Update available" Click="Updates_Click" DockPanel.Dock="Right" Padding="10,4" MinHeight="28" Margin="8,0,0,0" Visibility="Collapsed" />
             <Button Content="Extensions" Click="Extensions_Click" DockPanel.Dock="Right" Padding="10,4" MinHeight="28" VerticalAlignment="Center" />
+            <Button Content="Auto optimize" Click="Optimization_Click" DockPanel.Dock="Right" Padding="10,4" MinHeight="28" Margin="0,0,8,0" VerticalAlignment="Center" />
             <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource ViewTab}" GroupName="View" IsChecked="True" Checked="View_Changed" Margin="0,0,22,0" />
               <RadioButton x:Name="OpportunitiesTab" Content="Opportunities" Style="{StaticResource ViewTab}" GroupName="View" Checked="View_Changed" Margin="0,0,22,0" />

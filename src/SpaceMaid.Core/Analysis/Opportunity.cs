@@ -1,3 +1,5 @@
+using SpaceMaid.Core.Optimization;
+
 namespace SpaceMaid.Core.Analysis;
 
 public delegate IReadOnlyList<Opportunity> OpportunityDiscovery(SpaceMaid.Core.Scanning.ScanSnapshot scan, CancellationToken token);
@@ -13,6 +15,8 @@ public sealed record Opportunity(
     public bool IsWorktree { get; init; }
     public bool IsBuildOutput { get; init; }
     public bool IsRegeneratable { get; init; }
+    // Explicit generated-file contract; a cache label or age alone is not consent.
+    public AutomaticCleanupRule? AutomaticCleanup { get; init; }
     // Visible storage whose contents must be managed through its owning tool.
     // Fresh discovery enforces this at preparation and execution, including ancestors.
     public string CleanupBlockReason { get; init; } = "";

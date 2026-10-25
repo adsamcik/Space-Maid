@@ -81,6 +81,7 @@ public sealed partial class DesktopTests
                 window.DriveHistoryPath = Path.Join(fixture.Path, "drive-history.json");
                 window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
                 window.CleanupSettingsPath = Path.Join(fixture.Path, "cleanup-settings.json");
+                window.OptimizationSettingsPath = Path.Join(fixture.Path, "optimization-settings.json");
                 window.UpdateSettingsPath = Path.Join(fixture.Path, "update-settings.json");
                 window.Operations = new(recycleBins: new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call.")));
                 window.LoadBuildCleanupSettings();
@@ -634,6 +635,8 @@ public sealed partial class DesktopTests
                 Assert.True(Directory.Exists(groupedRoot));
 
                 string artifactRoot = FindRepository();
+                BeginWorkflow("automatic optimization preview and execution");
+                CheckOptimization(app, artifactRoot);
                 var recyclePreview = new RecycleFolderWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
 #pragma warning disable WPF0001 // Exercise the same Fluent theme through its experimental C# API in this smoke test only.
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })

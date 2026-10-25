@@ -1,5 +1,6 @@
 using SpaceMaid.Core.Analysis;
 using System.IO;
+using SpaceMaid.Core.Optimization;
 
 namespace SpaceMaid.Extensions.Developer.Analysis;
 
@@ -37,6 +38,7 @@ public static partial class OpportunityDetector
                 IsWorktree = rule.Category == "Git worktrees",
                 IsBuildOutput = rule.Category == "Build output",
                 CleanupBlockReason = rule.BlockReason,
+                AutomaticCleanup = AutomaticRule(rule.Title, name),
                 IsRegeneratable = rule.Title is ".NET build output" or "Python bytecode cache" or "Cargo build output"
                     or "SvelteKit build output" or "Nuxt build output" || rule.Category == "Build output" && Is(name, ".next")
             });
@@ -46,6 +48,21 @@ public static partial class OpportunityDetector
     }
 
     private sealed record Rule(string Title, string Category, string Reason, string Caution, string Action, bool Manual = false, string BlockReason = "");
+
+    private static AutomaticCleanupRule? AutomaticRule(string title, ReadOnlySpan<char> name) => title switch
+    {
+        "Python bytecode cache" => PythonBytecode,
+        ".NET build output" when name.Equals("obj", StringComparison.OrdinalIgnoreCase) => DotNetIntermediate,
+        "mypy cache" => MypyCache,
+        _ => null
+    };
+    private static readonly AutomaticCleanupRule PythonBytecode = new("python-bytecode", "Python bytecode",
+        "Python recreates bytecode from its matching source file. The next import may be slower.", [".pyc", ".pyo"], requiresPythonSource: true);
+    private static readonly AutomaticCleanupRule DotNetIntermediate = new("dotnet-intermediate", ".NET intermediate caches",
+        "dotnet build regenerates compiler caches and generated C# files. The next build may be slower.",
+        [".cache", ".g.cs", ".g.i.cs", ".AssemblyInfo.cs", ".AssemblyAttributes.cs"]);
+    private static readonly AutomaticCleanupRule MypyCache = new("mypy-incremental", "mypy type-check caches",
+        "mypy regenerates incremental type-check data. The next check may be slower.", [".data.json", ".meta.json"]);
 
     private static Rule? Classify(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name, MarkerEvidence evidence)
     {

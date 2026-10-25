@@ -1,0 +1,75 @@
+<Window x:Class="SpaceMaid.App.OptimizationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Automatic optimization" Width="980" Height="790" MinWidth="720" MinHeight="640"
+        WindowStartupLocation="CenterOwner" Closing="Window_Closing">
+    <Grid Margin="20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <DockPanel>
+                <TextBlock Text="Hourly while open" DockPanel.Dock="Right" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+                <CheckBox x:Name="AutomaticBox" Content="Optimize automatically" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </DockPanel>
+            <TextBlock Text="Permanently delete old generated files from selected rules. Originals, folders and unfamiliar files stay." TextWrapping="Wrap" Margin="0,7,0,5"/>
+            <TextBlock x:Name="ScopeText" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Opacity="0.7"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" x:Name="PolicyControls" Margin="0,10,0,0">
+            <WrapPanel VerticalAlignment="Center">
+                <TextBlock Text="Keep activity within" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="DaysBox" Width="48" VerticalContentAlignment="Center" AutomationProperties.Name="Days of recent activity to keep"/>
+                <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,22,0"/>
+                <TextBlock Text="Limit per run" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="LimitBox" Width="65" VerticalContentAlignment="Center" AutomationProperties.Name="Maximum megabytes per optimization run"/>
+                <TextBlock Text="MiB · up to 500 files" VerticalAlignment="Center" Margin="6,0,0,0"/>
+            </WrapPanel>
+            <Expander Header="Excluded locations" Margin="0,8,0,8">
+                <TextBox x:Name="ExclusionsBox" AcceptsReturn="True" Height="75" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" AutomationProperties.Name="Excluded absolute paths, one per line" ToolTip="Absolute local paths, one per line. A folder also excludes its contents."/>
+            </Expander>
+        </StackPanel>
+        <ScrollViewer Grid.Row="2" MaxHeight="100" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
+            <ItemsControl x:Name="RuleList">
+                <ItemsControl.ItemTemplate><DataTemplate>
+                    <CheckBox IsChecked="{Binding Enabled}" HorizontalContentAlignment="Stretch" Margin="0,3,0,5" AutomationProperties.Name="{Binding Name}">
+                        <StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding Regeneration}" TextWrapping="Wrap" FontSize="12" Opacity="0.7"/></StackPanel>
+                    </CheckBox>
+                </DataTemplate></ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        <Grid Grid.Row="3">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,8">
+                <Button x:Name="PreviewButton" DockPanel.Dock="Right" Content="Preview" Click="Preview_Click" Padding="14,5"/>
+                <TextBlock x:Name="PreviewText" Text="Select rules, then preview the exact files." TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            </DockPanel>
+            <TabControl Grid.Row="1">
+                <TabItem Header="Generated files">
+                    <DataGrid x:Name="FileList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Single" GridLinesVisibility="None" EnableRowVirtualization="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="File" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
+                                <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"/>
+                            <DataGridTextColumn Header="Rule" Binding="{Binding Rule}" Width="165"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </TabItem>
+                <TabItem Header="Kept / results"><DataGrid x:Name="ResultList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="None">
+                    <DataGrid.Columns><DataGridTextColumn Header="File or folder" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
+                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn><DataGridTextColumn Header="Result" Binding="{Binding Reason}" Width="*"/></DataGrid.Columns>
+                </DataGrid></TabItem>
+            </TabControl>
+        </Grid>
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Margin="0,0,0,10"/>
+            <DockPanel Grid.Row="1">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="SaveButton" Content="Save settings" Click="Save_Click" Padding="14,6" Margin="0,0,8,0"/>
+                    <Button x:Name="RunButton" Content="Delete previewed files" Click="Run_Click" IsEnabled="False" Padding="14,6" Margin="0,0,8,0"/>
+                    <Button x:Name="CloseButton" Content="Close" Click="Close_Click" Padding="14,6"/>
+                </StackPanel>
+            </DockPanel>
+        </Grid>
+    </Grid>
+</Window>

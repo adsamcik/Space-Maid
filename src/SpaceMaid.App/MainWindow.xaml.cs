@@ -49,6 +49,7 @@ public partial class MainWindow : Window
         }
         if (!_closing) await InitializeExtensionsAsync();
         if (!_closing) InitializeUpdates();
+        if (!_closing) InitializeOptimization();
     }
 
     internal void SetScanTarget(string path)
@@ -187,12 +188,15 @@ public partial class MainWindow : Window
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
         var scanHelper = _scanHelper;
         SaveColumnLayout();
-        _closing = true; _opportunitySearchTimer.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        _closing = true; _opportunitySearchTimer.Stop(); _optimizationTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
         bool workersStopped = true;
         try
         {
             if (_updates is not null) await _updates.StopAsync();
+            if (_optimizationTask is not null)
+                try { await _optimizationTask; }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Optimization shutdown: {error}"); }
             if (_cleanupTask is not null)
                 try { await _cleanupTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Cleanup shutdown: {error}"); }

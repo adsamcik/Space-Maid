@@ -5,6 +5,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 - **Explore** — a sortable folder tree and treemap, with live scan results.
 - **Opportunities** — grouped build output, caches, dependencies and Git worktrees, with configurable activity filters and live checks before cleanup.
   Includes [AI tool history, checkpoints and local model storage](docs/ai-storage-coverage.md), with tool-specific advice and protected shared stores.
+- **Auto optimize** — opt-in cleanup of old generated files, shared across extensions, with per-rule controls, exclusions, exact previews and run limits. [Automatic optimization](docs/automatic-optimization.md) describes coverage and safeguards.
 - **Apps** — installation folders, measured sizes and quick access in Explorer.
 - **Photos** — collections, exact duplicate review and related RAW/JPEG/sidecar files.
 - **Extensions** — trusted local workflows, including an optional local assistant.
@@ -24,7 +25,7 @@ The same helper accelerates folder scans, cleanup review, rechecks and app-size 
 
 The host's shared `FileOperations` API chooses the available metadata backend per request. Scanning, folder measurement, cleanup review/planning, worktree and build-activity checks, refreshes and extension metadata discovery use that service. Photo discovery streams bounded batches of current directory metadata; size measurements can use scoped NTFS queries. Recycling, emptying the bin and making files online-only use their Windows Shell or sync-provider APIs through the same entrypoint, retaining confirmation and live identity checks. Callers do not select backends or request elevation themselves.
 
-Folder and agent-file cleanup move the confirmed items to the Recycle Bin. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Photos cleanup is currently disabled.
+Folder and agent-file cleanup move the confirmed items to the Recycle Bin. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Cleanup of original photos is currently disabled.
 
 ## Build from source
 
