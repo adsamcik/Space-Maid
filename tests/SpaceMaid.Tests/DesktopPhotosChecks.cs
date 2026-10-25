@@ -242,6 +242,8 @@ public sealed partial class DesktopTests
         Assert.Same(photoSource, photoFiles.ItemsSource); Assert.Equal(horizontal, photoScroll.HorizontalOffset, 2);
         Assert.Equal(ListSortDirection.Ascending, nameColumn.SortDirection);
         Assert.Equal(listTop, photoFiles.TranslatePoint(new Point(), photosView).Y, 2);
+        setStage("prioritizing visible and selected photo previews after scrolling");
+        PhotoViewportChecks.Check(photosView);
         ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
         static string PhotoName(object display)

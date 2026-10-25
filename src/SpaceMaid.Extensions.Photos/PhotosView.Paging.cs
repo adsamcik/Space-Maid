@@ -22,6 +22,11 @@ public partial class PhotosView
 
     private void TrackViewportInput(Control control)
     {
+        control.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, e) =>
+        {
+            if (e.VerticalChange != 0 || e.HorizontalChange != 0 || e.ViewportHeightChange != 0 || e.ViewportWidthChange != 0)
+                RequestDisplayedPreviews();
+        }));
         control.PreviewMouseWheel += (_, _) => _viewportInteraction++;
         control.PreviewMouseDown += (_, _) => _viewportInteraction++;
         control.PreviewKeyDown += (_, _) => _viewportInteraction++;
@@ -79,7 +84,7 @@ public partial class PhotosView
         }
         try
         {
-            var result = await Task.Run(() => _catalog.Page(collection.Id, mode, sort, descending, requestedPage), token);
+            var result = await Task.Run(() => _catalog.Page(collection.Id, mode, sort, descending, requestedPage, token), token);
             token.ThrowIfCancellationRequested();
             var lastJob = await Task.Run(() => _catalog.LastJob(collection.Id), token);
             if (generation != _pageGeneration || token.IsCancellationRequested || Collection?.Id != collection.Id) return;

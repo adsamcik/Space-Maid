@@ -16,6 +16,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
     private readonly bool _administrator;
     private readonly string _executable;
     private Process? _process;
+    private ReplyReader? _replyReader;
     private Task? _stderr;
     private string? _version;
     private long _sequence;
@@ -104,6 +105,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
             RedirectStandardOutput = true, RedirectStandardError = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
         start.ArgumentList.Add("-stay_open"); start.ArgumentList.Add("True"); start.ArgumentList.Add("-@"); start.ArgumentList.Add("-");
         _process = Process.Start(start) ?? throw new IOException("ExifTool could not be started.");
+        _replyReader = new(_process.StandardOutput);
         _stderr = DrainErrorAsync(_process);
         string version = (await RequestAsync(["-ver"], token).ConfigureAwait(false)).Trim();
         if (version.Length > 40 || !decimal.TryParse(version, System.Globalization.NumberStyles.AllowDecimalPoint,
@@ -124,24 +126,50 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
             foreach (string argument in arguments) await process.StandardInput.WriteLineAsync(argument.AsMemory(), deadline.Token).ConfigureAwait(false);
             await process.StandardInput.WriteLineAsync(("-execute" + sequence).AsMemory(), deadline.Token).ConfigureAwait(false);
             await process.StandardInput.FlushAsync(deadline.Token).ConfigureAwait(false);
-            var reply = new StringBuilder(); var line = new StringBuilder(); char[] buffer = new char[1];
-            string marker = "{ready" + sequence + "}";
-            while (true)
-            {
-                int read = await process.StandardOutput.ReadAsync(buffer.AsMemory(), deadline.Token).ConfigureAwait(false);
-                if (read == 0) throw new IOException("ExifTool exited before completing its request.");
-                if (buffer[0] != '\n')
-                {
-                    if (reply.Length + line.Length >= MaximumReplyCharacters) throw new InvalidDataException("ExifTool metadata exceeded the 2 MiB reply limit.");
-                    if (buffer[0] != '\r') line.Append(buffer[0]);
-                    continue;
-                }
-                string value = line.ToString(); line.Clear();
-                if (value == marker) return reply.ToString();
-                reply.AppendLine(value);
-            }
+            var replies = _replyReader ?? throw new IOException("ExifTool is unavailable.");
+            return await replies.ReadAsync("{ready" + sequence + "}", deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested) { throw new TimeoutException("ExifTool metadata request exceeded 45 seconds."); }
+    }
+    // Serialized requests share the read buffer so a chunk extending beyond a
+    // ready line cannot discard stdout belonging to a subsequent reply.
+    internal sealed class ReplyReader(TextReader reader, int maximumReplyCharacters = MaximumReplyCharacters)
+    {
+        private readonly char[] _buffer = new char[4096];
+        private int _offset, _count;
+
+        internal async Task<string> ReadAsync(string marker, CancellationToken token)
+        {
+            var reply = new StringBuilder(); var line = new StringBuilder();
+            var markerCandidate = true;
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                if (_offset == _count)
+                {
+                    _count = await reader.ReadAsync(_buffer.AsMemory(), token).ConfigureAwait(false); _offset = 0;
+                    if (_count == 0) throw new IOException("ExifTool exited before completing its request.");
+                }
+                while (_offset < _count)
+                {
+                    char value = _buffer[_offset++];
+                    if (value == '\r') continue;
+                    if (value != '\n')
+                    {
+                        markerCandidate &= line.Length < marker.Length && value == marker[line.Length];
+                        line.Append(value);
+                        // A ready marker is framing, not reply content. Permit
+                        // only its bounded prefix beyond the remaining budget.
+                        if (line.Length > maximumReplyCharacters - reply.Length && !markerCandidate) TooLarge();
+                        continue;
+                    }
+                    if (markerCandidate && line.Length == marker.Length) return reply.ToString();
+                    if (line.Length > maximumReplyCharacters - reply.Length - Environment.NewLine.Length) TooLarge();
+                    reply.Append(line).AppendLine(); line.Clear(); markerCandidate = true;
+                }
+            }
+        }
+        private static void TooLarge() => throw new InvalidDataException("ExifTool metadata exceeded the 2 MiB reply limit.");
     }
     private async Task DrainErrorAsync(Process process)
     {
@@ -177,7 +205,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
     { ObjectDisposedException.ThrowIf(_disposed, this); if (_administrator) throw new InvalidOperationException("Media tools cannot run while the Space Maid host is elevated."); }
     private async Task StopOwnedProcessAsync()
     {
-        var process = _process; _process = null; _version = null;
+        var process = _process; _process = null; _replyReader = null; _version = null;
         if (process is null) return;
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync().ConfigureAwait(false); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }

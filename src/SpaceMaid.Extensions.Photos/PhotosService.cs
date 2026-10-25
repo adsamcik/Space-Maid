@@ -137,7 +137,13 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
 
     internal async Task AnalyzeCoreAsync(PhotoCollection collection, IExtensionJobContext context)
     {
-        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, failures = 0, bytes = 0; var watch = Stopwatch.StartNew();
+        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, hashed = 0, failures = 0, bytes = 0;
+        var watch = Stopwatch.StartNew(); long lastCheckpointMs = 0;
+        void CheckpointProgress()
+        {
+            if (watch.ElapsedMilliseconds - lastCheckpointMs < 1000) return;
+            catalog.JobState(job, "Running", count + hashed); lastCheckpointMs = watch.ElapsedMilliseconds;
+        }
         try
         {
             string? after = null;
@@ -150,6 +156,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                 {
                     await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
                     var leases = new List<(PhotoRow Row, NativeMediaFile File)>(16);
+                    var updates = new List<PhotoAnalysisUpdate>(16);
                     try
                     {
                         foreach (var row in chunk)
@@ -162,7 +169,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                                 leases.Add((row, lease));
                             }
                             catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-                            { catalog.MarkUnresolved(row.ObjectId, row.ContentAvailable ? "Unresolved · File changed or cannot be read; Refresh to validate" : "Metadata only · Offline/reparse content unavailable"); failures++; }
+                            { updates.Add(new(row.ObjectId, row.Revision, null, null, null, row.ContentAvailable ? "Unresolved · File changed or cannot be read; Refresh to validate" : "Metadata only · Offline/reparse content unavailable")); failures++; }
                         }
                         if (leases.Count > 0)
                         {
@@ -181,47 +188,66 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                                     pair.File.VerifyUnchanged();
                                     var details = metadata.FirstOrDefault(x => string.Equals(x.Path, pair.Row.Path, StringComparison.Ordinal));
                                     if (details is null || details.Error is not null) failures++;
-                                    catalog.StoreAnalysis(pair.Row.ObjectId, pair.File.Revision, details, null,
-                                        details is { Error: null } ? "Metadata verified · Default stream not compared" : "Default size verified · ExifTool metadata unavailable");
+                                    updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, pair.File.Revision, details, null,
+                                        details is { Error: null } ? "Metadata verified · Default stream not compared" : "Default size verified · ExifTool metadata unavailable"));
                                 }
                                 catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception)
-                                { catalog.MarkUnresolved(pair.Row.ObjectId, "Unresolved · File changed during metadata analysis"); failures++; }
+                                { updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, null, null, null, "Unresolved · File changed during metadata analysis")); failures++; }
                             }
                         }
-                        count += chunk.Length; catalog.JobState(job, "Running", count);
+                        failures += updates.Count - catalog.StoreAnalysisBatch(updates, context.Cancellation);
+                        count += chunk.Length; CheckpointProgress();
                         context.Report(new("Inspecting metadata", count, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
                     }
                     finally { foreach (var pair in leases) pair.File.Dispose(); }
                 }
                 after = batch[^1].ObjectId;
             }
-            after = null; long hashed = 0;
+            after = null;
             var update = Stopwatch.StartNew();
             while (true)
             {
                 await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
                 var batch = catalog.AnalysisBatch(collection.Id, after, true, context.Cancellation);
                 if (batch.Count == 0) break;
-                foreach (var row in batch)
+                foreach (var chunk in batch.Chunk(16))
                 {
                     await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
+                    var leases = new List<NativeMediaFile>(16);
+                    var updates = new List<PhotoAnalysisUpdate>(16);
+                    long chunkHashed = 0;
                     try
                     {
-                        using var lease = NativeMediaFile.Open(row.Path, true);
-                        if (lease.Revision.Identity != row.ObjectId || lease.Revision.Key != row.Revision)
-                            throw new IOException("The candidate changed after metadata inspection.");
-                        var hash = await HashAsync(lease, context, read =>
+                        foreach (var row in chunk)
                         {
-                            bytes += read;
-                            if (update.ElapsedMilliseconds < 1000) return;
-                            context.Report(new("Comparing full default streams", hashed, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved")); update.Restart();
-                        });
-                        lease.VerifyUnchanged(); catalog.StoreHash(row.ObjectId, lease.Revision, hash); hashed++;
+                            await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
+                            NativeMediaFile? lease = null;
+                            try
+                            {
+                                lease = NativeMediaFile.Open(row.Path, true);
+                                if (lease.Revision.Identity != row.ObjectId || lease.Revision.Key != row.Revision)
+                                    throw new IOException("The candidate changed after metadata inspection.");
+                                var hash = await HashAsync(lease, context, read =>
+                                {
+                                    bytes += read;
+                                    if (update.ElapsedMilliseconds < 1000) return;
+                                    context.Report(new("Comparing full default streams", hashed + chunkHashed, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved")); update.Restart();
+                                });
+                                lease.VerifyUnchanged();
+                                updates.Add(new(row.ObjectId, row.Revision, lease.Revision, null, hash, "Default stream verified", true));
+                                leases.Add(lease); lease = null; chunkHashed++;
+                            }
+                            catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                            { updates.Add(new(row.ObjectId, row.Revision, null, null, null, "Unresolved · Default stream could not be stably verified")); failures++; }
+                            finally { lease?.Dispose(); }
+                        }
+                        // Keep successful source leases stable until the bounded
+                        // transaction publishes every result in this chunk.
+                        failures += updates.Count - catalog.StoreAnalysisBatch(updates, context.Cancellation);
+                        hashed += chunkHashed; CheckpointProgress();
+                        context.Report(new("Comparing full default streams", hashed, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
                     }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-                    { catalog.MarkUnresolved(row.ObjectId, "Unresolved · Default stream could not be stably verified"); failures++; }
-                    context.Report(new("Comparing full default streams", hashed, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
-                    catalog.JobState(job, "Running", count + hashed);
+                    finally { foreach (var lease in leases) lease.Dispose(); }
                 }
                 after = batch[^1].ObjectId;
             }
@@ -231,7 +257,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
         }
         catch (Exception error)
         {
-            catalog.JobState(job, error is OperationCanceledException ? "Interrupted" : "Failed", count, "Analyze revalidates inputs before continuing.");
+            catalog.JobState(job, error is OperationCanceledException ? "Interrupted" : "Failed", count + hashed, "Analyze revalidates inputs before continuing.");
             throw;
         }
     }

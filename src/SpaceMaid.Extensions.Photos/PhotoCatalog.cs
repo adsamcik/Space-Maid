@@ -22,6 +22,8 @@ internal sealed record PhotoRow(string ObjectId, string Path, string Name, strin
 internal sealed record PhotoPage(IReadOnlyList<PhotoRow> Rows, long Total, int Page);
 internal sealed record PhotoObservation(string Path, string Identity, string Revision, long? DefaultBytes,
     long LogicalBytes, long? AllocatedBytes, uint Links, bool ContentAvailable, string Status, string Role, string Stem);
+internal sealed record PhotoAnalysisUpdate(string ObjectId, string? ExpectedRevision, MediaRevision? Revision,
+    MediaToolMetadata? Metadata, string? Hash, string Status, bool HashOnly = false);
 
 internal static class PhotoKinds
 {
@@ -225,38 +227,56 @@ internal sealed class PhotoCatalog : IDisposable
             command.ExecuteNonQuery(); transaction.Commit();
         }
     }
-    public PhotoPage Page(long collection, PhotoMode mode, PhotoSort sort, bool descending, int page)
+    public PhotoPage Page(long collection, PhotoMode mode, PhotoSort sort, bool descending, int page, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         const string current = "l.collection_id=$collection AND l.missing=0";
         var modeFilter = mode switch
         {
-            PhotoMode.Duplicates => " AND o.hash IS NOT NULL AND o.hash_revision=o.revision AND EXISTS(SELECT 1 FROM locations x JOIN objects p ON p.id=x.object_id WHERE x.collection_id=l.collection_id AND x.missing=0 AND p.id<>o.id AND p.hash=o.hash AND p.hash_revision=p.revision AND p.default_bytes=o.default_bytes)",
+            PhotoMode.Duplicates => " AND o.hash IS NOT NULL AND o.hash_revision=o.revision AND EXISTS(SELECT 1 FROM objects p INDEXED BY object_hashes WHERE p.id<>o.id AND p.hash=o.hash AND p.hash_revision=p.revision AND p.default_bytes=o.default_bytes AND EXISTS(SELECT 1 FROM locations x WHERE x.object_id=p.id AND x.collection_id=l.collection_id AND x.missing=0))",
             PhotoMode.Families => " AND EXISTS(SELECT 1 FROM locations x WHERE x.collection_id=l.collection_id AND x.missing=0 AND x.parent=l.parent AND x.stem=l.stem AND x.object_id<>l.object_id AND x.role<>l.role)",
             _ => ""
         };
         var column = sort switch { PhotoSort.Size => "COALESCE(o.default_bytes,o.logical_bytes)", PhotoSort.Type => "COALESCE(o.format,l.role)", PhotoSort.Captured => "o.captured", PhotoSort.Status => "o.status", PhotoSort.Group => mode == PhotoMode.Duplicates ? "o.hash" : "l.stem", _ => "l.name COLLATE NOCASE" };
         lock (_gate)
         {
+            token.ThrowIfCancellationRequested();
             using var connection = Open();
-            using var count = connection.CreateCommand(); count.CommandText = $"SELECT COUNT(*) FROM locations l JOIN objects o ON o.id=l.object_id WHERE {current}{modeFilter}";
-            Add(count, "$collection", collection); var total = Convert.ToInt64(count.ExecuteScalar());
-            page = Math.Clamp(page, 0, (int)Math.Min(int.MaxValue, Math.Max(0, (total - 1) / PageSize)));
-            using var command = connection.CreateCommand();
-            command.CommandText = $"""
-                SELECT o.id,l.path,l.name,l.role,o.logical_bytes,o.allocated_bytes,o.default_bytes,o.revision,o.available,
-                    o.links,o.status,o.format,o.width,o.height,o.orientation,o.captured,
-                    CASE WHEN o.hash_revision=o.revision THEN o.hash END,o.verified,
-                    COALESCE((SELECT GROUP_CONCAT(p.revision,'|') FROM locations s JOIN objects p ON p.id=s.object_id WHERE s.collection_id=l.collection_id AND s.missing=0 AND s.parent=l.parent AND s.stem=l.stem AND s.role='Edit sidecar'),''),
-                    (SELECT COUNT(DISTINCT p.id) FROM locations x JOIN objects p ON p.id=x.object_id WHERE x.collection_id=l.collection_id AND x.missing=0 AND p.hash=o.hash AND p.hash_revision=p.revision AND p.default_bytes=o.default_bytes),
-                    COALESCE(o.content_revision=o.revision,0)
-                FROM locations l JOIN objects o ON o.id=l.object_id WHERE {current}{modeFilter}
-                ORDER BY {column} {(descending ? "DESC" : "ASC")},l.path COLLATE BINARY,o.id LIMIT {PageSize} OFFSET $offset;
-                """;
-            Add(command, "$collection", collection); Add(command, "$offset", page * (long)PageSize);
-            using var reader = command.ExecuteReader(); var rows = new List<PhotoRow>(PageSize);
-            while (reader.Read()) rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4), Long(reader, 5), Long(reader, 6), reader.GetString(7), reader.GetBoolean(8), (uint)reader.GetInt64(9), reader.GetString(10), String(reader, 11), Integer(reader, 12), Integer(reader, 13), Integer(reader, 14), String(reader, 15), String(reader, 16), String(reader, 17), reader.GetString(18),
-                mode == PhotoMode.Duplicates ? "Equal default streams · Alternate streams and companion files are outside this comparison." : mode == PhotoMode.Families ? "Possible relationship · Matching basename and folder; does not establish edit fidelity or equivalence." : null, reader.GetInt64(19)) { AnalysisCurrent = reader.GetBoolean(20) });
-            return new(rows, total, page);
+            using var registration = token.Register(() => SQLitePCL.raw.sqlite3_interrupt(connection.Handle));
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                using var count = connection.CreateCommand(); count.CommandText = $"SELECT COUNT(*) FROM locations l JOIN objects o ON o.id=l.object_id WHERE {current}{modeFilter}";
+                Add(count, "$collection", collection); var total = Convert.ToInt64(count.ExecuteScalar());
+                page = Math.Clamp(page, 0, (int)Math.Min(int.MaxValue, Math.Max(0, (total - 1) / PageSize)));
+                using var command = connection.CreateCommand();
+                command.CommandText = $"""
+                    WITH selected AS MATERIALIZED (
+                        SELECT l.*, {column} AS page_sort FROM locations l JOIN objects o ON o.id=l.object_id
+                        WHERE {current}{modeFilter}
+                        ORDER BY {column} {(descending ? "DESC" : "ASC")},l.path COLLATE BINARY,o.id LIMIT {PageSize} OFFSET $offset
+                    )
+                    SELECT o.id,l.path,l.name,l.role,o.logical_bytes,o.allocated_bytes,o.default_bytes,o.revision,o.available,
+                        o.links,o.status,o.format,o.width,o.height,o.orientation,o.captured,
+                        CASE WHEN o.hash_revision=o.revision THEN o.hash END,o.verified,
+                        COALESCE((SELECT GROUP_CONCAT(p.revision,'|') FROM locations s JOIN objects p ON p.id=s.object_id WHERE s.collection_id=l.collection_id AND s.missing=0 AND s.parent=l.parent AND s.stem=l.stem AND s.role='Edit sidecar'),''),
+                        (SELECT COUNT(*) FROM objects p INDEXED BY object_hashes WHERE p.hash=o.hash AND p.hash_revision=p.revision AND p.default_bytes=o.default_bytes AND EXISTS(SELECT 1 FROM locations x WHERE x.object_id=p.id AND x.collection_id=l.collection_id AND x.missing=0)),
+                        COALESCE(o.content_revision=o.revision,0)
+                    FROM selected l JOIN objects o ON o.id=l.object_id
+                    ORDER BY l.page_sort {(sort == PhotoSort.Name ? "COLLATE NOCASE" : "")} {(descending ? "DESC" : "ASC")},l.path COLLATE BINARY,o.id;
+                    """;
+                Add(command, "$collection", collection); Add(command, "$offset", page * (long)PageSize);
+                using var reader = command.ExecuteReader(); var rows = new List<PhotoRow>(PageSize);
+                while (reader.Read())
+                {
+                    token.ThrowIfCancellationRequested();
+                    rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4), Long(reader, 5), Long(reader, 6), reader.GetString(7), reader.GetBoolean(8), (uint)reader.GetInt64(9), reader.GetString(10), String(reader, 11), Integer(reader, 12), Integer(reader, 13), Integer(reader, 14), String(reader, 15), String(reader, 16), String(reader, 17), reader.GetString(18),
+                    mode == PhotoMode.Duplicates ? "Equal default streams · Alternate streams and companion files are outside this comparison." : mode == PhotoMode.Families ? "Possible relationship · Matching basename and folder; does not establish edit fidelity or equivalence." : null, reader.GetInt64(19)) { AnalysisCurrent = reader.GetBoolean(20) });
+                }
+                token.ThrowIfCancellationRequested();
+                return new(rows, total, page);
+            }
+            catch (SqliteException) when (token.IsCancellationRequested) { throw new OperationCanceledException(token); }
         }
     }
     // One representative path per physical object. Keyset paging avoids a collection-sized object list.
@@ -301,18 +321,49 @@ internal sealed class PhotoCatalog : IDisposable
         }
     }
     public void StoreAnalysis(string id, MediaRevision revision, MediaToolMetadata? metadata, string? hash, string status)
+        => StoreAnalysisBatch([new(id, null, revision, metadata, hash, status)]);
+    public void MarkUnresolved(string id, string message) => StoreAnalysisBatch([new(id, null, null, null, null, message)]);
+    public void StoreHash(string id, MediaRevision revision, string hash) => StoreAnalysisBatch([new(id, revision.Key, revision, null, hash, "Default stream verified", true)]);
+
+    public int StoreAnalysisBatch(IReadOnlyList<PhotoAnalysisUpdate> updates, CancellationToken token = default)
     {
-        Execute("""
-            UPDATE objects SET revision=$revision,default_bytes=$length,links=$links,available=$available,status=$status,
-                format=$format,width=$width,height=$height,orientation=$orientation,captured=$captured,
-                metadata_revision=$metadata_revision,content_revision=$revision,tool_version=$tool_version,hash=$hash,hash_revision=$hash_revision,
-                verified=$verified WHERE id=$id;
-            """, ("$id", id), ("$revision", revision.Key), ("$length", revision.Length), ("$links", revision.Links), ("$available", revision.ContentAvailable ? 1 : 0),
-            ("$status", status), ("$format", metadata?.Format), ("$width", metadata?.Width), ("$height", metadata?.Height), ("$orientation", metadata?.Orientation), ("$captured", metadata?.CaptureTime),
-            ("$metadata_revision", metadata is { Error: null } ? revision.Key : null), ("$tool_version", metadata?.ToolVersion), ("$hash", hash), ("$hash_revision", hash is null ? null : revision.Key), ("$verified", DateTime.UtcNow.ToString("O")));
+        if (updates.Count == 0) return 0;
+        lock (_gate)
+        {
+            token.ThrowIfCancellationRequested();
+            using var connection = Open(); using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand(); command.Transaction = transaction;
+            var verified = DateTime.UtcNow.ToString("O"); int affected = 0;
+            foreach (var update in updates)
+            {
+                token.ThrowIfCancellationRequested(); command.Parameters.Clear();
+                if (update.Revision is not { } revision)
+                    command.CommandText = "UPDATE objects SET hash_revision=NULL,metadata_revision=NULL,content_revision=NULL,verified=NULL,status=$status WHERE id=$id AND ($expected IS NULL OR revision=$expected)";
+                else if (update.HashOnly)
+                {
+                    command.CommandText = "UPDATE objects SET hash=$hash,hash_revision=$revision,status=$status,verified=$verified WHERE id=$id AND revision=$expected";
+                    Add(command, "$hash", update.Hash); Add(command, "$revision", revision.Key); Add(command, "$verified", verified);
+                }
+                else
+                {
+                    command.CommandText = """
+                        UPDATE objects SET revision=$revision,default_bytes=$length,links=$links,available=$available,status=$status,
+                            format=$format,width=$width,height=$height,orientation=$orientation,captured=$captured,
+                            metadata_revision=$metadata_revision,content_revision=$revision,tool_version=$tool_version,hash=$hash,hash_revision=$hash_revision,
+                            verified=$verified WHERE id=$id AND ($expected IS NULL OR revision=$expected);
+                        """;
+                    var metadata = update.Metadata;
+                    Add(command, "$revision", revision.Key); Add(command, "$length", revision.Length); Add(command, "$links", revision.Links); Add(command, "$available", revision.ContentAvailable ? 1 : 0);
+                    Add(command, "$format", metadata?.Format); Add(command, "$width", metadata?.Width); Add(command, "$height", metadata?.Height); Add(command, "$orientation", metadata?.Orientation); Add(command, "$captured", metadata?.CaptureTime);
+                    Add(command, "$metadata_revision", metadata is { Error: null } ? revision.Key : null); Add(command, "$tool_version", metadata?.ToolVersion);
+                    Add(command, "$hash", update.Hash); Add(command, "$hash_revision", update.Hash is null ? null : revision.Key); Add(command, "$verified", verified);
+                }
+                Add(command, "$id", update.ObjectId); Add(command, "$expected", update.ExpectedRevision); Add(command, "$status", update.Status);
+                affected += command.ExecuteNonQuery();
+            }
+            token.ThrowIfCancellationRequested(); transaction.Commit(); return affected;
+        }
     }
-    public void MarkUnresolved(string id, string message) => Execute("UPDATE objects SET hash_revision=NULL,metadata_revision=NULL,content_revision=NULL,verified=NULL,status=$status WHERE id=$id", ("$id", id), ("$status", message));
-    public void StoreHash(string id, MediaRevision revision, string hash) => Execute("UPDATE objects SET hash=$hash,hash_revision=$revision,status='Default stream verified',verified=$now WHERE id=$id AND revision=$revision", ("$id", id), ("$hash", hash), ("$revision", revision.Key), ("$now", DateTime.UtcNow.ToString("O")));
     public string ReviewLocations(long collection, PhotoRow row, PhotoMode mode)
     {
         lock (_gate)

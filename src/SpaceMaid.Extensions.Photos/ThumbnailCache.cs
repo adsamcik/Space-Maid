@@ -12,6 +12,7 @@ internal sealed class ThumbnailCache(IExtensionHost host)
     internal const long DiskLimit = 512L * 1024 * 1024;
     internal const int Dimensions = 160;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _diskGate = new(1, 1);
     private readonly Dictionary<string, (BitmapSource Image, long Bytes, long Use)> _memory = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task<PhotoThumbnail>> _pending = new(StringComparer.Ordinal);
     private long _memoryBytes, _clock;
@@ -25,13 +26,31 @@ internal sealed class ThumbnailCache(IExtensionHost host)
         if (!row.ContentAvailable) return Task.FromResult(new PhotoThumbnail(null, "Unavailable · Offline/reparse file"));
         if (!row.AnalysisCurrent) return Task.FromResult(new PhotoThumbnail(null, "Analyze to enable previews"));
         var key = Key(row);
+        TaskCompletionSource<PhotoThumbnail> completion;
         lock (_gate)
         {
             if (_pending.TryGetValue(key, out var pending)) return pending.WaitAsync(token);
             if (_pending.Count >= 128) return Task.FromResult(new PhotoThumbnail(null, "Preview queue full · Retry on selection"));
-            var task = LoadAsync(row, key, token); _pending[key] = task;
-            _ = task.ContinueWith(_ => { lock (_gate) _pending.Remove(key); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-            return task;
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _pending.Add(key, completion.Task);
+        }
+        // Starting a host job may run synchronously. Never enter it while the
+        // dispatcher-facing dictionary lock is held.
+        _ = CompleteLoadAsync(row, key, token, completion);
+        return completion.Task;
+    }
+    private async Task CompleteLoadAsync(PhotoRow row, string key, CancellationToken token, TaskCompletionSource<PhotoThumbnail> completion)
+    {
+        try
+        {
+            var result = await LoadAsync(row, key, token).ConfigureAwait(false);
+            lock (_gate) _pending.Remove(key);
+            completion.TrySetResult(result);
+        }
+        catch (Exception error)
+        {
+            lock (_gate) _pending.Remove(key);
+            completion.TrySetException(error);
         }
     }
     private async Task<PhotoThumbnail> LoadAsync(PhotoRow row, string key, CancellationToken token)
@@ -62,49 +81,59 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                         result = new(cached.Image, "Cached preview · Edits may differ"); return;
                     }
                 }
-                Directory.CreateDirectory(_directory);
                 var cachePath = Path.Join(_directory, key + ".png");
                 BitmapSource? bitmap = null; var diskHit = false;
-                if (File.Exists(cachePath))
+                await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
+                try
                 {
-                    try
+                    Directory.CreateDirectory(_directory);
+                    if (File.Exists(cachePath))
                     {
-                        using var cached = File.OpenRead(cachePath); bitmap = Decode(cached); diskHit = true;
-                        File.SetLastWriteTimeUtc(cachePath, DateTime.UtcNow);
+                        try
+                        {
+                            using var cached = File.OpenRead(cachePath); bitmap = Decode(cached); diskHit = true;
+                            File.SetLastWriteTimeUtc(cachePath, DateTime.UtcNow);
+                        }
+                        catch (Exception error) when (error is IOException or FormatException or NotSupportedException or System.Runtime.InteropServices.COMException)
+                        {
+                            File.Delete(cachePath);
+                            _diskBytes = null;
+                        }
                     }
-                    catch (Exception error) when (error is IOException or FormatException or NotSupportedException or System.Runtime.InteropServices.COMException)
-                    { File.Delete(cachePath); }
                 }
+                finally { _diskGate.Release(); }
                 if (bitmap is null)
                 {
                     await context.CheckpointAsync();
                     source.Stream!.Position = 0;
                     bitmap = Orient(Decode(source.Stream!), row.Orientation); source.VerifyUnchanged();
                     context.Cancellation.ThrowIfCancellationRequested();
-                    lock (_gate)
+                    await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
+                    try
                     {
                         InitializeDisk();
                         if (!_diskWritesDisabled)
                         {
-                        var temporary = Path.Join(_directory, key + "." + Guid.NewGuid().ToString("N") + ".tmp");
-                        try
-                        {
-                            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                            var temporary = Path.Join(_directory, key + "." + Guid.NewGuid().ToString("N") + ".tmp");
+                            try
                             {
-                                var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(output);
+                                using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                                {
+                                    var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(output);
+                                }
+                                var priorBytes = File.Exists(cachePath) ? new FileInfo(cachePath).Length : 0;
+                                var newBytes = new FileInfo(temporary).Length;
+                                File.Move(temporary, cachePath, true); _diskBytes += newBytes - priorBytes;
                             }
-                            var priorBytes = File.Exists(cachePath) ? new FileInfo(cachePath).Length : 0;
-                            var newBytes = new FileInfo(temporary).Length;
-                            File.Move(temporary, cachePath, true); _diskBytes += newBytes - priorBytes;
-                        }
-                        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                        { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-write-failed", new { Error = error.GetType().Name }); }
-                        finally { if (File.Exists(temporary)) File.Delete(temporary); }
-                        try { EvictDisk(); }
-                        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                        { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-eviction-failed", new { Error = error.GetType().Name }); }
+                            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                            { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-write-failed", new { Error = error.GetType().Name }); }
+                            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                            try { EvictDisk(); }
+                            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                            { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-eviction-failed", new { Error = error.GetType().Name }); }
                         }
                     }
+                    finally { _diskGate.Release(); }
                 }
                 metadata.VerifyUnchanged(); AddMemory(key, bitmap);
                 result = new(bitmap, "Preview · Embedded RAW previews may not reflect current edits");
@@ -163,6 +192,9 @@ internal sealed class ThumbnailCache(IExtensionHost host)
     private void EvictDisk()
     {
         // Bound the eviction working set even if a prior cache contains many tiny files.
+        if (_diskBytes <= DiskLimit) return;
+        // The shared optimizer can remove old previews while this cache is idle.
+        _diskBytes = new DirectoryInfo(_directory).EnumerateFiles("*.png").Sum(file => file.Length);
         if (_diskBytes <= DiskLimit) return;
         var target = DiskLimit * 9 / 10;
         while (_diskBytes > target)
