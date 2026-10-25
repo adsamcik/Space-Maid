@@ -52,6 +52,24 @@ public sealed class OpportunityReviewValidatorTests
     }
 
     [Fact]
+    public async Task ParallelScopeReadsKeepTheSharedNativeMetadataSourceSerialized()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 8; i++) CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, i.ToString())).FullName);
+        var scan = await new VolumeScanner().ReadDirectoryAsync(fixture.Path, true, default, allStreams: true);
+        var selected = DeveloperOpportunityFixture.Find(scan);
+        var source = new SerialOnlySource(new ScopedScannerTests.MetadataSource(scan));
+        var validation = await OpportunityReviewValidator.ValidateAsync(scan, selected,
+            discover: DeveloperOpportunityFixture.Find, layoutSource: source);
+        Assert.Equal(8, validation.ValidatedLocations.Count);
+        Assert.Empty(validation.ExcludedPaths);
+        Assert.Equal(1, source.PeakConcurrentQueries);
+        Assert.Equal(0, source.ActiveQueries);
+        Assert.True(source.Queries >= 16);
+        Assert.Equal(scan.AllocatedBytes, validation.Snapshot.AllocatedBytes);
+    }
+
+    [Fact]
     public async Task RemovedProjectEvidenceExcludesThePreviouslySelectedBuildOutput()
     {
         using var fixture = new TestDirectory(); var project = CreateProject(fixture.Path);
@@ -190,4 +208,24 @@ public sealed class OpportunityReviewValidatorTests
         scan.Links, scan.NameArena, scan.RootIndex, scan.FirstLinks, scan.ChildHeads, scan.NextLinks, scan.DirectoryLogical,
         scan.DirectoryAllocated, false, false, false, scan.Warnings, scan.Metrics, scan.EntryFlags,
         scan.WarningCount, scan.DirectoryCount, scan.FallbackReason);
+
+    private sealed class SerialOnlySource(INtfsLayoutSource source) : INtfsLayoutSource
+    {
+        internal int ActiveQueries, PeakConcurrentQueries, Queries;
+        public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
+            => throw new InvalidOperationException("A selection must not scan the whole volume.");
+        public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
+        {
+            int active = Interlocked.Increment(ref ActiveQueries);
+            PeakConcurrentQueries = Math.Max(PeakConcurrentQueries, active);
+            Interlocked.Increment(ref Queries);
+            try
+            {
+                if (active != 1) throw new InvalidOperationException("Shared metadata requests overlapped.");
+                Thread.Sleep(5); // Give another folder read a chance to reach the shared source.
+                source.AcquireFiles(volume, files, consume, token);
+            }
+            finally { Interlocked.Decrement(ref ActiveQueries); }
+        }
+    }
 }

@@ -27,33 +27,38 @@ public partial class MainWindow
                 MarkScanStale("Cleanup validation did not complete; no cleanup started. Review again to check selected folders.", plan.Preview.Locations.Select(location => new ScanRecheckRequest(location.Path)));
                 return result with { RefreshNote = "Results remain out of date; review again to validate." };
             }
+            // The validation snapshot already contains these fresh scopes.
+            // Only mutations need another read; skipped/unprocessed folders
+            // must not be recursively scanned a third time after confirmation.
             requests.AddRange(validation.RecheckedScopes);
+            var changedScopes = new List<ScanRecheckRequest>();
             foreach (var item in result.Locations.Where(item => item.Attempted))
             {
                 string path = item.Location.Path;
-                requests.Add(new(Path.GetDirectoryName(path)!, false));
-                if (Directory.Exists(path)) requests.Add(new(path));
+                changedScopes.Add(new(Path.GetDirectoryName(path)!, false));
+                if (Directory.Exists(path)) changedScopes.Add(new(path));
                 string root = Path.GetPathRoot(path)!, recycleRoot = Path.Combine(root, "$Recycle.Bin");
                 if (displayed.FindEntry(recycleRoot) is not null || displayed.FindEntry(root) is not null)
                 {
                     if (item.Recycle?.RecycledPath is { } destination)
                     {
-                        requests.Add(new(recycleRoot, false)); requests.Add(new(Path.GetDirectoryName(destination)!, false));
-                        requests.Add(new(destination));
+                        changedScopes.Add(new(recycleRoot, false)); changedScopes.Add(new(Path.GetDirectoryName(destination)!, false));
+                        changedScopes.Add(new(destination));
                     }
-                    else requests.Add(new(recycleRoot));
+                    else changedScopes.Add(new(recycleRoot));
                 }
             }
             // Deleted paths must not be recursively enumerated. Their live
             // parent check removes the old subtree from the inventory instead.
-            requests.RemoveAll(request => !Directory.Exists(request.Path));
+            changedScopes.RemoveAll(request => !Directory.Exists(request.Path));
+            requests.AddRange(changedScopes);
             work.Token.ThrowIfCancellationRequested();
             if (validation.CanMergeInventory)
             {
                 _staleScopes.UnionWith(validation.UncheckedScopes);
                 progress.Report(new(plan.Targets.Count, plan.Targets.Count, "", "Rechecking affected folders…"));
                 var updated = result.Locations.Any(item => item.Attempted)
-                    ? await Operations.RecheckAsync(validation.Snapshot, requests, work.Token, log.Record) : validation.Snapshot;
+                    ? await Operations.RecheckAsync(validation.Snapshot, changedScopes, work.Token, log.Record) : validation.Snapshot;
                 await RefreshAffectedAsync(displayed, requests, result.Summary, work.Token, log, updated);
                 result = result with { RefreshNote = "Affected folders refreshed; other folders retain earlier scan data." };
             }

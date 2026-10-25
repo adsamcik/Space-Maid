@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -177,11 +178,17 @@ public sealed partial class DesktopTests
     private static void CheckOpportunityCleanup(MainWindow window, Application app, string artifactRoot)
     {
         using var fixture = new TestDirectory();
+        Directory.CreateDirectory(Path.Join(fixture.Path, ".git"));
         string source = Path.Join(fixture.Path, "sample.csproj"); File.WriteAllText(source, "<Project />");
         string bin = Directory.CreateDirectory(Path.Join(fixture.Path, "bin")).FullName;
         string obj = Directory.CreateDirectory(Path.Join(fixture.Path, "obj")).FullName;
         File.WriteAllText(Path.Join(bin, "sample.dll"), "rebuildable fixture");
         File.WriteAllText(Path.Join(obj, "sample.o"), "rebuildable fixture");
+        string module = Directory.CreateDirectory(Path.Join(fixture.Path, "module")).FullName;
+        File.WriteAllText(Path.Join(module, "module.csproj"), "<Project />");
+        string retained = Directory.CreateDirectory(Path.Join(module, "bin")).FullName;
+        string retainedFile = Path.Join(retained, "retained.dll");
+        File.WriteAllText(retainedFile, "old build output");
         BuildActivityFixture.AgeProject(fixture.Path);
         var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(5)); var scan = scanning.GetAwaiter().GetResult();
@@ -207,13 +214,16 @@ public sealed partial class DesktopTests
                     kept = true;
                     Assert.True(((Button)dialog.FindName("CloseButton")).IsDefault);
                     Assert.True(((Button)dialog.FindName("CleanupButton")).IsEnabled);
-                    Assert.Equal(new[] { bin, obj }.Order(), ((ListBox)dialog.FindName("LocationList")).Items.Cast<CleanupReviewRow>().Select(row => row.Path).Order());
+                    Assert.Equal(new[] { bin, obj, retained }.Order(), ((ListBox)dialog.FindName("LocationList")).Items.Cast<CleanupReviewRow>().Select(row => row.Path).Order());
                     ((Button)dialog.FindName("CloseButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 }
                 else if (!confirmed)
                 {
                     confirmed = true;
                     Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-confirmation.png"), 860, 740);
+                    // Activity after review protects this target. Its fresh
+                    // metadata should be reused rather than read yet again.
+                    File.WriteAllText(retainedFile, "recent build output preserved after confirmation");
                     ((Button)dialog.FindName("CleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.False(((Button)dialog.FindName("CleanupButton")).IsEnabled);
                     Assert.Equal("Cancel cleanup", ((Button)dialog.FindName("CloseButton")).Content);
@@ -222,7 +232,8 @@ public sealed partial class DesktopTests
                 {
                     result = completed;
                     Assert.Equal(2, result.RecycledCount); Assert.False(result.Cancelled);
-                    Assert.All(result.Locations, item => Assert.Equal(CleanupOutcome.Recycled, item.Outcome));
+                    Assert.Equal(retained, Assert.Single(result.Locations, item => item.Outcome == CleanupOutcome.Skipped).Location.Path);
+                    Assert.Equal(2, result.Locations.Count(item => item.Outcome == CleanupOutcome.Recycled));
                     Assert.Contains("Affected folders refreshed", ((TextBlock)dialog.FindName("ResultDetailText")).Text);
                     Assert.Contains("Space stays occupied", ((TextBlock)dialog.FindName("ResultText")).Text);
                     Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-results.png"), 860, 740);
@@ -243,9 +254,18 @@ public sealed partial class DesktopTests
             Assert.False(Directory.Exists(bin)); Assert.False(Directory.Exists(obj)); Assert.Equal("<Project />", File.ReadAllText(source));
             var updated = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan;
             Assert.Null(updated.FindEntry(bin)); Assert.Null(updated.FindEntry(obj)); Assert.NotNull(updated.FindEntry(source));
-            Assert.Empty(list.Items); Assert.Equal("0 B", ((TextBlock)window.FindName("CandidateText")).Text);
+            var remaining = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
+            Assert.Equal(retained, remaining.Path); Assert.False(remaining.Selected);
+            Assert.Equal("recent build output preserved after confirmation", File.ReadAllText(retainedFile));
+            Assert.Equal(new FileInfo(retainedFile).Length, remaining.Item.LogicalBytes);
             string log = File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip));
             Assert.Contains("cleanup-confirmed", log); Assert.Contains("cleanup-location-result", log); Assert.Contains("cleanup-complete", log);
+            foreach (string line in log.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
+            {
+                using var entry = JsonDocument.Parse(line);
+                if (entry.RootElement.GetProperty("Event").GetString() == "recheck-read-start")
+                    Assert.NotEqual(retained, entry.RootElement.GetProperty("Data").GetProperty("Path").GetString());
+            }
         }
         finally
         {

@@ -12,6 +12,7 @@ public sealed record OpportunityValidationProgress(int Completed, int Total, str
 
 public static class OpportunityReviewValidator
 {
+    internal const int MaximumConcurrentReads = 4;
     public static Task<OpportunityReviewValidation> ValidateAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
         CancellationToken token = default, Action<string, object>? diagnostic = null, OpportunityDiscovery? discover = null,
         IProgress<OpportunityValidationProgress>? progress = null, INtfsLayoutSource? layoutSource = null)
@@ -51,27 +52,51 @@ public static class OpportunityReviewValidator
             else AddRequest(NearestLiveParent(Path.GetDirectoryName(path)), recursive: false);
         }
         var scopes = PlanScopes(requests.Select(value => new ScanRecheckRequest(value.Key, value.Value)), token);
-        diagnostic?.Invoke("opportunity-validation-start", new { Selected = choices.Count, Scopes = scopes.Length, scan.HasAllocationData });
-        var reader = new VolumeScanner(layoutSource);
-        var replacements = new List<ScanRechecker.Replacement>(scopes.Length);
+        diagnostic?.Invoke("opportunity-validation-start", new { Selected = choices.Count, Scopes = scopes.Length,
+            scan.HasAllocationData, MaximumConcurrentReads });
+        using var serializedSource = layoutSource is null ? null : new SerializedLayoutSource(layoutSource);
+        var reader = new VolumeScanner(serializedSource);
+        var replacements = new ScanRechecker.Replacement[scopes.Length];
+        var reportGate = new object();
         var progressTimer = Stopwatch.StartNew(); int completed = 0;
-        foreach (var scope in scopes)
-        {
-            token.ThrowIfCancellationRequested();
-            ScanRechecker.ValidateAncestors(scope.Path);
-            diagnostic?.Invoke("opportunity-validation-read-start", new { scope.Path, scope.Recursive });
-            if (completed == 0 || progressTimer.ElapsedMilliseconds >= 150)
-            { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
-            var fresh = await reader.ReadDirectoryAsync(scope.Path, scope.Recursive, token,
-                allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData,
-                diagnostic: diagnostic).ConfigureAwait(false);
-            if (fresh.WarningCount > 0) throw new IOException("The selected scope could not be fully validated: " + string.Join(" ", fresh.Warnings));
-            replacements.Add(new(scope.Path, scope.Recursive, fresh));
-            diagnostic?.Invoke("opportunity-validation-read-complete", new { scope.Path, scope.Recursive, fresh.FileCount,
-                fresh.Backend, fresh.FallbackReason, ElapsedMs = fresh.Metrics.Acquisition.TotalMilliseconds });
-            completed++;
-        }
+        // Read shallow parents first so their namespace observations still
+        // precede the selected subtrees. Recursive scopes never overlap.
+        await ReadScopesAsync(recursive: false).ConfigureAwait(false);
+        await ReadScopesAsync(recursive: true).ConfigureAwait(false);
         progress?.Report(new(completed, scopes.Length, ""));
+
+        async Task ReadScopesAsync(bool recursive)
+        {
+            var indexes = Enumerable.Range(0, scopes.Length).Where(index => scopes[index].Recursive == recursive);
+            await Parallel.ForEachAsync(indexes, new ParallelOptions
+            { MaxDegreeOfParallelism = MaximumConcurrentReads, CancellationToken = token }, async (index, readToken) =>
+            {
+                var scope = scopes[index];
+                readToken.ThrowIfCancellationRequested();
+                ScanRechecker.ValidateAncestors(scope.Path);
+                lock (reportGate)
+                {
+                    readToken.ThrowIfCancellationRequested();
+                    diagnostic?.Invoke("opportunity-validation-read-start", new { scope.Path, scope.Recursive });
+                    if (completed == 0 || progressTimer.ElapsedMilliseconds >= 150)
+                    { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
+                }
+                var fresh = await reader.ReadDirectoryAsync(scope.Path, scope.Recursive, readToken,
+                    allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData,
+                    diagnostic: (name, data) => { lock (reportGate) diagnostic?.Invoke(name, data); }).ConfigureAwait(false);
+                if (fresh.WarningCount > 0) throw new IOException("The selected scope could not be fully validated: " + string.Join(" ", fresh.Warnings));
+                lock (reportGate)
+                {
+                    readToken.ThrowIfCancellationRequested();
+                    replacements[index] = new(scope.Path, scope.Recursive, fresh);
+                    completed++;
+                    diagnostic?.Invoke("opportunity-validation-read-complete", new { scope.Path, scope.Recursive, fresh.FileCount,
+                        fresh.Backend, fresh.FallbackReason, ElapsedMs = fresh.Metrics.Acquisition.TotalMilliseconds });
+                    if (progressTimer.ElapsedMilliseconds >= 150)
+                    { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
+                }
+            }).ConfigureAwait(false);
+        }
         var sourceIndex = new Dictionary<string, ScanRechecker.Replacement>(StringComparer.Ordinal);
         var childIndexes = new Dictionary<string, ChildNameIndex>(StringComparer.Ordinal);
         foreach (var source in replacements)
@@ -269,6 +294,22 @@ public static class OpportunityReviewValidator
     }
     private sealed record Choice(Opportunity Original, string Path, FileIdentity Identity, bool Available);
     private sealed record UncheckedDirectorySet(IReadOnlyList<ScanRecheckRequest> Scopes, IReadOnlyCollection<FileIdentity> Identities);
+
+    // Sources can own one pipe/request stream. Parallel folder enumeration
+    // must not interleave their borrowed buffers or request/response frames.
+    private sealed class SerializedLayoutSource(INtfsLayoutSource source) : INtfsLayoutSource, IDisposable
+    {
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
+            => throw new InvalidOperationException("Selection review must not acquire a whole volume.");
+        public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
+        {
+            _gate.Wait(token);
+            try { source.AcquireFiles(volume, files, consume, token); }
+            finally { _gate.Release(); }
+        }
+        public void Dispose() => _gate.Dispose();
+    }
 
     private static bool TryFindAncestor<T>(string path, IReadOnlyDictionary<string, T> index, CancellationToken token,
         out T value, bool includeSelf = true)
