@@ -198,7 +198,8 @@ internal sealed class OpportunityCatalog(Action<string, object>? diagnostic = nu
                 }
                 result.Add(group with { Key = Key(id, group.Key, namespaced), ProviderId = id,
                     Locations = Array.AsReadOnly(members.Values.ToArray()), ObservedBytes = bytes,
-                    Children = group.Children is null ? null : Normalize(group.Children, roots, depth + 1) });
+                    Children = group.Children is null ? null : Normalize(group.Children, roots, depth + 1),
+                    ContentGroups = group.ContentGroups is null ? null : Normalize(group.ContentGroups, roots, depth + 1) });
             }
             return result.AsReadOnly();
         }
@@ -215,7 +216,8 @@ internal sealed class OpportunityCatalog(Action<string, object>? diagnostic = nu
     }
     private static IReadOnlyList<OpportunityGroup> MapGroups(string id, IReadOnlyList<OpportunityGroup> groups) =>
         Array.AsReadOnly(groups.Select(group => group with { Key = Key(id, group.Key, true),
-            Children = group.Children is null ? null : MapGroups(id, group.Children) }).ToArray());
+            Children = group.Children is null ? null : MapGroups(id, group.Children),
+            ContentGroups = group.ContentGroups is null ? null : MapGroups(id, group.ContentGroups) }).ToArray());
     private static void Text(string? value, int maximum, bool allowEmpty = false)
     {
         if (value is null || value.Length > maximum || (!allowEmpty && string.IsNullOrWhiteSpace(value)))

@@ -306,7 +306,7 @@ public sealed partial class DesktopTests
             Assert.Equal(1000, build.Children.Sum(child => child.Matches.Count));
             window.UpdateLayout();
             var container = cards.ItemContainerGenerator.ContainerFromItem(build);
-            Assert.Single(Descendants(container).OfType<Expander>()).IsExpanded = true; window.UpdateLayout();
+            Descendants(container).OfType<Expander>().Single(expander => expander.Name == "CleanupBreakdownExpander").IsExpanded = true; window.UpdateLayout();
             var checkbox = Descendants(container).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, csharp));
             checkbox.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.True(csharp.Checked); Assert.Null(build.Checked);
@@ -517,7 +517,7 @@ public sealed partial class DesktopTests
         // Every breakdown starts collapsed so the top-level checklist remains short.
         var build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
         Assert.Equal(5, build.Children.Count);
-        Assert.False(Assert.Single(Descendants(cards.ItemContainerGenerator.ContainerFromItem(build)).OfType<Expander>()).IsExpanded);
+        Assert.False(Descendants(cards.ItemContainerGenerator.ContainerFromItem(build)).OfType<Expander>().Single(expander => expander.Name == "CleanupBreakdownExpander").IsExpanded);
 #pragma warning disable WPF0001
         foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
         {

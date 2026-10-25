@@ -19,6 +19,8 @@ public partial class MainWindow
     private OpportunityGroup? _cleanupProjectScope;
     private bool _opportunityBrowserReady, _syncOpportunityBrowser, _changingOpportunitySelection;
     private readonly DispatcherTimer _opportunitySearchTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    private readonly HashSet<string> _expandedCleanupGroups = new(StringComparer.Ordinal), _expandedCleanupContents = new(StringComparer.Ordinal);
+    private double _cleanupOverviewOffset;
 
     private void InitializeOpportunityBrowser()
     {
@@ -36,6 +38,7 @@ public partial class MainWindow
             _cleanupGroups = []; _worktreeAssessments.Clear(); _cleanupDrillDown = false;
             _cleanupDetailKey = _cleanupDetailName = null;
             _cleanupProjectScope = null;
+            _expandedCleanupGroups.Clear(); _expandedCleanupContents.Clear(); _cleanupOverviewOffset = 0;
             _worktreesRequiringCheck.Clear();
             OpportunitySearch.Text = "";
             OpportunityTypeFilter.ItemsSource = new[] { "All types" }; OpportunityTypeFilter.SelectedIndex = 0;
@@ -48,6 +51,10 @@ public partial class MainWindow
         IReadOnlySet<(string Provider, string Path, string Rule)>? selectedLocations = null, string? detailPath = null, bool preserveScope = false)
     {
         foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
+        if (!preserveScope)
+        {
+            _expandedCleanupGroups.Clear(); _expandedCleanupContents.Clear(); _cleanupOverviewOffset = 0;
+        }
         bool wasMatchedWorktrees = _cleanupGroups.FirstOrDefault(group => group.Key == _activeOpportunityGroup)?.Role == OpportunityGroupRole.MatchedWorktrees;
         _rows.Clear(); _opportunityGroups = groups;
         if (!preserveScope) _worktreesRequiringCheck.Clear();
@@ -133,6 +140,11 @@ public partial class MainWindow
             2 => groups.OrderByDescending(group => group.Group.Locations.Count).ThenByDescending(group => group.Group.ObservedBytes),
             _ => groups.OrderByDescending(group => group.Group.ObservedBytes).ThenBy(group => group.Name, StringComparer.OrdinalIgnoreCase)
         }).ToArray();
+        foreach (var group in _opportunityGroupRows)
+        {
+            group.Expanded = _expandedCleanupGroups.Contains(group.Group.Key);
+            foreach (var child in group.Children) child.ContentsExpanded = _expandedCleanupContents.Contains(child.Group.Key);
+        }
         if (!_opportunityGroupRows.Any(group => group.Group.Key == _activeOpportunityGroup) && (!detailScope || _cleanupProjectScope is null)) _activeOpportunityGroup = null;
         _syncOpportunityBrowser = true;
         try
@@ -177,6 +189,7 @@ public partial class MainWindow
     private void DisplayOpportunityRows(string? detailPath = null)
     {
         bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown;
+        bool returningToOverview = overview && CleanupOverview.Visibility != Visibility.Visible;
         CleanupOverview.Visibility = overview ? Visibility.Visible : Visibility.Collapsed;
         OpportunityNavigation.Visibility = OpportunityLocations.Visibility = OpportunityDetails.Visibility = overview ? Visibility.Collapsed : Visibility.Visible;
         BackToCleanupButton.Visibility = !overview && OpportunityGroupingPicker.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -207,6 +220,16 @@ public partial class MainWindow
             : _snapshot is null ? "Scan a drive to start."
             : _rows.Count == 0 ? "" : "Clear search or change filters.";
         UpdateSelection();
+        if (returningToOverview) Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (CleanupOverview.Visibility == Visibility.Visible) CleanupOverviewScroll.ScrollToVerticalOffset(_cleanupOverviewOffset);
+        }));
+    }
+    private void CleanupExpander_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, e.OriginalSource) || sender is not Expander { DataContext: OpportunityGroupRow group } expander) return;
+        var expanded = expander.Name == "CleanupContentExpander" ? _expandedCleanupContents : _expandedCleanupGroups;
+        if (expander.IsExpanded) expanded.Add(group.Group.Key); else expanded.Remove(group.Group.Key);
     }
     private void CleanupGroupSelection_Click(object sender, RoutedEventArgs e)
     {
@@ -220,6 +243,7 @@ public partial class MainWindow
     private void ViewCleanupGroup_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: OpportunityGroupRow group }) return;
+        _cleanupOverviewOffset = CleanupOverviewScroll.VerticalOffset;
         _cleanupDrillDown = true; _activeOpportunityGroup = group.Group.Key;
         _cleanupDetailKey = _cleanupDetailName = null;
         _cleanupProjectScope = null;
@@ -248,6 +272,7 @@ public partial class MainWindow
     private void ViewCleanupProjects_Click(object sender, RoutedEventArgs e)
     {
         if (_work is not null || sender is not Button { DataContext: OpportunityGroupRow group }) return;
+        _cleanupOverviewOffset = CleanupOverviewScroll.VerticalOffset;
         _cleanupDetailKey = group.Group.Key; _cleanupDetailName = group.Name;
         _cleanupDetailParentName = _cleanupGroups.FirstOrDefault(parent => parent.Children?.Any(child => child.Key == group.Group.Key) == true)?.Name ?? "Cleanup groups";
         _cleanupDrillDown = true; _activeOpportunityGroup = null;

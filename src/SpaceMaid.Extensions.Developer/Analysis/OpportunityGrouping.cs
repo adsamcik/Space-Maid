@@ -70,9 +70,27 @@ public static class OpportunityGrouping
                     pair.Value.AsReadOnly(), UnionBytes(pair.Value));
             }).OrderByDescending(group => group.ObservedBytes).ThenBy(group => group.Path, StringComparer.Ordinal).ToArray();
             var findings = children.SelectMany(child => child.Locations).ToArray();
+            var contents = findings.GroupBy(item => (item.Title, Folder: FolderName(item.DirectoryIndex))).Select(group =>
+            {
+                token.ThrowIfCancellationRequested();
+                var items = group.ToArray();
+                var first = items[0];
+                return new OpportunityGroup(languageKey + "/contents/" + group.Key.Title + "/" + group.Key.Folder,
+                    group.Key.Folder + "/", scan.RootPath, "Detected build folders", Array.AsReadOnly(items), UnionBytes(items), first.Caution)
+                {
+                    Caption = DescribeBuildContents(first.Title, group.Key.Folder),
+                    StatusLabel = first.SuggestedAction,
+                    CanSelectGroup = false
+                };
+            }).OrderByDescending(group => group.ObservedBytes).ThenBy(group => group.Name, StringComparer.Ordinal).ToArray();
             languages.Add(new(languageKey, bucket.Name, scan.RootPath, "Build language / system", Array.AsReadOnly(findings),
                 UnionBytes(findings), "Classified from detected build folders and project-marker filenames. This does not classify the whole project.",
-                Array.AsReadOnly(children)));
+                Array.AsReadOnly(children))
+            {
+                Caption = string.Join(" · ", contents.Select(group => group.Name).Distinct(StringComparer.Ordinal).Take(4))
+                    + (contents.Length > 4 ? $" · {contents.Length - 4:N0} more folder types" : ""),
+                ContentGroups = Array.AsReadOnly(contents)
+            });
         }
         var breakdowns = new Dictionary<string, IReadOnlyList<OpportunityGroup>>(StringComparer.Ordinal);
         foreach (var (category, key) in new[] { ("Tool caches", "cleanup:tools"), ("Test artifacts", "cleanup:tests"),
@@ -189,6 +207,9 @@ public static class OpportunityGrouping
         }
         int Parent(int directory) => directory == scan.RootIndex || scan.PrimaryLink(directory) < 0
             ? -1 : scan.LinkParent(scan.PrimaryLink(directory));
+        string FolderName(int directory) => (directory == scan.RootIndex
+            ? Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.RootPath))
+            : scan.PrimaryLink(directory) is >= 0 and var link ? scan.Name(link).ToString() : "build output");
         int Marker(int directory)
         {
             if (markers.TryGetValue(directory, out int value)) return value;
@@ -235,4 +256,22 @@ public static class OpportunityGrouping
             return bytes;
         }
     }
+
+    private static string DescribeBuildContents(string title, string folder) => title switch
+    {
+        ".NET build output" => folder.Equals("obj", StringComparison.OrdinalIgnoreCase)
+            ? "Intermediate compiler files, generated code and restore metadata."
+            : "Compiled applications and libraries, debug symbols and copied runtime files.",
+        "Cargo build output" => "Compiled crates, binaries, dependency artifacts and incremental compilation files, often under debug/ and release/.",
+        "Gradle build output" => "Compiled classes, generated sources, intermediate files, packages and build reports for a Gradle module.",
+        "Maven build output" => "Compiled classes, generated sources, packaged JARs or WARs and build reports.",
+        "CMake build output" => "CMake configure state, generated build files, object files and compiled targets. Local configure options may be lost.",
+        "Python bytecode cache" => "Compiled Python bytecode (.pyc). This finding covers the __pycache__ folder.",
+        "SvelteKit build output" => "Generated SvelteKit application files, types and intermediate build output.",
+        "Nuxt build output" => "Generated Nuxt application files, types and intermediate build output.",
+        "Possible Node build output" when folder.Equals(".next", StringComparison.OrdinalIgnoreCase) =>
+            "Next.js build output and caches. Review the project's configuration and any custom files.",
+        "Possible Node build output" => "Possible web bundles, generated assets and copied static files. The folder name alone does not prove its contents are generated.",
+        _ => "Detected build folders. Inspect their contents; regeneration has not been established."
+    };
 }

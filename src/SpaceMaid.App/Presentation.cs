@@ -64,7 +64,11 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public string SizeComparison => $"{Size} · Compared with the largest visible group. Groups may overlap.";
     public string Glyph => Group.Glyph;
     public string DecisionHint => Group.StatusLabel.Length > 0 ? Group.StatusLabel : Group.Kind;
-    public IReadOnlyList<OpportunityGroupRow> Children { get; } = showChildren ? CreateChildren(group, matches) : [];
+    public IReadOnlyList<OpportunityGroupRow> Children { get; } = showChildren ? CreateMembers(group.Children, matches) : [];
+    public IReadOnlyList<OpportunityGroupRow> ContentGroups { get; } = CreateMembers(group.ContentGroups, matches);
+    public bool HasContentGroups => ContentGroups.Count > 0;
+    public bool Expanded { get; set; }
+    public bool ContentsExpanded { get; set; }
     public bool HasChildren => Children.Count > 0;
     public string BreakdownHeading => Group.BreakdownHeading;
     public string ProjectCount => $"{Group.Children?.Count ?? 0:N0} {(Group.Children?.Count == 1 ? "project" : "projects")}";
@@ -82,10 +86,10 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
         if (_selected == count) return;
         _selected = count; PropertyChanged?.Invoke(this, new(nameof(Count))); PropertyChanged?.Invoke(this, new(nameof(Description))); PropertyChanged?.Invoke(this, new(nameof(Checked)));
     }
-    private static IReadOnlyList<OpportunityGroupRow> CreateChildren(OpportunityGroup group, IReadOnlyList<OpportunityRow> matches)
+    private static IReadOnlyList<OpportunityGroupRow> CreateMembers(IReadOnlyList<OpportunityGroup>? source, IReadOnlyList<OpportunityRow> matches)
     {
         var identities = matches.Select(row => row.Identity).ToHashSet();
-        var children = (group.Children ?? []).Where(child => child.Locations.Any(item => identities.Contains((item.ProviderId, item.DirectoryIndex, item.RuleId)))).ToArray();
+        var children = (source ?? []).Where(child => child.Locations.Any(item => identities.Contains((item.ProviderId, item.DirectoryIndex, item.RuleId)))).ToArray();
         long largest = children.Select(child => child.ObservedBytes).DefaultIfEmpty().Max();
         return children.Select(child =>
         {

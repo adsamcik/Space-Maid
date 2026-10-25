@@ -154,6 +154,7 @@ public partial class MainWindow : Window
         DetailPanel.DataContext = (OpportunityGrid.SelectedItem as OpportunityRow)?.Item;
         DetailPanel.Visibility = hasSelection ? Visibility.Visible : Visibility.Collapsed;
         DetailHint.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
+        UpdateBuildFolderContents(OpportunityGrid.SelectedItem as OpportunityRow);
         var assessment = OpportunityGrid.SelectedItem is OpportunityRow row ? _worktreeAssessments.GetValueOrDefault(row.Path) : null;
         WorktreeDetailText.Visibility = assessment is null ? Visibility.Collapsed : Visibility.Visible;
         WorktreeDetailText.Text = assessment is null ? "" : assessment.Status + ": " + assessment.Reason

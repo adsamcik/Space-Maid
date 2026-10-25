@@ -76,6 +76,33 @@ public sealed class OpportunityExtensionTests
     }
 
     [Fact]
+    public async Task ContentBreakdownsUseHostSizesAndCannotIntroduceNewTargets()
+    {
+        var (scan, first, second) = Inventory();
+        var finding = Finding(scan, first);
+        var source = Analysis(finding, "cleanup:cache");
+        var parent = Assert.Single(source.Groups.Cleanup!);
+        var content = parent with { Key = "contents", ObservedBytes = long.MaxValue };
+        source = source with { Groups = source.Groups with { Cleanup = [parent with { ContentGroups = [content] }] } };
+        await using var catalog = new OpportunityCatalog();
+        catalog.Register("test.contents", new FixedProvider(source));
+        var result = catalog.Analyze(scan);
+        var normalized = Assert.Single(Assert.Single(result.Groups.Cleanup!).ContentGroups!);
+        Assert.Equal("test.contents/contents", normalized.Key);
+        Assert.Equal("test.contents", normalized.ProviderId);
+        Assert.Equal(scan.DirectoryAllocated[first], normalized.ObservedBytes);
+        Assert.Same(Assert.Single(result.Findings), Assert.Single(normalized.Locations));
+
+        var outside = Finding(scan, second);
+        var invalid = source with { Groups = source.Groups with
+        { Cleanup = [parent with { ContentGroups = [content with { Locations = [outside] }] }] } };
+        await using var rejected = new OpportunityCatalog();
+        rejected.Register("test.invalid", new FixedProvider(invalid));
+        Assert.Empty(rejected.Analyze(scan).Findings);
+        Assert.Contains("unavailable", rejected.Status(scan));
+    }
+
+    [Fact]
     public async Task InvalidMembershipAndFailedProvidersDoNotHideOtherProviders()
     {
         var (scan, first, second) = Inventory();

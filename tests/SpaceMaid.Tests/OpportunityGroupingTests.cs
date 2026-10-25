@@ -105,6 +105,13 @@ public sealed class OpportunityGroupingTests
             var child = Assert.Single(language.Children!);
             var owner = Assert.Single(groups.Projects, item => item.Locations.Any(location => location.DirectoryIndex == folder));
             Assert.Equal(owner.Name, child.Name); Assert.Equal(owner.Path, child.Path); Assert.Equal(owner.Kind, child.Kind);
+            var content = Assert.Single(language.ContentGroups!);
+            Assert.Equal(folder, Assert.Single(content.Locations).DirectoryIndex);
+            Assert.Equal(4096, content.ObservedBytes);
+            Assert.False(content.CanSelectGroup);
+            Assert.NotEmpty(content.Caption);
+            Assert.Equal(language.Locations[0].Caution, content.Summary);
+            Assert.Equal(language.Locations[0].SuggestedAction, content.StatusLabel);
         }
         Assert.All(groups.BuildLanguages.SelectMany(group => group.Locations), location => Assert.Equal("Build output", location.Category));
         Assert.Contains(findings, location => location.Category == "Dependencies");
@@ -162,6 +169,11 @@ public sealed class OpportunityGroupingTests
         Assert.DoesNotContain(upper.Locations, location => location.DirectoryIndex == web);
         Assert.Equal(900, Assert.Single(groups.Projects, group => group.Path == upper.Path).ObservedBytes);
         Assert.Equal(1300, Assert.Single(groups.Types).ObservedBytes);
+        Assert.Equal(300, Assert.Single(csharp.ContentGroups!, group => group.Name == "bin/").ObservedBytes);
+        Assert.Equal(600, Assert.Single(csharp.ContentGroups!, group => group.Name == "obj/").ObservedBytes);
+        // Content groups can overlap; the language's union remains the authoritative total.
+        Assert.Equal(900, csharp.ContentGroups!.Sum(group => group.ObservedBytes));
+        Assert.Contains("Intermediate", Assert.Single(csharp.ContentGroups!, group => group.Name == "obj/").Caption);
 
         int Folder(ulong id, ulong parent, string name)
         { int file = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(file, new(parent), name); return file; }
@@ -196,7 +208,12 @@ public sealed class OpportunityGroupingTests
         var groups = OpportunityGrouping.Build(scan, findings);
         Assert.Equal(5, groups.BuildLanguages!.Count);
         foreach (var (title, item) in folders)
+        {
             Assert.Contains(Assert.Single(groups.BuildLanguages, group => group.Name == item.Label).Locations, finding => finding.Title == title);
+            var content = Assert.Single(Assert.Single(groups.BuildLanguages, group => group.Name == item.Label).ContentGroups!,
+                group => group.Locations.Any(finding => finding.Title == title));
+            Assert.DoesNotContain("regeneration has not been established", content.Caption);
+        }
         Assert.Equal(findings.Length, groups.BuildLanguages.Sum(group => group.Locations.Count));
     }
 

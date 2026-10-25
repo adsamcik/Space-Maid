@@ -10,6 +10,8 @@ public sealed record OpportunityGroup(string Key, string Name, string Path, stri
     public string BreakdownHeading { get; init; } = "";
     public bool CanSelectGroup { get; init; } = true;
     public OpportunityGroupRole Role { get; init; }
+    // Informational breakdown of the same findings, separate from project navigation.
+    public IReadOnlyList<OpportunityGroup>? ContentGroups { get; init; }
 }
 
 public enum OpportunityGroupRole { General, Worktrees, MatchedWorktrees }

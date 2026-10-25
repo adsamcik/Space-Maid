@@ -333,7 +333,7 @@
                             <Button x:Name="EmptyRecycleBinButton" Grid.Column="4" Content="Empty…" Click="EmptyRecycleBin_Click" IsEnabled="False" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="Empty Recycle Bin on selected drive" />
                         </Grid>
                     </Border>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer x:Name="CleanupOverviewScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ItemsControl x:Name="CleanupGroupCards" AutomationProperties.Name="Cleanup checklist">
                             <ItemsControl.ItemTemplate><DataTemplate>
                                 <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,16" ToolTip="{Binding Description}">
@@ -354,21 +354,44 @@
                                             <TextBlock Text="{Binding Count}" FontSize="11" Opacity="0.65" Margin="0,6,0,0" TextTrimming="CharacterEllipsis" MaxWidth="125" ToolTip="{Binding Count}" />
                                         </StackPanel>
                                         <Button Grid.Column="4" Content="View folders" Click="ViewCleanupGroup_Click" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="{Binding Name, StringFormat=View folders in {0}}" />
-                                        <Expander Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Header="{Binding BreakdownHeading}" IsExpanded="False" Foreground="{DynamicResource WindowForeground}" FontSize="12" Margin="0,10,0,0">
+                                        <Expander x:Name="CleanupBreakdownExpander" Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Header="{Binding BreakdownHeading}" IsExpanded="{Binding Expanded, Mode=TwoWay}" Expanded="CleanupExpander_Changed" Collapsed="CleanupExpander_Changed" Foreground="{DynamicResource WindowForeground}" FontSize="12" Margin="0,10,0,0">
                                             <Expander.Style><Style TargetType="Expander"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding HasChildren}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Expander.Style>
                                             <ItemsControl ItemsSource="{Binding Children}" Foreground="{DynamicResource WindowForeground}" Margin="0,6,0,0" AutomationProperties.Name="{Binding BreakdownHeading}">
                                                 <ItemsControl.ItemTemplate><DataTemplate>
                                                     <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="0,7">
                                                         <Grid>
+                                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /><ColumnDefinition Width="120" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
                                                             <CheckBox IsThreeState="True" IsChecked="{Binding Checked, Mode=OneWay}" Click="CleanupGroupSelection_Click" VerticalAlignment="Center" ToolTip="{Binding SelectionHint}" AutomationProperties.Name="{Binding Name, StringFormat=Select {0} for cleanup}" />
                                                             <StackPanel Grid.Column="1" Margin="4,0,12,0" ToolTip="{Binding Description}">
                                                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                                 <TextBlock FontSize="11" Opacity="0.65" Margin="0,3,0,0"><Run Text="{Binding ProjectCount, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Count, Mode=OneWay}" /></TextBlock>
+                                                                <TextBlock Text="{Binding Group.Caption}" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap">
+                                                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding HasContentGroups}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                                                </TextBlock>
                                                                 <ProgressBar Value="{Binding RelativeSize, Mode=OneWay}" Height="4" MinHeight="0" Maximum="100" Margin="0,7,8,0" ToolTip="{Binding SizeComparison}" AutomationProperties.Name="{Binding SizeComparison}" />
                                                             </StackPanel>
                                                             <TextBlock Grid.Column="2" Text="{Binding Size}" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,16,0" />
                                                             <Button Grid.Column="3" Content="View projects" Click="ViewCleanupProjects_Click" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="{Binding Name, StringFormat=View projects for {0}}" />
+                                                            <Expander x:Name="CleanupContentExpander" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Header="What would be cleaned" Foreground="{DynamicResource WindowForeground}" IsExpanded="{Binding ContentsExpanded, Mode=TwoWay}" Expanded="CleanupExpander_Changed" Collapsed="CleanupExpander_Changed" Margin="4,6,0,0" AutomationProperties.Name="{Binding Name, StringFormat=What would be cleaned for {0}}">
+                                                                <Expander.Style><Style TargetType="Expander"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding HasContentGroups}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Expander.Style>
+                                                                <StackPanel Margin="0,6,0,0">
+                                                                    <TextBlock Text="Whole folders, including any custom files. Sizes may overlap." FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+                                                                    <ItemsControl ItemsSource="{Binding ContentGroups}" Foreground="{DynamicResource WindowForeground}" AutomationProperties.Name="Detected build folder types">
+                                                                        <ItemsControl.ItemTemplate><DataTemplate>
+                                                                            <Grid Margin="0,10,0,4">
+                                                                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,12,0" />
+                                                                                <TextBlock Grid.Column="1" FontSize="12"><Run Text="{Binding Count, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Size, Mode=OneWay}" /></TextBlock>
+                                                                                <TextBlock Grid.Row="1" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="0,4,0,0"><Run Text="Usually contains: " /><Run Text="{Binding Group.Caption, Mode=OneWay}" /></TextBlock>
+                                                                                <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding Group.StatusLabel}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                                                                <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{Binding Group.Summary}" TextWrapping="Wrap" FontSize="11" Opacity="0.75" Margin="0,4,0,0" />
+                                                                            </Grid>
+                                                                        </DataTemplate></ItemsControl.ItemTemplate>
+                                                                    </ItemsControl>
+                                                                </StackPanel>
+                                                            </Expander>
                                                         </Grid>
                                                     </Border>
                                                 </DataTemplate></ItemsControl.ItemTemplate>
@@ -457,6 +480,20 @@
                             <TextBlock Text="{Binding Category}" Opacity="0.65" FontSize="12" Margin="0,6,0,12" />
                             <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="12" />
                             <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                            <StackPanel x:Name="BuildFolderContentsPanel" Visibility="Collapsed" Margin="0,14,0,0">
+                                <TextBlock Text="Inside this folder" FontWeight="SemiBold" />
+                                <ItemsControl x:Name="BuildFolderContentsList" Margin="0,6,0,0" AutomationProperties.Name="Scanned build folder contents">
+                                    <ItemsControl.ItemTemplate><DataTemplate>
+                                        <Grid Margin="0,3" ToolTip="{Binding Detail}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Size}" />
+                                        </Grid>
+                                    </DataTemplate></ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="BuildFolderContentsNote" TextWrapping="Wrap" FontSize="11" Opacity="0.7" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                            </StackPanel>
                             <Expander Header="Details" Margin="0,14,0,0">
                                 <StackPanel Margin="0,8,0,0">
                                     <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />

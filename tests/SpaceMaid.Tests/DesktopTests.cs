@@ -893,6 +893,8 @@ public sealed partial class DesktopTests
                 BeginWorkflow("Opportunities browsing and selection");
                 SetStage("browsing thousands of grouped opportunities and retaining hidden selections");
                 CheckOpportunityBrowser(window, app, artifactRoot);
+                SetStage("inspecting ecosystem-specific build contents and scanned folder sizes");
+                CheckBuildContents(window, app, artifactRoot);
                 SetStage("browsing additional cleanup categories by tool and project");
                 CheckAdditionalCleanupCategories(window, app, artifactRoot);
                 SetStage("browsing agent history, checkpoints and model libraries");
