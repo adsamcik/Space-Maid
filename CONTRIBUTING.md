@@ -8,10 +8,13 @@ Use the .NET 10 SDK pinned in [global.json](global.json). On Windows:
 
 ```powershell
 dotnet build SpaceMaid.slnx -c Release -m:1
-dotnet test tests/SpaceMaid.Tests -c Release -m:1
+dotnet test tests/SpaceMaid.Tests -c Release --no-build --filter 'FullyQualifiedName!~SpaceMaid.Tests.DesktopTests'
+dotnet test tests/SpaceMaid.Tests -c Release --no-build --filter 'FullyQualifiedName~SpaceMaid.Tests.DesktopTests'
 ```
 
 Run desktop tests as a normal user. Three raw-volume checks require administrator access and are skipped otherwise. A successful build does not establish native cleanup, cloud-provider or desktop interaction behavior.
+
+Keep desktop and non-desktop tests in separate test processes, as CI does. WPF's process-wide pack-resource lookup cannot distinguish directly referenced extension assemblies from copies loaded into the app's extension contexts. Combining both groups can make Photos resources resolve from the wrong assembly. Both groups remain required. See the [WPF resource cache](https://github.com/dotnet/wpf/blob/main/src/Microsoft.DotNet.Wpf/src/PresentationFramework/MS/Internal/AppModel/ResourceContainer.cs). Optional native Python/npm checks use existing installed tools and owned offline fixtures; they never install tools or use personal caches.
 
 For builds using `ArtifactsPath` outside the checkout, set `SPACEMAID_TEST_REPOSITORY` to the repository root before running desktop tests so screenshots and workflow diagnostics have a known destination. Run binaries from their physical output path; extension and model-worker safety checks intentionally reject junction ancestors.
 

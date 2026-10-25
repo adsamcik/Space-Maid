@@ -42,7 +42,12 @@ if ($TestUserProcess) {
     $version = & (Join-Path $toolFolder 'ExifTool.exe') -ver
     if ($LASTEXITCODE -ne 0 -or $version -ne '13.42') { throw 'The pinned ExifTool installation did not start.' }
     Set-Location -LiteralPath $workspace
-    & dotnet vstest $assembly "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-tests.trx'
+    # WPF resolves pack resources process-wide by assembly name. Unit tests
+    # reference extension types directly; desktop tests load those assemblies
+    # into their production contexts. Use fresh test hosts to avoid collisions.
+    & dotnet vstest $assembly '--TestCaseFilter:FullyQualifiedName!~SpaceMaid.Tests.DesktopTests' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-tests.trx'
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & dotnet vstest $assembly '--TestCaseFilter:FullyQualifiedName~SpaceMaid.Tests.DesktopTests' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-desktop-tests.trx'
     exit $LASTEXITCODE
 }
 
