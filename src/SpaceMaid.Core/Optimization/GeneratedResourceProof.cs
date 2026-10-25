@@ -45,7 +45,7 @@ internal sealed class GeneratedResourceProof : IDisposable
             string producer, owner = file.ProviderId;
             switch (file.Rule.ResourceKind)
             {
-                case GeneratedResourceKind.PythonBytecode: proof.Python(file, content, target); producer = "CPython validated bytecode"; break;
+                case GeneratedResourceKind.PythonBytecode: proof.Python(file, content, target); producer = "CPython checked-hash bytecode"; break;
                 case GeneratedResourceKind.DotNetCompilerCache: proof.DotNet(file, content); producer = "MSBuild compiler input fingerprint"; break;
                 case GeneratedResourceKind.MypyIncremental: proof.Mypy(file, content); producer = "mypy JSON incremental cache"; break;
                 case GeneratedResourceKind.OwnedCache: proof.Owned(file, target); producer = "Recorded generated resource"; break;
@@ -57,7 +57,8 @@ internal sealed class GeneratedResourceProof : IDisposable
             proof.Evidence = new(OptimizationAction.EvictGeneratedFile, OptimizationDisposition.Eligible, owner, file.Path,
                 "Producer contract and current readable inputs verified.", RestorationRequirement.Recompute, DateTime.UtcNow)
             { Producer = producer, Variant = Path.GetRelativePath(file.ContainerPath, Path.GetDirectoryName(file.Path)!),
-                ContractVersion = 2, CoverageComplete = true, RequiredInputs = proof.Inputs.Select(i => i.Path).ToArray() };
+                ContractVersion = file.Rule.ResourceKind == GeneratedResourceKind.PythonBytecode ? 3 : 2,
+                CoverageComplete = true, RequiredInputs = proof.Inputs.Select(i => i.Path).ToArray() };
             return proof;
         }
         catch { proof.Dispose(); throw; }
@@ -92,25 +93,15 @@ internal sealed class GeneratedResourceProof : IDisposable
         ushort magic = tag.Groups[1].Value switch { "311" => 3495, "312" => 3531, "313" => 3571, "314" => 3627, _ => 0 };
         if (BinaryPrimitives.ReadUInt16LittleEndian(data) != magic || data[2] != 13 || data[3] != 10)
             throw new IOException("Python cache version does not match its filename; kept.");
+        if (BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4)) != 3)
+            throw new IOException("Only checked-hash Python caches establish source correspondence. Timestamp, unchecked and unknown modes are kept for review.");
         var source = Input(sourcePath); byte[] sourceBytes = Read(source.Stream);
         // A source edited after the cache (even with restored write times) is
         // positive mismatch evidence. No interpreter/project code is executed.
         if (source.Revision.Changed > target.Changed) throw new IOException("Source changed after cached bytecode; kept.");
-        uint flags = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4));
-        if (flags == 0)
-        {
-            long seconds = new DateTimeOffset(DateTime.FromFileTimeUtc(source.Revision.Written)).ToUnixTimeSeconds();
-            if (BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(8)) != unchecked((uint)seconds)
-                || BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(12)) != sourceBytes.Length)
-                throw new IOException("Python cache does not match current source metadata; kept.");
-        }
-        else if (flags == 3)
-        {
-            uint key = BinaryPrimitives.ReadUInt32LittleEndian(data);
-            if (BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(8)) != PythonSourceHash(key, sourceBytes))
-                throw new IOException("Python cache source hash does not match; kept.");
-        }
-        else throw new IOException("Unchecked or unknown Python cache validation mode; review manually.");
+        uint key = BinaryPrimitives.ReadUInt32LittleEndian(data);
+        if (BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(8)) != PythonSourceHash(key, sourceBytes))
+            throw new IOException("Python cache source hash does not match; kept.");
     }
 
     private void DotNet(OptimizationFile file, byte[] data)

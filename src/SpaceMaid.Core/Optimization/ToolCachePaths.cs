@@ -58,9 +58,13 @@ internal static class ToolCachePaths
             byte* id = stackalloc byte[24];
             foreach (string path in paths)
             {
+                using var metadata = GeneratedReadLease.OpenHandle(path, 0x80, 7);
+                GeneratedReadLease.CheckLocal(metadata, directory: true);
+                var before = GeneratedReadLease.Inspect(metadata, path);
                 var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x81, 3, 0, 3, 0x02300000, 0);
                 if (handle.IsInvalid) { int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error); }
                 handles.Add(handle);
+                GeneratedReadLease.CheckLocal(handle, directory: true);
                 if (!NativeMethods.GetFileInformationByHandleEx(handle, 0, basic, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
                 var attrs = (FileAttributes)LayoutParser.U32(new(basic, 40), 32);
                 if ((attrs & FileAttributes.Directory) == 0
@@ -69,6 +73,8 @@ internal static class ToolCachePaths
                 if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, id, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
                 volume = LayoutParser.U64(new(id, 24), 0);
                 identity = new(LayoutParser.U64(new(id, 24), 8), LayoutParser.U64(new(id, 24), 16));
+                if (before.Volume != volume || before.Identity != identity)
+                    throw new IOException("The cache path changed while its directory lease was acquired.");
             }
             if (identity == default) throw new InvalidOperationException("The cache has no verifiable native identity.");
             return new(handles, volume, identity);

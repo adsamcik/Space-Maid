@@ -32,10 +32,13 @@ public sealed class OptimizationPrecisionTests
                 hash = Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(source))), interface_hash = Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(data))),
                 dependencies = new[] { module == "a" ? "b" : "a" } }));
         }
-        OptimizationTests.Age(fixture.Path);
+        // Metadata records bind the source mtime above. Age cache outputs only;
+        // re-aging sources later makes the fixture stale under a busy runner.
+        foreach (string file in Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories))
+            AgeOutput(file);
         var (scan, findings, policy) = await Read(fixture.Path);
         var preview = await new FileOperations().PreviewOptimizationAsync(scan, findings, policy);
-        Assert.Equal(2, preview.Files.Count);
+        Assert.True(preview.Files.Count == 2, string.Join(" | ", preview.Skipped.Select(s => s.Reason)));
         foreach (var file in preview.Files) Assert.True(File.GetLastAccessTimeUtc(file.Path) < DateTime.UtcNow.AddDays(-20));
         var result = OptimizationExecutor.Execute(preview with { Files = [preview.Files[0]] }, policy);
         Assert.Equal(1, result.DeletedCount); Assert.True(File.Exists(preview.Files[1].Path));
@@ -76,7 +79,10 @@ public sealed class OptimizationPrecisionTests
         using var fixture = new TestDirectory(); OptimizationTests.MakePython(fixture.Path, "module"); OptimizationTests.Age(fixture.Path);
         string original = Path.Join(fixture.Path, "__pycache__", "module.cpython-313.pyc"); byte[] bytes = File.ReadAllBytes(original);
         string file = original.Replace("313", version, StringComparison.Ordinal); File.Move(original, file);
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes, magic); File.WriteAllBytes(file, bytes); AgeOutput(file);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes, magic);
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(8), GeneratedResourceProof.PythonSourceHash(
+            BinaryPrimitives.ReadUInt32LittleEndian(bytes), File.ReadAllBytes(Path.Join(fixture.Path, "module.py"))));
+        File.WriteAllBytes(file, bytes); AgeOutput(file);
         var (scan, findings, policy) = await Read(fixture.Path);
         Assert.Single((await new FileOperations().PreviewOptimizationAsync(scan, findings, policy)).Files);
         bytes[2] = 0; File.WriteAllBytes(file, bytes); AgeOutput(file);
@@ -142,7 +148,7 @@ public sealed class OptimizationPrecisionTests
         AgeOutput(file);
         var (scan, findings, policy) = await Read(fixture.Path);
         Assert.Empty((await new FileOperations().PreviewOptimizationAsync(scan, findings, policy)).Files);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4), 0); BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(12), 999999); File.WriteAllBytes(file, bytes); AgeOutput(file);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4), 3); bytes[8] ^= 1; File.WriteAllBytes(file, bytes); AgeOutput(file);
         var current = await Read(fixture.Path);
         Assert.Empty((await new FileOperations().PreviewOptimizationAsync(current.Scan, current.Findings, current.Policy)).Files);
         Assert.True(File.Exists(file));

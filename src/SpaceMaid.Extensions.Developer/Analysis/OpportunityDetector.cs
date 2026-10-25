@@ -56,8 +56,8 @@ public static partial class OpportunityDetector
         "mypy cache" => MypyCache,
         _ => null
     };
-    private static readonly AutomaticCleanupRule PythonBytecode = new("python-bytecode", "Python bytecode",
-        "Python recreates validated bytecode from readable matching source. The next import may be slower.", [".pyc"], requiresPythonSource: true,
+    private static readonly AutomaticCleanupRule PythonBytecode = new("python-bytecode", "Python checked-hash bytecode",
+        "Python recreates checked-hash bytecode from matching readable source. Timestamp and unchecked caches are kept. The next import may be slower.", [".pyc"], requiresPythonSource: true,
         resourceKind: GeneratedResourceKind.PythonBytecode);
     private static readonly AutomaticCleanupRule DotNetIntermediate = new("dotnet-intermediate", ".NET intermediate caches",
         "MSBuild recreates recorded compiler input hashes. Generated source and other build outputs are kept.",

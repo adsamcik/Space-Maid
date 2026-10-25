@@ -3,12 +3,31 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using SpaceMaid.App;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.Optimization;
 using Xunit;
 
 namespace SpaceMaid.Tests;
 
 public sealed class CloudFilesTests
 {
+    [Fact]
+    public async Task HydratedSyncRootCacheIsKeptBeforeNativeMaintenanceCanTraverseIt()
+    {
+        using var fixture = new ToolCacheFixture();
+        string syncRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "registered-sync-root")).FullName;
+        string cache = Directory.CreateDirectory(Path.Join(syncRoot, "npm-cache")).FullName;
+        Directory.CreateDirectory(Path.Join(cache, "_cacache"));
+        string file = Path.Join(syncRoot, "available.bin"); File.WriteAllBytes(file, new byte[4096]);
+        using var registration = RegisterSyncedFixture(syncRoot, file);
+        Assert.Equal((FileAttributes)0, File.GetAttributes(syncRoot) & (FileAttributes.ReparsePoint | FileAttributes.Offline));
+        fixture.ReportedNpmRoot = cache;
+        var observed = (await fixture.Service.InspectAsync()).Single(row => row.Kind == ToolCacheKind.Npm);
+        Assert.True(observed.CanPrepare);
+        await Assert.ThrowsAsync<IOException>(() => fixture.Service.PrepareAsync(observed));
+        Assert.DoesNotContain(fixture.Commands, command => command.Arguments.Contains("verify"));
+        Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
+    }
+
     internal static IDisposable RegisterSyncedFixture(string root, string file)
     {
         var registration = new Registration { Size = (uint)Marshal.SizeOf<Registration>(), Name = "Space Maid owned test provider", Version = "1", ProviderId = Guid.NewGuid() };

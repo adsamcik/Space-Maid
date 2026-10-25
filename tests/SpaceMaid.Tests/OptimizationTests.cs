@@ -342,9 +342,9 @@ public sealed class OptimizationTests
             if (!File.Exists(source)) continue;
             byte[] data = File.ReadAllBytes(file); if (data.Length < 17) Array.Resize(ref data, 32);
             BinaryPrimitives.WriteUInt16LittleEndian(data, 3571); data[2] = 13; data[3] = 10;
-            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), 0);
-            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), (uint)new DateTimeOffset(File.GetLastWriteTimeUtc(source)).ToUnixTimeSeconds());
-            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(12), (uint)new FileInfo(source).Length); data[16] = 0xe3;
+            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), 3);
+            BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(8), GeneratedResourceProof.PythonSourceHash(
+                BinaryPrimitives.ReadUInt32LittleEndian(data), File.ReadAllBytes(source))); data[16] = 0xe3;
             File.WriteAllBytes(file, data); File.SetCreationTimeUtc(file, DateTime.UtcNow.AddDays(-30));
             File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-30)); File.SetLastAccessTimeUtc(file, DateTime.UtcNow.AddDays(-30));
         }

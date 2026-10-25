@@ -10,12 +10,14 @@ Names and age only identify candidates. The host requires a supported producer c
 
 | Resource | Required evidence | Kept |
 | --- | --- | --- |
-| CPython 3.11–3.14 bytecode | Direct recognized `__pycache__` child, matching magic and code marker, readable source, matching timestamp/size or checked source hash | Orphans, unchecked hashes, mismatches, unsupported versions/layouts |
+| CPython 3.11–3.14 checked-hash bytecode | Direct recognized `__pycache__` child, matching magic and code marker, readable source and exact checked source hash | Timestamp caches, orphans, unchecked hashes, mismatches, unsupported versions/layouts |
 | .NET compiler fingerprints | Known SDK project, exact Debug/Release and target-framework/RID layout, 64-character input fingerprint and exact FileListAbsolute producer entry | Generated-looking source, arbitrary `.cache`, binaries and unknown variants |
 | mypy JSON cache | Paired 1.x metadata/data, exact data and source hashes, readable current source and bounded matching dependency records | Metadata records, unfamiliar JSON, unavailable/external dependencies and unsupported formats |
 | Space Maid photo previews | Exact producer receipt binding output SHA-256 to readable unchanged originals | Unfamiliar copied PNGs, missing receipts and unavailable/changed originals |
 
 These contracts establish resource ownership and the inputs required by the supported cache format. Space Maid does not execute project code, install build tools or guarantee that a future build succeeds. The next import, build, type check or preview may take longer. Files outside these precise contracts remain available for review or content-preserving storage actions.
+
+Timestamp Python headers contain modification time and source length, which can still match edited source. Native regression fixtures reproduced this case, so automatic eviction requires the checked source hash. The revised Python rule needs fresh consent. Optional native tests compile owned fixtures with existing uv-managed CPython 3.13/3.14 and verify exact checked-hash regeneration; they never execute project modules. Native npm verification is also exercised against an isolated offline cache, preserving source archives and cached payload bytes. These fixtures do not establish supported pnpm pruning or ReFS execution on unavailable tooling/storage.
 
 ## Bounds and execution
 
