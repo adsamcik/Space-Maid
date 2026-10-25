@@ -17,7 +17,8 @@ internal static class ToolCacheCommandRunner
         var start = new ProcessStartInfo(command.Executable)
         {
             WorkingDirectory = command.WorkingDirectory, UseShellExecute = false,
-            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (string argument in command.Arguments) start.ArgumentList.Add(argument);
         foreach (var (name, value) in command.Environment) start.Environment[name] = value;

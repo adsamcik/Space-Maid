@@ -35,6 +35,10 @@ if ($TestUserProcess) {
     $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
     $env:TMP = $env:TEMP
     $env:SPACEMAID_TEST_MODEL_WORKER = $workerExecutable
+    if (-not $env:SPACEMAID_TEST_PNPM -or -not (Test-Path -LiteralPath $env:SPACEMAID_TEST_PNPM -PathType Leaf)) {
+        throw 'The checksum-pinned native pnpm pruning prerequisite is missing.'
+    }
+    $env:SPACEMAID_REQUIRE_PNPM_PRUNE_TEST = '1'
     New-Item -ItemType Directory -Path $env:TEMP, $results -Force | Out-Null
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $archiveHash) { throw 'ExifTool archive hash mismatch.' }
     $toolFolder = Join-Path $env:LOCALAPPDATA 'Programs/ExifTool'
@@ -53,6 +57,7 @@ if ($TestUserProcess) {
 
 if (-not $administrator) { throw 'Account setup requires the GitHub-hosted runner administrator.' }
 New-Item -ItemType Directory -Path (Split-Path $archive), $results -Force | Out-Null
+$env:SPACEMAID_TEST_PNPM = & (Join-Path $PSScriptRoot 'Get-TestPnpm.ps1') -Destination (Join-Path $workspace 'artifacts/ci-inputs/pnpm10')
 # The official Windows package maintainer retains versioned archives; the
 # ExifTool main site removes old downloads. Keep the complete Perl bundle.
 Invoke-WebRequest -Uri 'https://oliverbetz.de/cms/files/Artikel/ExifTool-for-Windows/exiftool-13.42_64.zip' -OutFile $archive

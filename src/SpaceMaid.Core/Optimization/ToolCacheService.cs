@@ -45,16 +45,19 @@ public sealed class ToolCacheService
         var fresh = await InspectOneAsync(selected.Kind, null, token).ConfigureAwait(false);
         RequireSame(selected, fresh);
         using var lease = ToolCachePaths.Lease(fresh.Root!);
+        using var cacheLease = fresh.Kind == ToolCacheKind.Pnpm ? ToolCachePaths.Lease(fresh.CacheRoot!) : null;
         if (fresh.Kind == ToolCacheKind.Pnpm)
             await CheckPnpmAsync(fresh, token).ConfigureAwait(false);
         var arguments = ActionArguments(fresh);
-        return new(fresh, fresh.Launcher!, arguments, lease.Volume, lease.Identity);
+        var scopes = new List<ToolCacheScope> { new(fresh.Kind == ToolCacheKind.Pnpm ? "Package store" : "Cache", fresh.Root!, lease.Volume, lease.Identity) };
+        if (cacheLease is not null) scopes.Add(new("Metadata cache", fresh.CacheRoot!, cacheLease.Volume, cacheLease.Identity));
+        return new(fresh, fresh.Launcher!, arguments, scopes);
     }
 
     public async Task<ToolCacheRunResult> ExecuteAsync(ToolCachePlan plan, CancellationToken token = default,
         Action<string, object>? diagnostic = null)
     {
-        // A plan is single-scope and expires; native owner maintenance can alter
+        // A plan binds every affected scope and expires; native maintenance can alter
         // many records and is intentionally separate from automatic byte caps.
         if (DateTime.UtcNow - plan.PreparedAtUtc > TimeSpan.FromMinutes(10))
             throw new InvalidOperationException("The maintenance preview expired. Inspect and review it again.");
@@ -66,11 +69,14 @@ public sealed class ToolCacheService
         if (!ActionArguments(fresh).SequenceEqual(plan.Arguments, StringComparer.Ordinal))
             throw new InvalidOperationException("The native maintenance contract changed. Review again.");
         using var lease = ToolCachePaths.Lease(fresh.Root!);
-        if (lease.Identity != plan.Identity || lease.Volume != plan.Volume)
+        using var cacheLease = fresh.Kind == ToolCacheKind.Pnpm ? ToolCachePaths.Lease(fresh.CacheRoot!) : null;
+        if (plan.Scopes.Count != (cacheLease is null ? 1 : 2)
+            || plan.Scopes[0].Path != fresh.Root || lease.Identity != plan.Scopes[0].Identity || lease.Volume != plan.Scopes[0].Volume
+            || cacheLease is not null && (plan.Scopes[1].Path != fresh.CacheRoot || cacheLease.Identity != plan.Scopes[1].Identity || cacheLease.Volume != plan.Scopes[1].Volume))
             throw new InvalidOperationException("The cache folder was replaced after review. No maintenance started.");
         if (fresh.Kind == ToolCacheKind.Pnpm) await CheckPnpmAsync(fresh, token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
-        diagnostic?.Invoke("tool-cache-maintenance-start", new { Tool = fresh.Kind.ToString(), fresh.Root, plan.Action, plan.CommandPreview });
+        diagnostic?.Invoke("tool-cache-maintenance-start", new { Tool = fresh.Kind.ToString(), plan.Scopes, plan.Action, plan.CommandPreview });
         try
         {
             var result = await RunAsync(plan.Launcher, plan.Arguments, token, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
@@ -101,7 +107,7 @@ public sealed class ToolCacheService
             string stamp = launcher.Stamp();
             string version = ParseVersion((await QueryAsync(launcher,
                 kind == ToolCacheKind.NuGet ? ["nuget", "--version"] : kind == ToolCacheKind.Npm ? ["--global", "--version"]
-                    : kind == ToolCacheKind.Pnpm ? ["--ignore-workspace", "--ignore-pnpmfile", "--version"] : ["--version"], token).ConfigureAwait(false)).Output);
+                    : kind == ToolCacheKind.Pnpm ? ["--ignore-workspace", "--config.ignore-pnpmfile=true", "--version"] : ["--version"], token).ConfigureAwait(false)).Output);
             if (version.Length == 0) throw new InvalidDataException("The installed tool did not report a recognizable version.");
             int.TryParse(version.Split('.')[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int major);
             if (kind == ToolCacheKind.Npm && major is < 9 or > 11 || kind == ToolCacheKind.Pnpm && major is < 9 or > 10)
@@ -119,22 +125,36 @@ public sealed class ToolCacheService
             }
             else if (kind == ToolCacheKind.Pnpm)
             {
-                string root = ToolCachePaths.Root(ParsePath((await QueryAsync(launcher, ["--ignore-workspace", "--ignore-pnpmfile", "store", "path"], token).ConfigureAwait(false)).Output));
+                string root = ToolCachePaths.Root(ParsePath((await QueryAsync(launcher, ["--ignore-workspace", "--config.ignore-pnpmfile=true", "store", "path"], token).ConfigureAwait(false)).Output));
                 CheckSeparateScope(root);
+                string cacheReport = (await QueryAsync(launcher,
+                    ["--ignore-workspace", "--config.ignore-pnpmfile=true", "config", "get", "cacheDir", "--json"], token).ConfigureAwait(false)).Output;
+                if (string.IsNullOrWhiteSpace(cacheReport) || cacheReport.Trim() is "null" or "undefined")
+                    return new(kind, name, version, root, ToolCacheDisposition.ManagedByTool, "Metadata cache needs a location",
+                        "pnpm did not report its metadata cache location. Configure an explicit cache-dir with pnpm, then inspect again. Pruning is unavailable until both locations can be checked.",
+                        "Store pruning can remove both package content and cached registry metadata.", [], false);
+                string cacheRoot = ToolCachePaths.Root(ParsePath(cacheReport));
+                CheckSeparateScope(cacheRoot);
+                if (OptimizationPolicy.Covers(root, cacheRoot) || OptimizationPolicy.Covers(cacheRoot, root))
+                    throw new InvalidOperationException("The pnpm store and metadata cache overlap; native pruning requires separate locations.");
                 bool versioned = Regex.IsMatch(Path.GetFileName(root), @"^v[0-9]+$", RegexOptions.CultureInvariant);
                 string? storeBase = versioned ? Path.GetDirectoryName(root) : null;
                 bool marker = versioned && Directory.Exists(Path.Join(root, "files"));
                 if (marker)
                 {
                     string bound = ToolCachePaths.Root(ParsePath((await QueryAsync(launcher,
-                        ["--ignore-workspace", "--ignore-pnpmfile", "--store-dir", storeBase!, "store", "path"], token).ConfigureAwait(false)).Output));
+                        ["--ignore-workspace", "--config.ignore-pnpmfile=true", "--config.cache-dir=" + cacheRoot, "--store-dir", storeBase!, "store", "path"], token).ConfigureAwait(false)).Output));
                     marker = string.Equals(bound, root, StringComparison.OrdinalIgnoreCase);
+                    string boundCache = ToolCachePaths.Root(ParsePath((await QueryAsync(launcher,
+                        ["--ignore-workspace", "--config.ignore-pnpmfile=true", "--config.cache-dir=" + cacheRoot, "config", "get", "cacheDir", "--json"], token).ConfigureAwait(false)).Output));
+                    marker &= string.Equals(boundCache, cacheRoot, StringComparison.OrdinalIgnoreCase);
                 }
                 observed = new(kind, name, version, root, marker ? ToolCacheDisposition.Review : ToolCacheDisposition.ManagedByTool,
                     marker ? "Native pruning available" : "Store layout needs review",
-                    "Configured root reported by pnpm. Preparation checks store integrity; pruning uses the owner's reference tracking. Dependencies and lockfiles are not deduplicated or rewritten.",
-                    "Future installs or branch switches may require removed packages again, including downloads and private-feed credentials.", [], marker)
-                    { StoreBase = storeBase };
+                    "Configured store and metadata cache reported by pnpm. Pruning removes unreferenced store content and cached registry metadata. Dependencies and lockfiles are not rewritten.",
+                    "Future installs or branch switches may require removed packages again, including downloads and private-feed credentials.",
+                    [new("Metadata cache", cacheRoot, "Native prune also removes cached metadata here.", "Registry metadata may need downloading again.")], marker)
+                    { StoreBase = storeBase, CacheRoot = cacheRoot };
             }
             else if (kind == ToolCacheKind.NuGet)
             {
@@ -179,7 +199,7 @@ public sealed class ToolCacheService
 
     private async Task CheckPnpmAsync(ToolCacheObservation observation, CancellationToken token)
     {
-        var status = await RunAsync(observation.Launcher!, ["--ignore-workspace", "--ignore-pnpmfile", "--store-dir", observation.StoreBase!, "store", "status"], token,
+        var status = await RunAsync(observation.Launcher!, PnpmArguments(observation, "status"), token,
             TimeSpan.FromSeconds(30)).ConfigureAwait(false);
         if (status.ExitCode != 0) throw new InvalidOperationException("pnpm did not verify its store as unchanged. Pruning is kept unavailable. " + Compact(status.Error));
     }
@@ -206,7 +226,8 @@ public sealed class ToolCacheService
             ["NODE_OPTIONS"] = "", ["NODE_PATH"] = "", ["NPM_CONFIG_IGNORE_SCRIPTS"] = "true", ["NPM_CONFIG_OFFLINE"] = "true",
             ["NPM_CONFIG_UPDATE_NOTIFIER"] = "false", ["NPM_CONFIG_AUDIT"] = "false", ["NPM_CONFIG_FUND"] = "false",
             ["NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS"] = "false", ["PNPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS"] = "false",
-            ["PNPM_CONFIG_IGNORE_PNPMFILE"] = "true", ["COREPACK_ENABLE_NETWORK"] = "0",
+            ["PNPM_CONFIG_IGNORE_PNPMFILE"] = "true", ["PNPM_CONFIG_IGNORE_SCRIPTS"] = "true", ["PNPM_CONFIG_OFFLINE"] = "true",
+            ["COREPACK_ENABLE_NETWORK"] = "0",
             ["COREPACK_ENABLE_PROJECT_SPEC"] = "0", ["DOTNET_CLI_UI_LANGUAGE"] = "en", ["DOTNET_NOLOGO"] = "1",
             ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1", ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1", ["CARGO_NET_OFFLINE"] = "true",
             ["RUSTUP_AUTO_INSTALL"] = "0", ["NO_COLOR"] = "1", ["CI"] = "true"
@@ -218,15 +239,19 @@ public sealed class ToolCacheService
     private static string[] ActionArguments(ToolCacheObservation observation) => observation.Kind switch
     {
         ToolCacheKind.Npm => ["--global", "--cache", observation.Root!, "--offline", "--ignore-scripts", "cache", "verify"],
-        ToolCacheKind.Pnpm => ["--ignore-workspace", "--ignore-pnpmfile", "--store-dir", observation.StoreBase!, "store", "prune"],
+        ToolCacheKind.Pnpm => PnpmArguments(observation, "prune"),
         _ => throw new InvalidOperationException("No native maintenance action is supported for this cache.")
     };
+
+    private static string[] PnpmArguments(ToolCacheObservation observation, string action) =>
+        ["--ignore-workspace", "--config.ignore-pnpmfile=true", "--config.cache-dir=" + observation.CacheRoot,
+            "--store-dir", observation.StoreBase!, "store", action];
 
     private static void RequireSame(ToolCacheObservation previous, ToolCacheObservation current)
     {
         if (!previous.CanPrepare || !current.CanPrepare || previous.Kind != current.Kind || previous.Version != current.Version
             || !string.Equals(previous.Root, current.Root, StringComparison.OrdinalIgnoreCase)
-            || previous.StoreBase != current.StoreBase || previous.Launcher is null || current.Launcher is null
+            || previous.StoreBase != current.StoreBase || previous.CacheRoot != current.CacheRoot || previous.Launcher is null || current.Launcher is null
             || previous.LauncherStamp.Length == 0 || previous.LauncherStamp != current.LauncherStamp
             || previous.Launcher.Stamp() != current.LauncherStamp)
             throw new InvalidOperationException("The installed tool, configured root or supported layout changed. Inspect and review again.");

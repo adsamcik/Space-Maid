@@ -8,6 +8,43 @@ namespace SpaceMaid.Tests;
 public sealed class ToolCacheTests
 {
     [Fact]
+    public async Task PnpmRejectsUnknownOverlappingChangedAndReplacedMetadataRoots()
+    {
+        using var fixture = new ToolCacheFixture();
+        fixture.ReportedPnpmCacheRoot = "";
+        var unknown = (await fixture.Service.InspectAsync()).Single(row => row.Kind == ToolCacheKind.Pnpm);
+        Assert.False(unknown.CanPrepare); Assert.Contains("explicit cache-dir", unknown.Details);
+        fixture.ReportedPnpmCacheRoot = fixture.PnpmBase;
+        Assert.False((await fixture.Service.InspectAsync()).Single(row => row.Kind == ToolCacheKind.Pnpm).CanPrepare);
+        fixture.ReportedPnpmCacheRoot = fixture.PnpmCacheRoot;
+        var row = (await fixture.Service.InspectAsync()).Single(row => row.Kind == ToolCacheKind.Pnpm);
+        var plan = await fixture.Service.PrepareAsync(row);
+        fixture.ReportedPnpmCacheRoot = Directory.CreateDirectory(System.IO.Path.Join(fixture.Path, "other-metadata")).FullName;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ExecuteAsync(plan));
+        fixture.ReportedPnpmCacheRoot = fixture.PnpmCacheRoot;
+        Directory.Move(fixture.PnpmCacheRoot, fixture.PnpmCacheRoot + "-original");
+        Directory.CreateDirectory(fixture.PnpmCacheRoot);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ExecuteAsync(plan));
+        Assert.DoesNotContain(fixture.Commands, command => command.Arguments.Contains("prune"));
+    }
+
+    [Fact]
+    public async Task PnpmKeepsBothMutationRootsPinnedWhileTheOwnerRuns()
+    {
+        using var fixture = new ToolCacheFixture();
+        var row = (await fixture.Service.InspectAsync()).Single(row => row.Kind == ToolCacheKind.Pnpm);
+        var plan = await fixture.Service.PrepareAsync(row);
+        bool checkedLeases = false;
+        fixture.OnMutation = () =>
+        {
+            Assert.Throws<IOException>(() => Directory.Move(fixture.PnpmRoot, fixture.PnpmRoot + "-moved"));
+            Assert.Throws<IOException>(() => Directory.Move(fixture.PnpmCacheRoot, fixture.PnpmCacheRoot + "-moved"));
+            checkedLeases = true;
+        };
+        Assert.True((await fixture.Service.ExecuteAsync(plan)).Completed); Assert.True(checkedLeases);
+    }
+
+    [Fact]
     public async Task UnknownToolMajorsCannotPrepareOrExecuteMaintenance()
     {
         using var fixture = new ToolCacheFixture();
@@ -45,7 +82,9 @@ public sealed class ToolCacheTests
         Assert.All(fixture.Commands.Where(c => c.Executable == fixture.Launcher(ToolCacheKind.Pnpm).Executable), c =>
         {
             Assert.Contains("--ignore-workspace", c.Arguments);
-            Assert.Contains("--ignore-pnpmfile", c.Arguments);
+            Assert.Contains("--config.ignore-pnpmfile=true", c.Arguments);
+            Assert.Equal("true", c.Environment["PNPM_CONFIG_IGNORE_SCRIPTS"]);
+            Assert.Equal("true", c.Environment["PNPM_CONFIG_OFFLINE"]);
         });
     }
 
@@ -95,7 +134,10 @@ public sealed class ToolCacheTests
         var result = await fixture.Service.ExecuteAsync(plan);
         Assert.True(result.Completed);
         var prune = Assert.Single(fixture.Commands, c => c.Arguments.Contains("prune"));
-        Assert.Equal(new[] { "--ignore-workspace", "--ignore-pnpmfile", "--store-dir", fixture.PnpmBase, "store", "prune" }, prune.Arguments);
+        Assert.Equal(new[] { "--ignore-workspace", "--config.ignore-pnpmfile=true", "--config.cache-dir=" + fixture.PnpmCacheRoot,
+            "--store-dir", fixture.PnpmBase, "store", "prune" }, prune.Arguments);
+        Assert.Equal(2, plan.Scopes.Count);
+        Assert.Contains(fixture.PnpmRoot, plan.AffectedPaths); Assert.Contains(fixture.PnpmCacheRoot, plan.AffectedPaths);
         Assert.Equal(2, fixture.Commands.Count(c => c.Arguments.Contains("status")));
         Assert.Contains("downloads", plan.Consequence);
         Assert.DoesNotContain(fixture.Commands, c => c.Arguments.Contains("dedupe") || c.Arguments.Contains("install"));
@@ -203,14 +245,17 @@ internal sealed class ToolCacheFixture : IDisposable
     internal string NpmRoot { get; }
     internal string PnpmBase { get; }
     internal string PnpmRoot { get; }
+    internal string PnpmCacheRoot { get; }
     internal string GradleRoot { get; }
     internal string ReportedNpmRoot { get; set; }
     internal string ReportedPnpmRoot { get; set; }
+    internal string ReportedPnpmCacheRoot { get; set; }
     internal string CargoVersion { get; set; } = "1.90.0";
     internal string NpmVersion { get; set; } = "11.6.0";
     internal bool ModifiedStore { get; set; }
     internal bool FailMutation { get; set; }
     internal bool StallMutation { get; set; }
+    internal Action? OnMutation { get; set; }
     internal List<ToolCacheCommand> Commands { get; } = [];
     internal TaskCompletionSource MutationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal ToolCacheService Service { get; }
@@ -222,6 +267,8 @@ internal sealed class ToolCacheFixture : IDisposable
         PnpmBase = Directory.CreateDirectory(System.IO.Path.Join(Path, "pnpm-store")).FullName;
         PnpmRoot = Directory.CreateDirectory(System.IO.Path.Join(PnpmBase, "v10")).FullName;
         Directory.CreateDirectory(System.IO.Path.Join(PnpmRoot, "files")); ReportedPnpmRoot = PnpmRoot;
+        PnpmCacheRoot = Directory.CreateDirectory(System.IO.Path.Join(Path, "pnpm-metadata")).FullName;
+        ReportedPnpmCacheRoot = PnpmCacheRoot;
         GradleRoot = Directory.CreateDirectory(System.IO.Path.Join(Path, "gradle-home")).FullName;
         foreach (var kind in Enum.GetValues<ToolCacheKind>().Where(k => k != ToolCacheKind.Gradle))
         {
@@ -238,13 +285,15 @@ internal sealed class ToolCacheFixture : IDisposable
         var kind = _launchers.Single(pair => pair.Value.Executable == command.Executable).Key;
         var args = command.Arguments;
         if (args.Contains("--version")) return new(0, kind switch { ToolCacheKind.Cargo => "cargo " + CargoVersion + " (fixture)", ToolCacheKind.NuGet => "NuGet Command Line\n7.0.0.1", ToolCacheKind.Npm => NpmVersion, _ => "10.18.0" }, "");
-        if (args.Contains("get")) return new(0, JsonSerializer.Serialize(ReportedNpmRoot), "");
+        if (args.Contains("get")) return new(0, kind == ToolCacheKind.Pnpm && ReportedPnpmCacheRoot.Length == 0 ? ""
+            : JsonSerializer.Serialize(kind == ToolCacheKind.Pnpm ? ReportedPnpmCacheRoot : ReportedNpmRoot), "");
         if (args.Contains("path")) return new(0, ReportedPnpmRoot, "");
         if (args.Contains("status")) return new(ModifiedStore ? 1 : 0, "", ModifiedStore ? "Store package was modified" : "");
         if (args.Contains("locals")) return new(0, string.Join('\n', new[] { "global-packages", "http-cache", "temp", "plugins-cache" }
             .Select(name => name + ": " + System.IO.Path.Join(Path, "NuGet", name))), "");
         if (args.Contains("verify") || args.Contains("prune"))
         {
+            OnMutation?.Invoke();
             MutationStarted.TrySetResult();
             if (StallMutation) await Task.Delay(Timeout.Infinite, token);
             return new(FailMutation ? 1 : 0, "Native fixture report", FailMutation ? "Owner declined maintenance" : "");

@@ -34,15 +34,16 @@ public partial class MainWindow
         _work = work; SetBusy(true);
         try
         {
-            log.Record("tool-cache-confirmed", new { plan.Action, plan.Observation.Root, plan.Observation.Version, plan.CommandPreview });
+            log.Record("tool-cache-confirmed", new { plan.Action, plan.Scopes, plan.Observation.Version, plan.CommandPreview });
             if (log.Error is not null) throw new IOException("The activity log could not record this maintenance action.");
             var task = service.ExecuteAsync(plan, work.Token, log.Record); _toolCacheTask = task;
             var result = await task;
             if (!_closing)
             {
-                if (_snapshot is { } scan && plan.Observation.Root is { } root
-                    && OptimizationPolicy.Covers(scan.RootPath, root))
-                    MarkScanStale(result.Summary + " Scan again to refresh cache sizes.", [new(root)]);
+                if (_snapshot is { } scan && plan.AffectedPaths.Select(path => OptimizationPolicy.Covers(path, scan.RootPath) ? scan.RootPath
+                        : OptimizationPolicy.Covers(scan.RootPath, path) ? path : null).OfType<string>()
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray() is { Length: > 0 } affected)
+                    MarkScanStale(result.Summary + " Scan again to refresh cache sizes.", affected.Select(path => new ScanRecheckRequest(path)));
                 else StatusText.Text = result.Summary;
                 RefreshPathDriveSpace();
             }

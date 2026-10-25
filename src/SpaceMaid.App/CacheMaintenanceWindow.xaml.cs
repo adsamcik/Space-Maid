@@ -72,7 +72,7 @@ public partial class CacheMaintenanceWindow : Window
             var plan = await _service.PrepareAsync(row, work.Token);
             CommandText.Text = plan.CommandPreview;
             bool confirmed = ConfirmMaintenance?.Invoke(plan) ?? MessageBox.Show(this,
-                plan.Action + "\n\n" + plan.Observation.Root + "\n\n" + plan.Consequence
+                plan.Action + "\n\n" + plan.ConfirmationScopes + "\n\n" + plan.Consequence
                     + "\n\nThis native operation can change multiple cache records. The automatic optimizer's byte cap does not apply.",
                 "Tool cache maintenance", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
             if (!confirmed) { StatusText.Text = "Maintenance cancelled before any native cleanup started."; return; }

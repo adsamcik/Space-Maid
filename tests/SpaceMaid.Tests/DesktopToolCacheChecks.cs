@@ -13,7 +13,12 @@ public sealed partial class DesktopTests
     {
         using var fixture = new ToolCacheFixture();
         var window = new CacheMaintenanceWindow(fixture.Service, null,
-            (plan, token) => fixture.Service.ExecuteAsync(plan, token)) { ConfirmMaintenance = _ => false };
+            (plan, token) => fixture.Service.ExecuteAsync(plan, token)) { ConfirmMaintenance = plan =>
+            {
+                Assert.Contains(fixture.PnpmRoot, plan.ConfirmationScopes);
+                Assert.Contains(fixture.PnpmCacheRoot, plan.ConfirmationScopes);
+                return false;
+            } };
         try
         {
             window.ShowActivated = false; window.ShowInTaskbar = false; window.WindowStartupLocation = WindowStartupLocation.Manual;

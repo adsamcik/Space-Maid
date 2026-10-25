@@ -4,6 +4,7 @@ public enum ToolCacheKind { Npm, Pnpm, NuGet, Cargo, Gradle }
 public enum ToolCacheDisposition { Unavailable, Review, ManagedByTool }
 
 public sealed record ToolCacheResource(string Name, string Path, string Evidence, string Restoration);
+public sealed record ToolCacheScope(string Name, string Path, ulong Volume, SpaceMaid.Core.Scanning.FileIdentity Identity);
 
 public sealed record ToolCacheObservation(ToolCacheKind Kind, string Name, string Version, string? Root,
     ToolCacheDisposition Disposition, string Status, string Details, string Restoration,
@@ -12,6 +13,7 @@ public sealed record ToolCacheObservation(ToolCacheKind Kind, string Name, strin
     internal ToolCacheLauncher? Launcher { get; init; }
     internal string LauncherStamp { get; init; } = "";
     internal string? StoreBase { get; init; }
+    public string? CacheRoot { get; init; }
     public DateTime ObservedAtUtc { get; init; } = DateTime.UtcNow;
     public OptimizationEvidence Evidence => new(OptimizationAction.MaintainToolCache,
         CanPrepare ? OptimizationDisposition.Review : Disposition == ToolCacheDisposition.Unavailable
@@ -32,18 +34,19 @@ public sealed class ToolCachePlan
         CoverageComplete = true, ObservedAtUtc = PreparedAtUtc };
     internal ToolCacheLauncher Launcher { get; }
     internal IReadOnlyList<string> Arguments { get; }
-    internal ulong Volume { get; }
-    internal SpaceMaid.Core.Scanning.FileIdentity Identity { get; }
+    public IReadOnlyList<ToolCacheScope> Scopes { get; }
+    public IReadOnlyList<string> AffectedPaths => Scopes.Select(scope => scope.Path).ToArray();
+    public string ConfirmationScopes => string.Join('\n', Scopes.Select(scope => scope.Name + ": " + scope.Path));
 
     internal ToolCachePlan(ToolCacheObservation observation, ToolCacheLauncher launcher,
-        IReadOnlyList<string> arguments, ulong volume, SpaceMaid.Core.Scanning.FileIdentity identity)
+        IReadOnlyList<string> arguments, IReadOnlyList<ToolCacheScope> scopes)
     {
         Observation = observation; Launcher = launcher; Arguments = Array.AsReadOnly(arguments.ToArray());
-        Volume = volume; Identity = identity; PreparedAtUtc = DateTime.UtcNow;
+        Scopes = Array.AsReadOnly(scopes.ToArray()); PreparedAtUtc = DateTime.UtcNow;
         Action = observation.Kind == ToolCacheKind.Npm ? "Verify npm cache" : "Prune unreferenced pnpm packages";
         Consequence = observation.Kind == ToolCacheKind.Npm
             ? "npm verifies its cache and removes unneeded or corrupt cache records. No packages are installed and scripts are disabled."
-            : "pnpm permanently removes packages its own store considers unreferenced. Future branch switches or installs may need downloads and private-feed access.";
+            : "pnpm permanently removes unreferenced store content and cached metadata in the listed locations. Future branch switches or installs may need downloads and private-feed access.";
         CommandPreview = ToolCacheCommand.Display(launcher.Executable, launcher.Prefix.Concat(Arguments));
     }
 }
