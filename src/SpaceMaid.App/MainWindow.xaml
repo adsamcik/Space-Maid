@@ -110,9 +110,9 @@
                             </TextBlock>
                         </StackPanel>
                         <StackPanel>
-                            <WrapPanel><TextBlock Text="Candidates" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
+                            <WrapPanel><TextBlock Text="Detected storage" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <TextBlock x:Name="CandidateText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
-                            <TextBlock x:Name="CandidateCaption" Text="Estimate" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="Overlapping folders are counted once. Review cleanup checks current contents.">
+                            <TextBlock x:Name="CandidateCaption" Text="Estimate" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="Observed estimate, including kept storage. Overlapping folders are counted once. Review checks what can be cleaned up.">
                                 <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="Estimate"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
@@ -429,7 +429,7 @@
                             <DataTemplate>
                                 <Grid MinHeight="58" Margin="4,3">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /><ColumnDefinition Width="76" /></Grid.ColumnDefinitions>
-                                    <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" HorizontalAlignment="Center" AutomationProperties.Name="{Binding Title, StringFormat=Select {0} for preview}" />
+                                    <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanSelect}" ToolTip="{Binding Item.CleanupBlockReason}" VerticalAlignment="Center" HorizontalAlignment="Center" AutomationProperties.Name="{Binding Title, StringFormat=Select {0} for preview}" />
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0,12,0">
                                         <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}" FontSize="13" />
                                         <TextBlock Text="{Binding DisplayPath}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" FontSize="12" Opacity="0.65" Margin="0,4,0,0" />

@@ -87,6 +87,10 @@ public sealed partial class DesktopTests
 
     private static string FindRepository()
     {
+        string? configured = Environment.GetEnvironmentVariable("SPACEMAID_TEST_REPOSITORY");
+        if (configured is not null)
+            return File.Exists(Path.Join(configured, "SpaceMaid.slnx")) ? Path.GetFullPath(configured)
+                : throw new DirectoryNotFoundException("SPACEMAID_TEST_REPOSITORY must name the repository root.");
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Join(directory.FullName, "SpaceMaid.slnx"))) directory = directory.Parent;
         return directory?.FullName ?? throw new DirectoryNotFoundException("The repository could not be located.");

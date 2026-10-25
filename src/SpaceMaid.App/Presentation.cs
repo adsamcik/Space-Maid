@@ -36,11 +36,13 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
             ? Path[(_scope.EndsWith('\\') ? _scope.Length : _scope.Length + 1)..] : Path;
     public void SetScope(string? scope)
     { if (_scope == scope) return; _scope = scope; PropertyChanged?.Invoke(this, new(nameof(DisplayPath))); PropertyChanged?.Invoke(this, new(nameof(ScopeLabel))); }
-    public string Review => Item.RequiresManualReview ? "Review carefully" : "Usually rebuildable";
+    public string Review => Item.CleanupBlockReason.Length > 0 ? "Manage in owning tool"
+        : Item.RequiresManualReview ? "Review carefully" : "Usually rebuildable";
+    public bool CanSelect => Item.CleanupBlockReason.Length == 0;
     public bool Selected
     {
         get => _selected;
-        set { if (_selected == value) return; _selected = value; PropertyChanged?.Invoke(this, new(nameof(Selected))); }
+        set { value &= CanSelect; if (_selected == value) return; _selected = value; PropertyChanged?.Invoke(this, new(nameof(Selected))); }
     }
     public event PropertyChangedEventHandler? PropertyChanged;
 }
@@ -48,6 +50,7 @@ internal sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation
 internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<OpportunityRow> matches, bool showChildren = false, long comparisonBytes = 0) : INotifyPropertyChanged
 {
     private int _selected;
+    private readonly int _selectableCount = matches.Count(row => row.CanSelect);
     public OpportunityGroup Group { get; } = group;
     public IReadOnlyList<OpportunityRow> Matches { get; } = matches;
     public string Name => Group.Name;
@@ -65,10 +68,10 @@ internal sealed class OpportunityGroupRow(OpportunityGroup group, IReadOnlyList<
     public bool HasChildren => Children.Count > 0;
     public string BreakdownHeading => Group.BreakdownHeading;
     public string ProjectCount => $"{Group.Children?.Count ?? 0:N0} {(Group.Children?.Count == 1 ? "project" : "projects")}";
-    public bool CanSelectGroup => Group.CanSelectGroup;
+    public bool CanSelectGroup => Group.CanSelectGroup && _selectableCount > 0;
     public string SelectionHint => CanSelectGroup ? "Check and review this group."
         : Group.Summary;
-    public bool? Checked => _selected == 0 ? false : _selected == Matches.Count ? true : null;
+    public bool? Checked => _selected == 0 ? false : _selected == _selectableCount ? true : null;
     public string Count => $"{Matches.Count:N0}" + (Matches.Count == Group.Locations.Count ? "" : $" of {Group.Locations.Count:N0}")
         + $" {(Group.Locations.Count == 1 ? "location" : "locations")}"
         + (_selected > 0 ? $" · {_selected:N0} selected" : "");

@@ -4,6 +4,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 
 - **Explore** — a sortable folder tree and treemap, with live scan results.
 - **Opportunities** — grouped build output, caches, dependencies and Git worktrees, with configurable activity filters and live checks before cleanup.
+  Includes [AI tool history, checkpoints and local model storage](docs/ai-storage-coverage.md), with tool-specific advice and protected shared stores.
 - **Apps** — installation folders, measured sizes and quick access in Explorer.
 - **Photos** — collections, exact duplicate review and related RAW/JPEG/sidecar files.
 - **Extensions** — trusted local workflows, including an optional local assistant.

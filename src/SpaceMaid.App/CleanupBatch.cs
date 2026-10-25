@@ -48,7 +48,7 @@ internal static class CleanupBatch
             var selectedDirectories = validation.ValidatedLocations.DistinctBy(location => location.DirectoryIndex)
                 .ToDictionary(location => location.DirectoryIndex, location => location.Path);
             IOpportunityInventory inventory = validation.Snapshot;
-            foreach (var build in validation.Findings.Where(location => location.IsBuildOutput))
+            foreach (var build in validation.Findings.Where(location => location.IsBuildOutput || location.CleanupBlockReason.Length > 0))
             {
                 int directory = build.DirectoryIndex, remaining = inventory.FileCount;
                 while (directory >= 0 && remaining-- > 0)
@@ -108,6 +108,7 @@ internal static class CleanupBatch
                         {
                             var assessment = currentAssessments[build.DirectoryIndex];
                             if (assessment.State == CleanupReadiness.Protected) throw new InvalidOperationException(assessment.Reason);
+                            if (!build.IsBuildOutput) continue;
                             var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token);
                             if (live.State == CleanupReadiness.Protected
                                 || live.State == CleanupReadiness.NeedsReview && assessment.State == CleanupReadiness.Ready)

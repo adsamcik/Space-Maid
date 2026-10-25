@@ -135,6 +135,7 @@ internal sealed class OpportunityCatalog(Action<string, object>? diagnostic = nu
                 throw new InvalidDataException("An opportunity must reference one resolved scanned folder.");
             Text(item.Title, 256); Text(item.Category, 256); Text(item.RuleId, 256, allowEmpty: true);
             Text(item.Reason, 4096); Text(item.Caution, 4096); Text(item.SuggestedAction, 4096);
+            Text(item.CleanupBlockReason, 4096, allowEmpty: true);
             if (!Enum.IsDefined(item.Appearance)) throw new InvalidDataException("Invalid opportunity appearance.");
             result.Add(item with { ProviderId = id, RuleId = item.RuleId.Length == 0 ? item.Title : item.RuleId,
                 Path = path, LogicalBytes = inventory.LogicalSize(item.DirectoryIndex), AllocatedBytes = inventory.AllocatedSize(item.DirectoryIndex) });

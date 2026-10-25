@@ -54,6 +54,8 @@ Analysis results are cached only for their immutable scan generation. The initia
 
 ## Shared cleanup
 
+For storage that must be managed by its owning tool, set `CleanupBlockReason` to a brief reason and next action. The host shows it as **Kept**, excludes it and selected ancestors during preparation, and checks fresh restrictions again before execution. This is useful for shared model libraries and application stores that mix history with credentials. The finding still participates in observed-size groups; its size is not automatically reclaimable space.
+
 The extension proposes folders; it receives no deletion or confirmation service. Review rereads the selected scopes and their parent metadata, then rediscovers rules through the current catalog. Preparation matches provider, rule, directory, category, title and path. Execution checks classification again on fresh metadata and validates the captured native target identity before recycling. An absent/failing provider, changed marker, replacement folder or mismatched rule is excluded. Supplying no discovery callback fails closed.
 
 The host retains exact-path confirmation, cancellation/progress, Recycle Bin-only behavior, Git worktree safeguards, target validation and nested/hard-link accounting. `IsWorktree` and group `Role` participate in the shared check/filter UI; they do not bypass Git checks. Group sizes are observed allocation, not guaranteed savings, and recycling occupies space until the bin is emptied. Photos cleanup remains disabled.

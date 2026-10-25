@@ -300,7 +300,7 @@ public partial class MainWindow
                 : "";
         }
         ReviewButton.IsEnabled = selected > 0 && _work is null;
-        SelectListedButton.IsEnabled = _visibleOpportunityRows.Count > 0 && _work is null;
+        SelectListedButton.IsEnabled = _visibleOpportunityRows.Any(row => row.CanSelect) && _work is null;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && _work is null;
         ClearOpportunitySelectionButton.Visibility = selected > 0 ? Visibility.Visible : Visibility.Collapsed;
         CheckWorktreesButton.IsEnabled = _work is null && _rows.Any(row => row.Item.IsWorktree);

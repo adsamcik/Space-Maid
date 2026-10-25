@@ -110,7 +110,7 @@ public partial class MainWindow
             ScannedSizeLabel.Text = "Scanned";
             ScannedSizeText.Text = SizeText.Format(scan.HasAllocationData ? scan.AllocatedBytes : scan.LogicalBytes);
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
-            CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
+            CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
             ScannedSizeCaption.Text = scan.HasAllocationData ? "On disk"

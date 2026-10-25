@@ -3,7 +3,7 @@ using System.IO;
 
 namespace SpaceMaid.Extensions.Developer.Analysis;
 
-public static class OpportunityDetector
+public static partial class OpportunityDetector
 {
     public static IReadOnlyList<Opportunity> Find(IOpportunityInventory scan, CancellationToken token = default)
     {
@@ -29,13 +29,14 @@ public static class OpportunityDetector
                 RuleId = rule.Title,
                 Appearance = rule.Category switch
                 {
-                    "Agent files" => OpportunityAppearance.Agent,
+                    "Agent files" or "Agent checkpoints" => OpportunityAppearance.Agent,
                     "Git worktrees" => OpportunityAppearance.Project,
                     "Test artifacts" or "Editor workspace data" => OpportunityAppearance.Other,
                     _ => OpportunityAppearance.Cache
                 },
                 IsWorktree = rule.Category == "Git worktrees",
                 IsBuildOutput = rule.Category == "Build output",
+                CleanupBlockReason = rule.BlockReason,
                 IsRegeneratable = rule.Title is ".NET build output" or "Python bytecode cache" or "Cargo build output"
                     or "SvelteKit build output" or "Nuxt build output" || rule.Category == "Build output" && Is(name, ".next")
             });
@@ -44,7 +45,7 @@ public static class OpportunityDetector
             .ThenBy(o => o.Path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private sealed record Rule(string Title, string Category, string Reason, string Caution, string Action, bool Manual = false);
+    private sealed record Rule(string Title, string Category, string Reason, string Caution, string Action, bool Manual = false, string BlockReason = "");
 
     private static Rule? Classify(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name, MarkerEvidence evidence)
     {
@@ -88,7 +89,7 @@ public static class OpportunityDetector
             return new("Linked Git checkout", "Git worktrees", "The checkout contains a .git pointer file; it may be a worktree or submodule.",
                 "It may contain source changes or untracked work. No disposable/abandoned status is inferred.",
                 "Review with git status and git worktree list; remove through Git or the owning app after preserving work.", true);
-        return Additional(scan, directory, parent, name, direct, evidence);
+        return AiStorage(scan, directory, parent, name, direct, evidence) ?? Additional(scan, directory, parent, name, direct, evidence);
     }
 
     private static Rule? Additional(IOpportunityInventory scan, int directory, int parent, ReadOnlySpan<char> name,
@@ -190,7 +191,11 @@ public static class OpportunityDetector
         HtmlIndex = 1UL << 20, LastRun = 1UL << 21, ViteMetadata = 1UL << 22, CrateArchive = 1UL << 23,
         Fingerprint = 1UL << 24, Classes = 1UL << 25, MavenStatus = 1UL << 26, Outputs = 1UL << 27,
         Intermediates = 1UL << 28, Generated = 1UL << 29, CMakeFiles = 1UL << 30, PytestState = 1UL << 31,
-        CacheDirectory = 1UL << 32, BrowserVersion = 1UL << 33
+        CacheDirectory = 1UL << 32, BrowserVersion = 1UL << 33,
+        JsonLines = 1UL << 34, GeminiSession = 1UL << 35, StateDatabase = 1UL << 36,
+        ModelWeights = 1UL << 37, Snapshots = 1UL << 38, Refs = 1UL << 39,
+        Blobs = 1UL << 40, Manifests = 1UL << 41, OllamaBlob = 1UL << 42,
+        AgentMessages = 1UL << 43, OpenCodeDatabase = 1UL << 44
     }
 
     // One compact record per actual candidate or its immediate parent. General
@@ -199,13 +204,13 @@ public static class OpportunityDetector
     private sealed class MarkerEvidence(IOpportunityInventory scan, CancellationToken token)
     {
         private readonly Dictionary<int, CandidateMarkers> _candidates = [];
-        private readonly record struct CandidateMarkers(Markers Flags, int Debug = -1, int Release = -1, int Deps = -1);
+        private readonly record struct CandidateMarkers(Markers Flags, int Debug = -1, int Release = -1, int Deps = -1, int Blobs = -1);
         public bool Has(int directory, Markers flags) => (Get(directory).Flags & flags) == flags;
         public bool Any(int directory, Markers flags) => (Get(directory).Flags & flags) != 0;
         public bool HasNested(int directory, string child, Markers flags)
         {
             var metadata = Get(directory);
-            int index = child switch { "debug" => metadata.Debug, "release" => metadata.Release, "deps" => metadata.Deps, _ => -1 };
+            int index = child switch { "debug" => metadata.Debug, "release" => metadata.Release, "deps" => metadata.Deps, "blobs" => metadata.Blobs, _ => -1 };
             return index >= 0 && Has(index, flags);
         }
         public bool HasCargoArchives(int directory)
@@ -227,8 +232,13 @@ public static class OpportunityDetector
             foreach (int link in scan.Children(directory))
             {
                 if ((count++ & 1023) == 0) token.ThrowIfCancellationRequested();
-                if (scan.IsDirectory(scan.LinkObject(link))) continue;
                 var name = scan.Name(link);
+                if (scan.IsDirectory(scan.LinkObject(link)))
+                {
+                    if (Is(name, "blobs")) flags |= Markers.Blobs;
+                    if (Is(name, "manifests")) flags |= Markers.Manifests;
+                    continue;
+                }
                 if (Is(name, "pyvenv.cfg")) flags |= Markers.PythonEnvironment;
                 if (Is(name, ".git")) flags |= Markers.GitPointer;
                 if (Is(name, "CMakeCache.txt")) flags |= Markers.CMakeCache;
@@ -240,7 +250,7 @@ public static class OpportunityDetector
         {
             if (directory < 0) return new(0);
             if (_candidates.TryGetValue(directory, out var cached)) return cached;
-            Markers flags = 0; int debug = -1, release = -1, deps = -1, count = 0;
+            Markers flags = 0; int debug = -1, release = -1, deps = -1, blobs = -1, count = 0;
             foreach (int link in scan.Children(directory))
             {
                 if ((count++ & 1023) == 0) token.ThrowIfCancellationRequested();
@@ -250,6 +260,10 @@ public static class OpportunityDetector
                     if (Is(name, "debug")) debug = file;
                     if (Is(name, "release")) release = file;
                     if (Is(name, "deps")) deps = file;
+                    if (Is(name, "snapshots")) flags |= Markers.Snapshots;
+                    if (Is(name, "refs")) flags |= Markers.Refs;
+                    if (Is(name, "blobs")) { flags |= Markers.Blobs; blobs = file; }
+                    if (Is(name, "manifests")) flags |= Markers.Manifests;
                     if (Is(name, ".fingerprint")) flags |= Markers.Fingerprint;
                     if (Is(name, "classes")) flags |= Markers.Classes;
                     if (Is(name, "maven-status")) flags |= Markers.MavenStatus;
@@ -288,8 +302,16 @@ public static class OpportunityDetector
                 if (Is(name, ".last-run.json")) flags |= Markers.LastRun;
                 if (Is(name, "_metadata.json")) flags |= Markers.ViteMetadata;
                 if (name.EndsWith(".crate", StringComparison.OrdinalIgnoreCase)) flags |= Markers.CrateArchive;
+                if (name.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)) flags |= Markers.JsonLines;
+                if (name.StartsWith("session-", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) flags |= Markers.GeminiSession;
+                if (Is(name, "state.vscdb")) flags |= Markers.StateDatabase;
+                if (Is(name, "opencode.db")) flags |= Markers.OpenCodeDatabase;
+                if (name.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase)) flags |= Markers.ModelWeights;
+                if (Is(name, "api_conversation_history.json") || Is(name, "ui_messages.json")) flags |= Markers.AgentMessages;
+                if (name.StartsWith("sha256-", StringComparison.OrdinalIgnoreCase) && name.Length == 71
+                    && name[7..].IndexOfAnyExcept("0123456789abcdefABCDEF") < 0) flags |= Markers.OllamaBlob;
             }
-            var result = new CandidateMarkers(flags, debug, release, deps); _candidates.Add(directory, result); return result;
+            var result = new CandidateMarkers(flags, debug, release, deps, blobs); _candidates.Add(directory, result); return result;
         }
         private static bool BrowserName(ReadOnlySpan<char> name)
         {

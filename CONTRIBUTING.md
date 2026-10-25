@@ -13,6 +13,8 @@ dotnet test tests/SpaceMaid.Tests -c Release -m:1
 
 Run desktop tests as a normal user. Three raw-volume checks require administrator access and are skipped otherwise. A successful build does not establish native cleanup, cloud-provider or desktop interaction behavior.
 
+For builds using `ArtifactsPath` outside the checkout, set `SPACEMAID_TEST_REPOSITORY` to the repository root before running desktop tests so screenshots and workflow diagnostics have a known destination. Run binaries from their physical output path; extension and model-worker safety checks intentionally reject junction ancestors.
+
 Git must be available on `PATH` for worktree fixtures. For the real Photos metadata checks, install the complete ExifTool Windows bundle as `%LOCALAPPDATA%\Programs\ExifTool\ExifTool.exe`, including its companion files. CI installs its pinned version automatically; local ExifTool-specific tests skip when it is absent.
 
 Linux can build the Windows package but cannot run WPF or Windows integration tests:

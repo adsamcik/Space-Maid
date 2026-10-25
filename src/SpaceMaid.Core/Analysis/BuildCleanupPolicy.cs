@@ -36,7 +36,9 @@ public static class BuildCleanupProtection
             if ((uint)location.DirectoryIndex >= (uint)scan.FileCount || !scan.Records[location.DirectoryIndex].IsDirectory)
                 throw new ArgumentException("A cleanup assessment must reference a scanned folder.", nameof(locations));
             BuildCleanupAssessment assessment;
-            if (!location.IsBuildOutput)
+            if (location.CleanupBlockReason.Length > 0)
+                assessment = new(CleanupReadiness.Protected, null, location.CleanupBlockReason);
+            else if (!location.IsBuildOutput)
                 assessment = new(location.RequiresManualReview ? CleanupReadiness.NeedsReview : CleanupReadiness.Ready, null,
                     location.RequiresManualReview ? "Review contents" : "Ready");
             else

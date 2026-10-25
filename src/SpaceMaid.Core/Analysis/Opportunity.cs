@@ -13,6 +13,9 @@ public sealed record Opportunity(
     public bool IsWorktree { get; init; }
     public bool IsBuildOutput { get; init; }
     public bool IsRegeneratable { get; init; }
+    // Visible storage whose contents must be managed through its owning tool.
+    // Fresh discovery enforces this at preparation and execution, including ancestors.
+    public string CleanupBlockReason { get; init; } = "";
     public long DisplayBytes(bool hasAllocationData) => hasAllocationData ? AllocatedBytes : LogicalBytes;
 }
 

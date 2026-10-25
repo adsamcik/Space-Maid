@@ -83,7 +83,7 @@ public partial class MainWindow
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
-        CandidateCaption.Text = $"Estimate · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
+        CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
         ScannedSizeLabel.Text = "Scanned";
         ScannedSizeText.Text = SizeText.Format(updated.AllocatedBytes);
         ScannedSizeCaption.Text = "Partially refreshed";

@@ -38,7 +38,7 @@ public static class CleanupPlanner
         var policy = buildPolicy ?? BuildCleanupPolicy.Default;
         var assessments = BuildCleanupProtection.Assess(scan, actual.Values.ToArray(), policy, token);
         var protectedDirectories = new Dictionary<int, string>();
-        foreach (var finding in actual.Values.Where(finding => finding.IsBuildOutput))
+        foreach (var finding in actual.Values)
         {
             if (assessments[finding.DirectoryIndex].State != CleanupReadiness.Protected) continue;
             int directory = finding.DirectoryIndex, remaining = scan.FileCount;
@@ -48,7 +48,8 @@ public static class CleanupPlanner
                 token.ThrowIfCancellationRequested();
                 int link = scan.PrimaryLink(directory);
                 if (link < 0 || (directory = scan.Links[link].ParentIndex) < 0) break;
-                protectedDirectories.TryAdd(directory, "Contains protected build files · Kept");
+                protectedDirectories.TryAdd(directory, finding.CleanupBlockReason.Length > 0
+                    ? "Contains storage managed by its owning tool · Kept" : "Contains protected build files · Kept");
             }
         }
         var valid = new List<Opportunity>(); var blocked = new List<CleanupBlockedLocation>();

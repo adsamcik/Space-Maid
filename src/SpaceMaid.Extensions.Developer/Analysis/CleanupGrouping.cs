@@ -27,7 +27,9 @@ public static class CleanupGrouping
             ("dependencies", "Installed dependencies", "Reinstall before working", "Project node_modules folders. Keep local changes and make sure you can reinstall packages."),
             ("old-worktrees", worktreeGroup.Item1, worktreeGroup.Item2, worktreeGroup.Item3),
             ("environments", "Python environments", "Review first", "Virtual environments can be recreated if their interpreter and dependencies are recorded."),
-            ("agent", "Agent logs & history", "Review first", "Coding-agent sessions and diagnostic logs. Keep conversations and recovery information you still need."),
+            ("agent", "Agent logs & history", "Review first", "Coding-agent sessions, tool results and diagnostic logs. Keep conversations, project memory and recovery information you still need."),
+            ("checkpoints", "Agent file checkpoints", "Keep recovery copies", "File snapshots used to undo agent edits. Preserve unique and untracked work before removing rollback history."),
+            ("models", "AI models & data", "Review in the owning tool", "Local model weights, dataset downloads and cached revisions. Keep offline copies and companion files; use the owning tool to manage shared blobs and revisions."),
             ("worktrees", "Other worktrees", "Outside this rule or not checked", "These checkouts do not yet match the chosen cleanup rule. Check worktrees or view folders for activity, upstream status and reasons."),
             ("other", "Other development folders", "Review first", "Other detected development folders. Inspect their contents before cleanup.")
         };
@@ -59,7 +61,7 @@ public static class CleanupGrouping
                 Caption = Caption(key),
                 Glyph = Glyph(key),
                 StatusLabel = Status(key, kind),
-                CanSelectGroup = key != "worktrees",
+                CanSelectGroup = key != "worktrees" && findings.Any(item => item.CleanupBlockReason.Length == 0),
                 Role = key switch
                 {
                     "worktrees" => OpportunityGroupRole.Worktrees,
@@ -82,6 +84,8 @@ public static class CleanupGrouping
             "Dependencies" => "dependencies",
             "Python environments" => "environments",
             "Agent files" => "agent",
+            "Agent checkpoints" => "checkpoints",
+            "AI models & data" => "models",
             "Git worktrees" => oldIntegratedWorktrees?.Contains(item.Path) == true ? "old-worktrees" : "worktrees",
             _ => "other"
         };
@@ -99,6 +103,8 @@ public static class CleanupGrouping
         "old-worktrees" => "Clean checkouts · Includes ignored files · Branches kept",
         "environments" => "Keep interpreter and dependency records",
         "agent" => "Sessions and logs · Keep recovery information",
+        "checkpoints" => "File snapshots · Keep recovery copies",
+        "models" => "Models and datasets · Keep needed offline copies",
         "worktrees" => "Check activity and upstream status before cleanup",
         _ => "Inspect contents before cleanup"
     };
@@ -108,7 +114,7 @@ public static class CleanupGrouping
         "build" => "\uE7C1", "cache" => "\uE8B7", "tools" => "\uE713",
         "tests" => "\uE73E", "downloads" => "\uE896", "editor" => "\uE70F",
         "dependencies" => "\uE8EC", "old-worktrees" or "worktrees" => "\uE8AD",
-        "environments" => "\uE943", "agent" => "\uE8F2", _ => "\uE8B7"
+        "environments" => "\uE943", "agent" or "checkpoints" => "\uE8F2", "models" => "\uE943", _ => "\uE8B7"
     };
 
     private static string Status(string key, string kind) => key switch
@@ -118,6 +124,7 @@ public static class CleanupGrouping
         "downloads" => "Downloads needed again", "editor" => "Local settings may be lost",
         "dependencies" => "Keep local changes", "old-worktrees" => "Includes ignored files · Branches kept",
         "environments" => "Keep dependency records", "agent" => "Keep recovery history",
+        "checkpoints" => "Keep recovery copies", "models" => "Review in owning tool",
         "worktrees" => "Check before selecting", _ => kind
     };
 }

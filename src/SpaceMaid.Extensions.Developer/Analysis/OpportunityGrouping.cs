@@ -75,7 +75,8 @@ public static class OpportunityGrouping
                 Array.AsReadOnly(children)));
         }
         var breakdowns = new Dictionary<string, IReadOnlyList<OpportunityGroup>>(StringComparer.Ordinal);
-        foreach (var (category, key) in new[] { ("Tool caches", "cleanup:tools"), ("Test artifacts", "cleanup:tests") })
+        foreach (var (category, key) in new[] { ("Tool caches", "cleanup:tools"), ("Test artifacts", "cleanup:tests"),
+            ("Agent files", "cleanup:agent"), ("Agent checkpoints", "cleanup:checkpoints"), ("AI models & data", "cleanup:models") })
         {
             var toolGroups = new List<OpportunityGroup>();
             var candidates = projects.SelectMany(project => project.Locations.Where(item => item.Category == category)
@@ -90,11 +91,13 @@ public static class OpportunityGrouping
                     var project = group.First().Project;
                     var findings = group.Select(item => item.Item).ToArray();
                     return new OpportunityGroup(toolKey + "/" + project.Key, project.Name, project.Path, project.Kind,
-                        Array.AsReadOnly(findings), UnionBytes(findings));
+                        Array.AsReadOnly(findings), UnionBytes(findings))
+                    { CanSelectGroup = findings.Any(item => item.CleanupBlockReason.Length == 0) };
                 }).OrderByDescending(group => group.ObservedBytes).ThenBy(group => group.Path, StringComparer.Ordinal).ToArray();
                 var locationsForTool = children.SelectMany(child => child.Locations).ToArray();
                 toolGroups.Add(new(toolKey, tool.Key, scan.RootPath, "Tool / project", Array.AsReadOnly(locationsForTool),
-                    UnionBytes(locationsForTool), "Detected tool folders, grouped by project or containing folder. Review exact paths and cautions.", Array.AsReadOnly(children)));
+                    UnionBytes(locationsForTool), "Detected tool folders, grouped by project or containing folder. Review exact paths and cautions.", Array.AsReadOnly(children))
+                { CanSelectGroup = locationsForTool.Any(item => item.CleanupBlockReason.Length == 0) });
             }
             if (toolGroups.Count > 0) breakdowns.Add(key, toolGroups.OrderByDescending(group => group.ObservedBytes)
                 .ThenBy(group => group.Name, StringComparer.Ordinal).ToList().AsReadOnly());
@@ -110,6 +113,17 @@ public static class OpportunityGrouping
             "Turborepo cache" => "Turborepo", "Parcel cache" => "Parcel", "Angular workspace cache" => "Angular",
             "Vite dependency cache" => "Vite", ".NET test results" => ".NET",
             "Playwright test results" or "Playwright HTML report" => "Playwright",
+            "Codex logs" or "Codex session history" => "Codex",
+            "Claude Code project history" or "Claude Code debug files" or "Claude Code file checkpoints" => "Claude Code",
+            "GitHub Copilot session history" => "GitHub Copilot",
+            "Gemini CLI session history" => "Gemini CLI",
+            "Cursor workspace history" or "Cursor global chat storage" => "Cursor",
+            "Cline task history" or "Cline file checkpoints" => "Cline",
+            "Roo Code task history" => "Roo Code",
+            "OpenCode logs" or "OpenCode session storage" or "OpenCode download cache" => "OpenCode",
+            "Hugging Face repository downloads" => "Hugging Face",
+            "Ollama model library" => "Ollama",
+            "LM Studio model downloads" => "LM Studio",
             _ => "Other tools"
         };
 
