@@ -50,6 +50,9 @@ public sealed class DuplicateSearchSession : IDisposable
         var issues = new List<DuplicateSearchIssue>(); int examined = 0;
         try
         {
+            // Retained matches get a turn before another hash can exhaust the
+            // page. A slow new file must not starve already known pairs.
+            ComparePending();
             while (!_inputComplete && !_capacityReached && _cursor < _scan.FileCount)
             {
                 budget.Check();
@@ -80,10 +83,14 @@ public sealed class DuplicateSearchSession : IDisposable
             long comparisonReserve = _hashes.Where(g => g.Value.Count(f => !_objects[f.Revision.ObjectKey].Suppressed) > 1)
                 .Where(g => g.Value.Any(f => !_objects[f.Revision.ObjectKey].Suppressed && (!_verified.TryGetValue(g.Key, out var done)
                     || !done.Any(v => v.Revision.ObjectKey == f.Revision.ObjectKey))))
-                .Select(g => g.Key.Bytes * 2).Where(bytes => bytes <= _policy.MaximumReadBytes).DefaultIfEmpty(0).Min();
+                .Select(g => g.Key.Bytes * 2).Where(bytes => bytes <= _policy.MaximumReadBytes).DefaultIfEmpty(0).Max();
             foreach (var candidate in _sizes.Values.Where(g => g.Count > 1).SelectMany(g => g).Where(c => !c.Hashed && !c.Suppressed))
             {
                 budget.Check();
+                // Leave time for full comparisons once matching hashes exist.
+                // Reserve the largest pending pair so small matches cannot
+                // repeatedly displace larger savings on bounded pages.
+                if (comparisonReserve > 0 && budget.Elapsed >= _policy.MaximumTime * 0.75) break;
                 if (candidate.File.Revision.Length > _policy.MaximumReadBytes / 2)
                 { candidate.Suppressed = true; Issue(candidate.File.Path, "Raise the content-read limit to fully compare this file pair."); continue; }
                 if (candidate.File.Revision.Length > Math.Max(0, budget.Remaining - comparisonReserve)) continue;
@@ -98,12 +105,41 @@ public sealed class DuplicateSearchSession : IDisposable
                     if (hash.Count > 1)
                     {
                         long required = file.Revision.Length * 2;
-                        comparisonReserve = comparisonReserve == 0 ? required : Math.Min(comparisonReserve, required);
+                        comparisonReserve = Math.Max(comparisonReserve, required);
                     }
                     progress?.Report(new("Hashing files", examined, budget.Bytes));
                 }
+                catch (DuplicateFinder.BudgetReachedException)
+                {
+                    candidate.Suppressed = true;
+                    Issue(candidate.File.Path, "Hashing did not finish within this page's time budget. Compare a smaller location to retry this unverified file.");
+                    throw;
+                }
                 catch (Exception error) when (DuplicateFinder.Expected(error)) { candidate.Suppressed = true; Issue(candidate.File.Path, error.Message); }
             }
+            ComparePending();
+        }
+        catch (OperationCanceledException) { }
+        catch (DuplicateFinder.BudgetReachedException) { }
+        bool hashWork = _sizes.Values.Where(g => g.Count > 1).SelectMany(g => g).Any(c => !c.Hashed && !c.Suppressed);
+        bool comparisonWork = _hashes.Where(g => g.Value.Count(f => !_objects[f.Revision.ObjectKey].Suppressed) > 1).Any(g => g.Value.Any(f => !_objects[f.Revision.ObjectKey].Suppressed
+            && (!_verified.TryGetValue(g.Key, out var completed) || !completed.Any(v => v.Revision.ObjectKey == f.Revision.ObjectKey))));
+        CanContinue = !_capacityReached && (!_inputComplete || hashWork || comparisonWork);
+        bool complete = !CanContinue && !_capacityReached && !_unknown && _policy.StartRecord == 0;
+        string note = token.IsCancellationRequested ? "Cancelled · Completed comparisons retained; continue to resume."
+            : _capacityReached ? $"Retained-object limit ({_policy.MaximumRetainedFiles:N0}) reached. Choose a smaller scanned location; coverage is incomplete."
+            : CanContinue ? "Bounded page · Continue to compare the remaining candidates; earlier revisions and hashes are retained."
+            : !complete ? "Comparison finished with unavailable or unverified content; coverage remains incomplete."
+            : "Comparison complete for this scan. Physical savings remain separate from redundant content.";
+        var groups = _verified.Where(g => g.Value.Count > 1).Select(g => new DuplicateGroup(g.Key.Hash, g.Key.Bytes, Array.AsReadOnly(g.Value.ToArray())))
+            .OrderByDescending(g => g.RedundantLogicalBytes).ToArray();
+        return new(groups, issues.AsReadOnly(), examined, budget.Bytes, _aliases, complete, token.IsCancellationRequested,
+            CanContinue ? _cursor : -1, note);
+
+        void Issue(string path, string reason) { _unknown = true; if (issues.Count < 500) issues.Add(new(path, reason)); }
+
+        void ComparePending()
+        {
             foreach (var bucket in _hashes.Where(pair => pair.Value.Count > 1))
             {
                 budget.Check();
@@ -137,6 +173,12 @@ public sealed class DuplicateSearchSession : IDisposable
                         if (!verified.Any(v => v.Revision.ObjectKey == keeper.Revision.ObjectKey)) verified.Add(keeper);
                         verified.Add(candidate);
                     }
+                    catch (DuplicateFinder.BudgetReachedException)
+                    {
+                        _objects[candidate.Revision.ObjectKey].Suppressed = true;
+                        Issue(candidate.Path, "Full comparison did not finish within this page's time budget. Compare a smaller location to retry this unverified file.");
+                        throw;
+                    }
                     catch (Exception error) when (DuplicateFinder.Expected(error))
                     {
                         _objects[candidate.Revision.ObjectKey].Suppressed = true;
@@ -146,24 +188,6 @@ public sealed class DuplicateSearchSession : IDisposable
                 }
             }
         }
-        catch (OperationCanceledException) { }
-        catch (DuplicateFinder.BudgetReachedException) { }
-        bool hashWork = _sizes.Values.Where(g => g.Count > 1).SelectMany(g => g).Any(c => !c.Hashed && !c.Suppressed);
-        bool comparisonWork = _hashes.Where(g => g.Value.Count(f => !_objects[f.Revision.ObjectKey].Suppressed) > 1).Any(g => g.Value.Any(f => !_objects[f.Revision.ObjectKey].Suppressed
-            && (!_verified.TryGetValue(g.Key, out var completed) || !completed.Any(v => v.Revision.ObjectKey == f.Revision.ObjectKey))));
-        CanContinue = !_capacityReached && (!_inputComplete || hashWork || comparisonWork);
-        bool complete = !CanContinue && !_capacityReached && !_unknown && _policy.StartRecord == 0;
-        string note = token.IsCancellationRequested ? "Cancelled · Completed comparisons retained; continue to resume."
-            : _capacityReached ? $"Retained-object limit ({_policy.MaximumRetainedFiles:N0}) reached. Choose a smaller scanned location; coverage is incomplete."
-            : CanContinue ? "Bounded page · Continue to compare the remaining candidates; earlier revisions and hashes are retained."
-            : !complete ? "Comparison finished with unavailable or unverified content; coverage remains incomplete."
-            : "Comparison complete for this scan. Physical savings remain separate from redundant content.";
-        var groups = _verified.Where(g => g.Value.Count > 1).Select(g => new DuplicateGroup(g.Key.Hash, g.Key.Bytes, Array.AsReadOnly(g.Value.ToArray())))
-            .OrderByDescending(g => g.RedundantLogicalBytes).ToArray();
-        return new(groups, issues.AsReadOnly(), examined, budget.Bytes, _aliases, complete, token.IsCancellationRequested,
-            CanContinue ? _cursor : -1, note);
-
-        void Issue(string path, string reason) { _unknown = true; if (issues.Count < 500) issues.Add(new(path, reason)); }
     }
 
     public void Dispose() { _disposed = true; _shutdown.Cancel(); }

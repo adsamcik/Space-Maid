@@ -30,7 +30,7 @@ public static partial class StoragePreservation
         if (file.Revision.Length > MaximumActionBytes) throw new InvalidOperationException("Storage actions currently inspect files up to 1 GiB.");
         var captured = new DuplicateFile(path, file.Revision, "");
         if (!IsColdBuildCandidate(captured) && (captured.Revision.Attributes & FileAttributes.Compressed) == 0)
-            throw new InvalidOperationException("Choose a build file inactive for at least 14 days, or an already compressed file to undo compression.");
+            throw new InvalidOperationException("Choose a supported build file created and last written at least 14 days ago, or an already compressed file to undo compression.");
         string hash = DuplicateFinder.Hash(file, new(MaximumActionBytes, TimeSpan.FromMinutes(1), token));
         return captured with { Hash = hash };
     });
@@ -66,7 +66,7 @@ public static partial class StoragePreservation
         var action = decompress ? StoragePreservationAction.Decompress : StoragePreservationAction.Compress;
         if (confirmed.Revision.Length > MaximumActionBytes) throw new InvalidOperationException("Storage actions are limited to 1 GiB per file.");
         if (!Capabilities(confirmed.Path).Compression) throw new InvalidOperationException("Per-file NTFS compression is unavailable on this drive.");
-        if (!decompress && !IsColdBuildCandidate(confirmed)) throw new InvalidOperationException("Select a cold build resource with no shared names or additional streams.");
+        if (!decompress && !IsColdBuildCandidate(confirmed)) throw new InvalidOperationException("Select a supported build file created and last written at least 14 days ago, with no shared names or additional streams.");
         using var file = StorageFile.Open(confirmed.Path, writable: true); file.Verify(confirmed.Revision);
         if (file.Revision.HasAlternateStreams || file.Revision.Links != 1) throw new InvalidOperationException("Files with shared names or additional streams stay unchanged.");
         var budget = new DuplicateFinder.ReadBudget(Math.Max(1, checked(file.Revision.Length * 3)), TimeSpan.FromMinutes(5), token);

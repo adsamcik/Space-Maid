@@ -155,7 +155,7 @@ internal sealed class GeneratedResourceProof : IDisposable
             || !c.TryGetProperty(".class", out var kind) || kind.GetString() != "MypyFile"
             || !c.TryGetProperty("_fullname", out var fullname) || fullname.GetString() != id.GetString()
             || !m.TryGetProperty("mtime", out var mtime) || !m.TryGetProperty("size", out var size)
-            || !m.TryGetProperty("hash", out var hash) || hash.GetString() is not { Length: > 0 }
+            || !m.TryGetProperty("hash", out var hash)
             || !m.TryGetProperty("interface_hash", out var dataHash)
             || !string.Equals(dataHash.GetString(), Convert.ToHexString(SHA1.HashData(cacheBytes)), StringComparison.OrdinalIgnoreCase)
             || !m.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Array)
@@ -163,6 +163,10 @@ internal sealed class GeneratedResourceProof : IDisposable
         string projectRoot = Path.GetDirectoryName(file.ContainerPath)!;
         string sourcePath = Path.GetFullPath(path.GetString() ?? "", projectRoot);
         if (!OptimizationPolicy.Covers(projectRoot, sourcePath)) throw new IOException("Mypy input is outside this project; review manually.");
+        if (hash.GetString() is not { Length: > 0 })
+            throw new IOException(hash.GetString() == "" && Directory.Exists(sourcePath)
+                ? "Mypy namespace-package directory inputs need manual review; kept."
+                : "Unrecognized mypy producer records; kept.");
         var source = Input(sourcePath);
         string sourceHash = Convert.ToHexString(SHA1.HashData(Read(source.Stream)));
         double seconds = new DateTimeOffset(DateTime.FromFileTimeUtc(source.Revision.Written)).ToUnixTimeMilliseconds() / 1000d;

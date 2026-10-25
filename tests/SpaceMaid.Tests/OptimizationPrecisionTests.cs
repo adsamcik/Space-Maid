@@ -15,6 +15,26 @@ namespace SpaceMaid.Tests;
 public sealed class OptimizationPrecisionTests
 {
     [Fact]
+    public async Task MypyNamespaceDirectoriesNeverSubstituteForHashedSourceFiles()
+    {
+        using var fixture = new TestDirectory();
+        string source = Directory.CreateDirectory(Path.Join(fixture.Path, "namespace_package")).FullName;
+        string cache = Directory.CreateDirectory(Path.Join(fixture.Path, ".mypy_cache")).FullName;
+        File.WriteAllText(Path.Join(cache, "CACHEDIR.TAG"), "mypy fixture");
+        string version = Directory.CreateDirectory(Path.Join(cache, "3.12")).FullName;
+        string data = Path.Join(version, "namespace_package.data.json");
+        File.WriteAllText(data, JsonSerializer.Serialize(new Dictionary<string, object> { [".class"] = "MypyFile", ["_fullname"] = "namespace_package" }));
+        File.WriteAllText(Path.Join(version, "namespace_package.meta.json"), JsonSerializer.Serialize(new { id = "namespace_package", path = source,
+            version_id = "1.17.1", mtime = 0, size = 0, hash = "", interface_hash = Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(data))), dependencies = Array.Empty<string>() }));
+        OptimizationTests.Age(fixture.Path);
+        var (scan, findings, policy) = await Read(fixture.Path);
+        var preview = await new FileOperations().PreviewOptimizationAsync(scan, findings, policy);
+        Assert.Empty(preview.Files);
+        Assert.Contains(preview.Skipped, item => item.Path == data && item.Reason.Contains("namespace-package", StringComparison.Ordinal));
+        Assert.True(File.Exists(data)); Assert.True(Directory.Exists(source));
+    }
+
+    [Fact]
     public async Task CyclicMypyProofDoesNotWarmDependencyCandidatesOrReopenItsExclusiveTarget()
     {
         using var fixture = new TestDirectory();

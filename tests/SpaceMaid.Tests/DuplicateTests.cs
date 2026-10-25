@@ -9,6 +9,76 @@ namespace SpaceMaid.Tests;
 public sealed class DuplicateTests
 {
     [Fact]
+    public async Task TimedOutContentStaysUnknownWhileOtherPairsCanProgress()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 2; i++)
+        {
+            File.WriteAllBytes(Path.Join(fixture.Path, "a" + i + ".bin"), new byte[4096]);
+            File.WriteAllBytes(Path.Join(fixture.Path, "b" + i + ".bin"), Enumerable.Repeat((byte)1, 4096).ToArray());
+        }
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1 });
+        var first = await session.ContinueAsync(new InlineProgress(progress =>
+        {
+            if (progress.Phase == "Hashing files") throw new DuplicateFinder.BudgetReachedException();
+        }));
+        Assert.Empty(first.Groups); Assert.False(first.Cancelled);
+        Assert.Contains("time budget", Assert.Single(first.Issues).Reason);
+        var next = await session.ContinueAsync();
+        Assert.Equal(2, Assert.Single(next.Groups).Files.Count);
+        Assert.False(next.Complete); Assert.False(session.CanContinue);
+        Assert.Equal(4, Directory.GetFiles(fixture.Path).Length);
+    }
+
+    [Fact]
+    public async Task PendingMatchesAreVerifiedBeforeMoreHashingCanInterruptTheNextPage()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 4; i++) File.WriteAllBytes(Path.Join(fixture.Path, i + ".bin"), new byte[4096]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1 });
+        using var firstStop = new CancellationTokenSource(); int hashed = 0;
+        var first = await session.ContinueAsync(new InlineProgress(progress =>
+        {
+            if (progress.Phase == "Hashing files" && ++hashed == 2) firstStop.Cancel();
+        }), firstStop.Token);
+        Assert.True(first.Cancelled); Assert.Empty(first.Groups);
+        using var nextStop = new CancellationTokenSource();
+        var next = await session.ContinueAsync(new InlineProgress(progress =>
+        {
+            if (progress.Phase == "Hashing files") nextStop.Cancel();
+        }), nextStop.Token);
+        Assert.True(next.Cancelled);
+        Assert.Equal(2, Assert.Single(next.Groups).Files.Count);
+        Assert.InRange(next.ReadBytes, 1, 1024L * 1024 * 1024);
+        Assert.True(session.CanContinue);
+        var completed = await session.ContinueAsync();
+        Assert.True(completed.Complete); Assert.Equal(4, Assert.Single(completed.Groups).Files.Count);
+    }
+
+    [Fact]
+    public async Task SmallerMatchesCannotConsumeTheComparisonBudgetForALargerPendingPair()
+    {
+        using var fixture = new TestDirectory();
+        foreach (var (name, length) in new[] { ("a-large", 16 * 1024), ("b-small", 4 * 1024), ("c-medium", 8 * 1024) })
+            for (int copy = 0; copy < 2; copy++) File.WriteAllBytes(Path.Join(fixture.Path, name + copy + ".bin"), new byte[length]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1, MaximumReadBytes = 80 * 1024 });
+        var first = await session.ContinueAsync();
+        Assert.Contains(first.Groups, group => group.FileBytes == 16 * 1024);
+        Assert.InRange(first.ReadBytes, 1, 80 * 1024);
+        for (int page = 0; session.CanContinue && page < 6; page++)
+        {
+            var next = await session.ContinueAsync();
+            Assert.InRange(next.ReadBytes, 0, 80 * 1024);
+            if (!session.CanContinue) { Assert.True(next.Complete); Assert.Equal(3, next.Groups.Count); }
+        }
+        Assert.False(session.CanContinue);
+        Assert.Equal(6, Directory.GetFiles(fixture.Path).Length);
+    }
+
+    [Fact]
     public async Task FullBytesSeparateSameSizedDifferentContents()
     {
         using var fixture = new TestDirectory();
@@ -141,4 +211,6 @@ public sealed class DuplicateTests
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CreateHardLinkW(string name, string existing, nint security);
+    private sealed class InlineProgress(Action<DuplicateSearchProgress> report) : IProgress<DuplicateSearchProgress>
+    { public void Report(DuplicateSearchProgress value) => report(value); }
 }
