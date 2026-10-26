@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $release = & (Join-Path $PSScriptRoot 'Get-ReleaseVersion.ps1') -Tag $Tag
+$repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 & (Join-Path $PSScriptRoot 'Verify-Package.ps1') -PackagePath $PackagePath
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
@@ -22,13 +23,16 @@ if (Get-ChildItem -LiteralPath $output -Force | Select-Object -First 1) {
     throw 'The release output directory must be empty.'
 }
 $notes = Join-Path $output 'release-notes.md'
-@"
+$versionNotes = Join-Path $repository "docs/releases/$Tag.md"
+$changes = if (Test-Path -LiteralPath $versionNotes -PathType Leaf) { Get-Content -LiteralPath $versionNotes -Raw } else { '' }
+(@"
+$changes
+
 Windows x64. Run **SpaceMaid-$($release.Version)-win-x64-Setup.exe**, or extract the portable ZIP and run **Space Maid.exe**.
 
 Setup offers normal installation or a portable folder. Normal installation installs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) when needed; portable mode requires it to be installed already.
 Original code is MIT licensed; dependency and imported-data terms are in the included notices.
-"@ | Set-Content -LiteralPath $notes -Encoding utf8NoBOM
-$repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+"@).TrimStart() | Set-Content -LiteralPath $notes -Encoding utf8NoBOM
 Push-Location $repository
 try {
     dotnet tool restore --tool-manifest (Join-Path $repository '.config/dotnet-tools.json')

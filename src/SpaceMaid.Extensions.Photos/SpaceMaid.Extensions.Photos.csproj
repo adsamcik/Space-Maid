@@ -7,8 +7,10 @@
   <ItemGroup>
     <Resource Include="../../assets/ui/photos-library-empty.png" Link="Assets/photos-library-empty.png" />
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <!-- The bundle's minimum native engine version trails current fixes. -->
+    <PackageReference Include="SQLite" Version="3.54.1" />
     <None Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
   </ItemGroup>

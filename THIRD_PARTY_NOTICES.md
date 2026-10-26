@@ -9,22 +9,22 @@ The following versions and package license declarations were checked against the
 | Component | Version | License | Copyright / attribution |
 | --- | --- | --- | --- |
 | Velopack (update runtime, native installer and updater) | 1.2.161 | MIT | Velopack Ltd. All rights reserved.; authors Velopack Ltd, Caelan Sayler and Kevin Bost. |
-| Microsoft.Data.Sqlite and Microsoft.Data.Sqlite.Core | 10.0.10 | MIT | Microsoft Corporation. All rights reserved. |
-| Microsoft.Extensions.AI.Abstractions | 10.10.1 | MIT | Microsoft Corporation. All rights reserved. |
-| Microsoft.Bcl.AsyncInterfaces, Microsoft.Bcl.Memory, Microsoft.Extensions.DependencyInjection.Abstractions, Microsoft.Extensions.Logging.Abstractions and System.Numerics.Tensors | 10.0.5 | MIT | Microsoft Corporation. All rights reserved. |
+| Microsoft.Data.Sqlite and Microsoft.Data.Sqlite.Core | 10.0.14 | MIT | Microsoft Corporation. All rights reserved. |
+| Microsoft.Extensions.AI.Abstractions | 10.11.0 | MIT | Microsoft Corporation. All rights reserved. |
+| Microsoft.Bcl.AsyncInterfaces, Microsoft.Bcl.Memory, Microsoft.Extensions.DependencyInjection.Abstractions, Microsoft.Extensions.Logging.Abstractions and System.Numerics.Tensors | 10.0.14 | MIT | Microsoft Corporation. All rights reserved. |
 | CommunityToolkit.HighPerformance | 8.4.2 | MIT | .NET Foundation and Contributors. All rights reserved. |
-| System.Interactive.Async and System.Linq.Async | 7.0.0 | MIT | .NET Foundation and Contributors. |
-| LLamaSharp | 0.27.0 | MIT | Copyright (c) 2025 SciSharp STACK; package copyright also identifies SciSharp STACK 2026. |
-| LLamaSharp.Backend.Cpu (llama.cpp native backend) | 0.27.0 | MIT | Copyright 2023 The llama.cpp Authors. All rights reserved. |
-| SQLitePCLRaw.bundle_e_sqlite3, SQLitePCLRaw.core, SQLitePCLRaw.provider.e_sqlite3 and SQLitePCLRaw.lib.e_sqlite3 | 2.1.13 | Apache-2.0 | Copyright 2014-2024 SourceGear, LLC; author Eric Sink. |
-| SQLite native library inside SQLitePCLRaw.lib.e_sqlite3 | Package 2.1.13 | Public domain (SQLite engine); Apache-2.0 (package) | SQLite authors; the package license is distinct from the engine's public-domain dedication. |
+| System.Interactive.Async and System.Linq.Async | 7.0.1 | MIT | .NET Foundation and Contributors. |
+| LLamaSharp | 0.30.0 | MIT | Copyright (c) 2025 SciSharp STACK; package copyright also identifies SciSharp STACK 2026. |
+| LLamaSharp.Backend.Cpu (llama.cpp native backend) | 0.30.0 | MIT | Copyright 2023 The llama.cpp Authors. All rights reserved. |
+| SQLitePCLRaw.bundle_e_sqlite3, SQLitePCLRaw.config.e_sqlite3, SQLitePCLRaw.core and SQLitePCLRaw.provider.e_sqlite3 | 3.0.5 | Apache-2.0 | Copyright 2014-2026 SourceGear, LLC; author Eric Sink. |
+| SQLite (native e_sqlite3 library) | 3.54.1 | Public domain | SQLite authors; package copyright identifies Copyright 2014-2026 SourceGear, LLC. The package's LICENSE.txt states that SQLite is public domain. |
 
 Original projects and license references:
 
 - [Velopack 1.2.161](https://github.com/velopack/velopack/blob/1.2.161/LICENSE).
 - Microsoft packages: [dotnet](https://github.com/dotnet/dotnet/blob/main/LICENSE.txt), [AI abstractions](https://github.com/dotnet/extensions/blob/59e1741f6fb45cf7ae08e2df088aef71537a7bc4/LICENSE.TXT).
 - [CommunityToolkit](https://github.com/CommunityToolkit/dotnet/blob/35dfe7b12da0e64384bfaec7ebc0883196a89f9f/LICENSE.md), [Reactive / Interactive](https://github.com/dotnet/reactive/blob/b1b81fbfe09298655b4dae5cfe0c2269e7323f4e/LICENSE).
-- [LLamaSharp 0.27.0 source license](https://github.com/SciSharp/LLamaSharp/blob/7cbbc45e421d55794d5050d126e0b96511007007/LICENSE), [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/LICENSE).
+- [LLamaSharp 0.30.0 source license](https://github.com/SciSharp/LLamaSharp/blob/d03b6cbca3c66357e2ed9ee9d0324f5eaeabfd4f/LICENSE), [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/LICENSE).
 - [SQLitePCLRaw](https://github.com/ericsink/SQLitePCL.raw), [SQLite public-domain dedication](https://sqlite.org/copyright.html).
 
 The self-contained Windows model worker also includes the Microsoft .NET runtime. Its original notices accompany the worker as `Extensions/space-maid.assistant/Worker/Runtime-LICENSE.TXT` and `Extensions/space-maid.assistant/Worker/Runtime-THIRD-PARTY-NOTICES.TXT`. Retain those files when redistributing the worker. The standalone installer embeds its resolved .NET runtime notices, available through its **Licenses** link. The main WPF application uses the separately installed .NET Desktop Runtime.

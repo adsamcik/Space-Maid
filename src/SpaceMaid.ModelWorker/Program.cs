@@ -72,7 +72,7 @@ static async Task<int> RunAsync(string[] arguments)
                         ContextSize = 8192,
                         GpuLayerCount = 0,
                         NoKqvOffload = true,
-                        UseMemorymap = true,
+                        LoadMode = LLamaLoadMode.MemoryMap,
                         Threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
                         BatchThreads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
                     };

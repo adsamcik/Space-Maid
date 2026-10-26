@@ -10,9 +10,15 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../SpaceMaid.LocalModel/ModelProtocol.cs" Link="ModelProtocol.cs" />
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.1" />
-    <PackageReference Include="LLamaSharp" Version="0.27.0" />
-    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.11.0" />
+    <PackageReference Include="LLamaSharp" Version="0.30.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.30.0" />
+    <!-- Update the runtime dependencies beyond LLamaSharp's minimum versions. -->
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Bcl.Memory" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+    <PackageReference Include="System.Numerics.Tensors" Version="10.0.14" />
   </ItemGroup>
   <Target Name="IncludeRuntimeLicenseNotices" AfterTargets="ResolveFrameworkReferences" Condition="'$(SelfContained)' == 'true'">
     <ItemGroup>

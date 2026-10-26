@@ -20,8 +20,8 @@ $workerExecutable = Join-Path $workerFolder 'SpaceMaid.ModelWorker.exe'
 if (-not (Test-Path -LiteralPath $workerExecutable -PathType Leaf)) {
     throw 'The test bundle must include the isolated model worker.'
 }
-$archive = Join-Path $workspace 'artifacts/ci-inputs/exiftool-13.42_64.zip'
-$archiveHash = 'ABBE55E97868B869249E679649D89E3167330DE8CEE979F98E1B2E24075A74FC'
+$archive = Join-Path $workspace 'artifacts/ci-inputs/exiftool-13.59_64.zip'
+$archiveHash = '577257DD22BAEBE77157D905792D6ED2C5916CD03AA627F40B2175DB12110AC6'
 $administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -44,7 +44,7 @@ if ($TestUserProcess) {
     $toolFolder = Join-Path $env:LOCALAPPDATA 'Programs/ExifTool'
     Expand-Archive -LiteralPath $archive -DestinationPath $toolFolder
     $version = & (Join-Path $toolFolder 'ExifTool.exe') -ver
-    if ($LASTEXITCODE -ne 0 -or $version -ne '13.42') { throw 'The pinned ExifTool installation did not start.' }
+    if ($LASTEXITCODE -ne 0 -or $version -ne '13.59') { throw 'The pinned ExifTool installation did not start.' }
     Set-Location -LiteralPath $workspace
     # WPF resolves pack resources process-wide by assembly name. Unit tests
     # reference extension types directly; desktop tests load those assemblies
@@ -60,7 +60,7 @@ New-Item -ItemType Directory -Path (Split-Path $archive), $results -Force | Out-
 $env:SPACEMAID_TEST_PNPM = & (Join-Path $PSScriptRoot 'Get-TestPnpm.ps1') -Destination (Join-Path $workspace 'artifacts/ci-inputs/pnpm10')
 # The official Windows package maintainer retains versioned archives; the
 # ExifTool main site removes old downloads. Keep the complete Perl bundle.
-Invoke-WebRequest -Uri 'https://oliverbetz.de/cms/files/Artikel/ExifTool-for-Windows/exiftool-13.42_64.zip' -OutFile $archive
+Invoke-WebRequest -Uri 'https://oliverbetz.de/cms/files/Artikel/ExifTool-for-Windows/exiftool-13.59_64.zip' -OutFile $archive
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $archiveHash) { throw 'ExifTool archive hash mismatch.' }
 
 # CreateProcessWithLogonW requires access to both inherited GUI objects.

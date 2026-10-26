@@ -81,6 +81,30 @@ public sealed class ModelSandboxTests
     }
 
     [PublishedModelWorkerFact]
+    public async Task NativeBackendLoadsAndRejectsAMalformedModelInsideTheSandbox()
+    {
+        using var fixture = new SandboxFixture();
+        var worker = PublishedModelWorkerFactAttribute.WorkerPath!;
+        await using var sandbox = WindowsModelSandbox.Start(worker, fixture.Model, Path.GetDirectoryName(worker)!);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var diagnostics = new StreamReader(sandbox.StandardError).ReadToEndAsync(deadline.Token);
+        var request = new ModelRequest(ModelProtocol.Version, 1, "chat",
+            Messages: [new("user", "Inspect this owned test fixture.")], MaxOutputTokens: 16, Temperature: 0);
+        await ModelProtocol.WriteAsync(sandbox.StandardInput,
+            ModelProtocol.Serialize(request, ModelProtocol.MaximumRequestBytes), deadline.Token);
+        var bytes = await new ModelFrameReader(sandbox.StandardOutput, ModelProtocol.MaximumResponseBytes).ReadAsync(deadline.Token);
+        Assert.NotNull(bytes);
+        var reply = ModelProtocol.Deserialize<ModelReply>(bytes);
+        Assert.Equal("model_load_failed", reply.Error);
+        Assert.Null(reply.Text);
+        sandbox.StandardInput.Dispose();
+        await sandbox.WaitForExitAsync(deadline.Token);
+        Assert.Equal(13, sandbox.ExitCode);
+        Assert.Contains("worker_model_load_failed_LoadWeightsFailedException", await diagnostics);
+        Assert.Equal("Model fixture.", File.ReadAllText(fixture.Model));
+    }
+
+    [PublishedModelWorkerFact]
     public async Task DisposalKillsIdleWorkerAndRemovesOnlyItsOwnPermissionsAndProfile()
     {
         using var fixture = new SandboxFixture();
