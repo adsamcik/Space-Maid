@@ -47,6 +47,13 @@ internal static class PhotoKinds
 
 internal sealed class PhotoCatalog : IDisposable
 {
+    static PhotoCatalog()
+    {
+        // Initialize once in each assembly context, including direct catalog consumers.
+        SQLitePCL.raw.SetProvider(new SQLitePCL.SQLite3Provider_e_sqlite3());
+        SQLitePCL.raw.FreezeProvider();
+    }
+
     internal const int PageSize = 100;
     private readonly string _connectionString;
     private readonly object _gate = new();

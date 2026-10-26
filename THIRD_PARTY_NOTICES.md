@@ -9,14 +9,14 @@ The following versions and package license declarations were checked against the
 | Component | Version | License | Copyright / attribution |
 | --- | --- | --- | --- |
 | Velopack (update runtime, native installer and updater) | 1.2.161 | MIT | Velopack Ltd. All rights reserved.; authors Velopack Ltd, Caelan Sayler and Kevin Bost. |
-| Microsoft.Data.Sqlite and Microsoft.Data.Sqlite.Core | 10.0.14 | MIT | Microsoft Corporation. All rights reserved. |
+| Microsoft.Data.Sqlite.Core (managed Microsoft.Data.Sqlite library) | 10.0.14 | MIT | Microsoft Corporation. All rights reserved. |
 | Microsoft.Extensions.AI.Abstractions | 10.11.0 | MIT | Microsoft Corporation. All rights reserved. |
 | Microsoft.Bcl.AsyncInterfaces, Microsoft.Bcl.Memory, Microsoft.Extensions.DependencyInjection.Abstractions, Microsoft.Extensions.Logging.Abstractions and System.Numerics.Tensors | 10.0.14 | MIT | Microsoft Corporation. All rights reserved. |
 | CommunityToolkit.HighPerformance | 8.4.2 | MIT | .NET Foundation and Contributors. All rights reserved. |
 | System.Interactive.Async and System.Linq.Async | 7.0.1 | MIT | .NET Foundation and Contributors. |
 | LLamaSharp | 0.30.0 | MIT | Copyright (c) 2025 SciSharp STACK; package copyright also identifies SciSharp STACK 2026. |
 | LLamaSharp.Backend.Cpu (llama.cpp native backend) | 0.30.0 | MIT | Copyright 2023 The llama.cpp Authors. All rights reserved. |
-| SQLitePCLRaw.bundle_e_sqlite3, SQLitePCLRaw.config.e_sqlite3, SQLitePCLRaw.core and SQLitePCLRaw.provider.e_sqlite3 | 3.0.5 | Apache-2.0 | Copyright 2014-2026 SourceGear, LLC; author Eric Sink. |
+| SQLitePCLRaw.core and SQLitePCLRaw.provider.e_sqlite3 | 3.0.5 | Apache-2.0 | Copyright 2014-2025 SourceGear, LLC; author Eric Sink. |
 | SQLite (native e_sqlite3 library) | 3.54.1 | Public domain | SQLite authors; package copyright identifies Copyright 2014-2026 SourceGear, LLC. The package's LICENSE.txt states that SQLite is public domain. |
 
 Original projects and license references:
