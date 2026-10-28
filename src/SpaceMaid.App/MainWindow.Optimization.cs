@@ -4,6 +4,7 @@ using System.Windows.Automation;
 using System.Windows.Threading;
 using SpaceMaid.Core.Optimization;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.App;
 
@@ -18,17 +19,17 @@ public partial class MainWindow
 
     private void UpdateOptimizationAvailability(bool busy)
     {
-        bool available = !_closing && !_scanning && !busy && _work is null && _snapshot is not null;
-        string hint = _scanning ? "Available after scan" : _snapshot is null ? "Scan first" : "Available when idle";
-        string help = available ? "Choose rules and preview generated files for this location."
+        bool available = !_closing && !_scanning && !busy && _work is null && (_snapshot is not null || ExtensionsReady);
+        string hint = _scanning ? "Available after scan" : _snapshot is null ? "Scan for generated files" : "Available when idle";
+        string help = available ? "Review optimization actions from enabled extensions. Native tools are available without a scan."
             : _scanning ? "Wait for the scan to finish, then choose rules and preview files."
             : _snapshot is null ? "Complete a scan to choose rules and preview generated files."
             : "Wait for the current work to finish.";
         OptimizationButton.IsEnabled = available;
         OptimizationButton.ToolTip = help;
         AutomationProperties.SetHelpText(OptimizationButton, help);
-        OptimizationHint.Text = available ? "" : hint;
-        OptimizationHint.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+        OptimizationHint.Text = available && _snapshot is not null ? "" : hint;
+        OptimizationHint.Visibility = available && _snapshot is not null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     internal void InitializeOptimization()
@@ -38,6 +39,7 @@ public partial class MainWindow
         { _optimizationSettingsError = "Optimization settings unavailable. Automatic cleanup is off; save settings to restore it."; }
         // Disabled mode has no recurring work, including timer wakeups.
         UpdateOptimizationTimer();
+        UpdateOptimizationAvailability(_work is not null);
     }
 
     private void UpdateOptimizationTimer()
@@ -62,15 +64,54 @@ public partial class MainWindow
         _optimizationSettings = settings; _optimizationSettingsError = null; UpdateOptimizationTimer();
     }
 
-    private void Optimization_Click(object sender, RoutedEventArgs e)
+    private async void Optimization_Click(object sender, RoutedEventArgs e)
     {
         if (!OptimizationButton.IsEnabled || _closing || _work is not null || _optimizationWindow is not null) return;
-        if (_snapshot is not { } scan) { StatusText.Text = "Scan a location before setting up automatic optimization."; return; }
+        if (!CanRestartForUpdate()) { StatusText.Text = "Finish the current extension workflow before optimizing."; return; }
+        try { await OpenOptimizationWindowAsync(); }
+        catch (Exception error) when (CleanupBatch.IsExpected(error))
+        { StatusText.Text = "Optimization could not open. " + error.Message; }
+    }
+
+    private async Task OpenOptimizationWindowAsync()
+    {
+        var scan = _snapshot;
         var findings = _rows.Select(row => row.Item).ToArray();
+        var integration = CreateOptimizationIntegration(scan?.RootPath ?? _currentPath);
         _optimizationWindow = new(scan, findings, Operations, _optimizationSettings, SaveOptimizationPolicy,
-            (preview, policy, token) => StartOptimizationAsync(scan, findings, preview, policy, token), _optimizationSettingsError) { Owner = this };
+            (preview, policy, token) => scan is null ? throw new InvalidOperationException("Scan a location before deleting generated files.")
+                : StartOptimizationAsync(scan, findings, preview, policy, token), _optimizationSettingsError, integration) { Owner = this };
+        var window = _optimizationWindow;
         try { _optimizationWindow.ShowDialog(); }
         finally { _optimizationWindow = null; }
+        if (_closing) return;
+        if (window.RequestedRescan) await NavigatePathAsync(scan?.RootPath ?? _currentPath, forceScan: true);
+        else if (window.RequestedWorkflow is { } requested)
+        {
+            try
+            {
+                var entry = _extensions?.Entries.SingleOrDefault(entry => entry.Id == requested.OwnerId);
+                if (entry?.View is not IOptimizationWorkflowView view || view.IsOptimizationBusy || !OpenExtension(requested.OwnerId)
+                    || !view.OpenOptimizationWorkflow(requested.Action.Workflow!))
+                    StatusText.Text = "This extension workflow is unavailable or busy. Open Extensions to check it.";
+            }
+            catch (Exception error) { StatusText.Text = "Could not open the extension workflow. " + error.GetBaseException().Message; }
+        }
+    }
+
+    private OptimizationIntegration CreateOptimizationIntegration(string scope)
+    {
+        var discovery = _extensions?.DiscoverOptimization() ?? new([], []);
+        ToolCacheService? tools = null;
+        if (discovery.Actions.Any(action => action.Action.NativeTool is not null))
+        {
+            try { tools = new ToolCacheService(AppData.File(Path.Join("NativeTools", "Inspection"))); }
+            catch (Exception error) when (CleanupBatch.IsExpected(error))
+            { discovery = discovery with { Errors = [.. discovery.Errors, "Native cache inspection needs a writable data folder: " + error.Message] }; }
+        }
+        return new(scope, discovery,
+            _extensions?.Entries.ToDictionary(entry => entry.Id, entry => entry.Name, StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, string>(),
+            tools, tools is null ? null : (plan, token) => ExecuteToolCacheAsync(tools, plan, token));
     }
 
     internal async Task TryAutomaticOptimizationAsync()

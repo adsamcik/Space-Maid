@@ -17,7 +17,7 @@ internal sealed record ExtensionSettings(List<ExtensionLocation> Directories, Li
 internal sealed record LoadedExtension(string Id, string Name, string Directory, string Status,
     FrameworkElement? View = null, string? Error = null, string? Version = null, bool SupportsOpportunities = false);
 
-internal sealed class ExtensionRuntime : IAsyncDisposable
+internal sealed partial class ExtensionRuntime : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
     private readonly string _dataRoot, _bundleRoot, _settingsPath;

@@ -4,10 +4,16 @@ using System.Windows.Controls;
 
 namespace SpaceMaid.Extensions.Models;
 
-public partial class ModelsView : UserControl
+public partial class ModelsView : UserControl, SpaceMaid.Extensions.Contracts.IOptimizationWorkflowView
 {
     private readonly CancellationToken _lifetime;
     private CancellationTokenSource? _work;
+    public bool IsOptimizationBusy => _work is not null;
+    public bool OpenOptimizationWorkflow(string workflowId)
+    {
+        if (IsOptimizationBusy || _lifetime.IsCancellationRequested || workflowId != "ollama") return false;
+        InspectButton.Focus(); return true;
+    }
     private Task? _operation;
     private bool _deleting;
     private OllamaSnapshot? _snapshot;

@@ -16,6 +16,8 @@ public partial class WslDiskView : UserControl
     private readonly CancellationToken _lifetime;
     private readonly List<WslDiskRow> _disks = [];
     private bool _busy;
+    internal bool IsOptimizationBusy => _busy;
+    internal void FocusInspection() => FindButton.Focus();
     private Task? _execution;
     private Window? _owner;
     internal Func<string, CancellationToken, Task<VirtualDiskTarget>> Prepare { get; set; } = WslDiskClient.PreviewAsync;

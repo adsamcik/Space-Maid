@@ -6,10 +6,18 @@ using Microsoft.Win32;
 
 namespace SpaceMaid.Extensions.Agents;
 
-public partial class AgentsView : UserControl
+public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IOptimizationWorkflowView
 {
     private readonly CancellationToken _lifetime;
     private CancellationTokenSource? _work;
+    public bool IsOptimizationBusy => _work is not null || OpenCodeView.IsOptimizationBusy;
+    public bool OpenOptimizationWorkflow(string workflowId)
+    {
+        if (IsOptimizationBusy || _lifetime.IsCancellationRequested || workflowId is not ("history" or "opencode")) return false;
+        AgentTabs.SelectedIndex = workflowId == "history" ? 0 : 1;
+        if (workflowId == "history") InspectButton.Focus(); else OpenCodeView.FocusInspection();
+        return true;
+    }
     private Task? _operation;
     private Window? _owner;
     private bool _recycling, _changingSource;

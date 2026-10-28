@@ -9,12 +9,21 @@ using System.Windows.Navigation;
 
 namespace SpaceMaid.Extensions.Containers;
 
-public partial class ContainersView : UserControl
+public partial class ContainersView : UserControl, SpaceMaid.Extensions.Contracts.IOptimizationWorkflowView
 {
     private readonly CancellationToken _lifetime;
     private CancellationTokenSource? _work;
     private Task? _inspection;
     private IReadOnlyList<DockerStorageItem> _items = [];
+    public bool IsOptimizationBusy => _work is not null || WslContent.Content is WslDiskView { IsOptimizationBusy: true };
+    public bool OpenOptimizationWorkflow(string workflowId)
+    {
+        if (IsOptimizationBusy || _lifetime.IsCancellationRequested || workflowId is not ("docker" or "wsl")) return false;
+        ContainerTabs.SelectedIndex = workflowId == "docker" ? 0 : 1;
+        if (workflowId == "docker") InspectButton.Focus();
+        else if (WslContent.Content is WslDiskView disks) disks.FocusInspection();
+        return true;
+    }
     internal Func<CancellationToken, Task<IReadOnlyList<DockerStorageItem>>> Inspector { get; set; } = DockerUsage.InspectAsync;
     internal Func<DockerStorageItem, CancellationToken, Task<DockerCleanupPlan>> Preparer { get; set; } = DockerCleanup.PrepareAsync;
     internal Func<DockerCleanupPlan, CancellationToken, Task<DockerCleanupResult>> Executor { get; set; } = DockerCleanup.ExecuteAsync;

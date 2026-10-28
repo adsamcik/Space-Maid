@@ -53,6 +53,7 @@ public partial class MainWindow
     private void UpdateExtensionWorkspace()
     {
         if (ExtensionPages is null || ExtensionsTab is null || ScanHeader is null) return;
+        ExtensionPages.IsEnabled = _work is null;
         foreach (var link in _extensionLinks.Values)
             if (link.Tag is ContentControl page) page.Visibility = link.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         bool extra = _extensionLinks.Values.Any(link => link.Tag is ContentControl && link.IsChecked == true);

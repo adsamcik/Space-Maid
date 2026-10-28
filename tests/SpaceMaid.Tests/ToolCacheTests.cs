@@ -8,6 +8,17 @@ namespace SpaceMaid.Tests;
 public sealed class ToolCacheTests
 {
     [Fact]
+    public async Task SelectedToolInspectionDoesNotProbeOtherNativeTools()
+    {
+        using var fixture = new ToolCacheFixture();
+        var observation = await fixture.Service.InspectAsync(ToolCacheKind.Pnpm);
+        Assert.Equal(ToolCacheKind.Pnpm, observation.Kind); Assert.True(observation.CanPrepare);
+        Assert.NotEmpty(fixture.Commands);
+        Assert.All(fixture.Commands, command => Assert.Equal(fixture.Launcher(ToolCacheKind.Pnpm).Executable, command.Executable));
+        Assert.DoesNotContain(fixture.Commands, command => command.Arguments.Contains("prune"));
+    }
+
+    [Fact]
     public async Task PnpmRejectsUnknownOverlappingChangedAndReplacedMetadataRoots()
     {
         using var fixture = new ToolCacheFixture();
@@ -255,6 +266,8 @@ internal sealed class ToolCacheFixture : IDisposable
     internal bool ModifiedStore { get; set; }
     internal bool FailMutation { get; set; }
     internal bool StallMutation { get; set; }
+    internal bool StallInspection { get; set; }
+    internal TaskCompletionSource InspectionStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal Action? OnMutation { get; set; }
     internal List<ToolCacheCommand> Commands { get; } = [];
     internal TaskCompletionSource MutationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -284,6 +297,8 @@ internal sealed class ToolCacheFixture : IDisposable
         Commands.Add(command);
         var kind = _launchers.Single(pair => pair.Value.Executable == command.Executable).Key;
         var args = command.Arguments;
+        if (StallInspection && args.Contains("--version"))
+        { InspectionStarted.TrySetResult(); await Task.Delay(Timeout.Infinite, token); }
         if (args.Contains("--version")) return new(0, kind switch { ToolCacheKind.Cargo => "cargo " + CargoVersion + " (fixture)", ToolCacheKind.NuGet => "NuGet Command Line\n7.0.0.1", ToolCacheKind.Npm => NpmVersion, _ => "10.18.0" }, "");
         if (args.Contains("get")) return new(0, kind == ToolCacheKind.Pnpm && ReportedPnpmCacheRoot.Length == 0 ? ""
             : JsonSerializer.Serialize(kind == ToolCacheKind.Pnpm ? ReportedPnpmCacheRoot : ReportedNpmRoot), "");

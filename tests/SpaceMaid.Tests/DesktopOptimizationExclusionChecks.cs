@@ -61,7 +61,7 @@ public sealed partial class DesktopTests
             {
                 app.ThemeMode = theme; string name = theme == ThemeMode.Light ? "light" : "dark";
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"optimization-exclusions-{name}.png"), 980, 790);
-                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"optimization-exclusions-compact-{name}.png"), 760, 640);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"optimization-exclusions-compact-{name}.png"), 840, 640);
                 Assert.True(list.ActualHeight >= 160, "Exclusions should have a useful working area at compact sizes.");
             }
 #pragma warning restore WPF0001
@@ -74,12 +74,12 @@ public sealed partial class DesktopTests
             }
             Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("NoExclusionsText")).Visibility);
             Assert.Equal(Visibility.Collapsed, list.Visibility); Assert.Equal("Excluded locations", tab.Header);
-            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "optimization-exclusions-empty-dark.png"), 760, 640);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "optimization-exclusions-empty-dark.png"), 840, 640);
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Assert.Empty(OptimizationSettings.Load(savedPath).Policy.ExcludedPaths);
             preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10)); Assert.Equal(2, files.Items.Count);
             Assert.True(((TabItem)window.FindName("GeneratedFilesTab")).IsSelected);
-            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "optimization-preview-compact-dark.png"), 760, 640);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "optimization-preview-compact-dark.png"), 840, 640);
             Assert.True(files.ActualHeight >= 180, "The generated-file preview should retain a useful working area.");
             Assert.Equal(2, Directory.GetFiles(cache).Length);
         }

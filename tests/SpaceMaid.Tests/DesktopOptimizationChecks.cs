@@ -13,6 +13,8 @@ public sealed partial class DesktopTests
 {
     private static void CheckOptimization(Application app, string artifactRoot)
     {
+        CheckOptimizationHub(app, artifactRoot);
+        CheckOptimizationHostIntegration(app);
         CheckOptimizationExclusions(app, artifactRoot);
         using var fixture = new TestDirectory();
         using var settingsFixture = new TestDirectory();
@@ -47,7 +49,7 @@ public sealed partial class DesktopTests
                 app.ThemeMode = theme;
                 string name = theme == ThemeMode.Light ? "light" : "dark";
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"optimization-{name}.png"), 980, 790);
-                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"optimization-compact-{name}.png"), 760, 640);
+                Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"optimization-compact-{name}.png"), 840, 640);
                 Assert.True(files.ActualHeight >= 180, "Generated files should retain a useful working area.");
                 Assert.True(run.IsVisible);
             }
@@ -58,9 +60,11 @@ public sealed partial class DesktopTests
             Assert.Equal(0, executions); Assert.Contains("Settings changed", ((TextBlock)window.FindName("StatusText")).Text);
             preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+            ((TabItem)window.FindName("AutomaticTab")).IsSelected = true;
             ((Button)window.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.False(OptimizationSettings.Load(settingsPath).Policy.Enabled);
             Assert.Equal(20, OptimizationSettings.Load(settingsPath).Policy.KeepRecentDays);
+            ((TabItem)window.FindName("ActionsTab")).IsSelected = true;
             run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
             Assert.Equal(1, executions);
@@ -91,7 +95,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10)); pages++;
                 Assert.False(run.IsEnabled);
             } while ((string)preview.Content == "Continue preview" && pages < 25);
-            Assert.Equal(24, pages); Assert.Equal("Preview", preview.Content);
+            Assert.Equal(24, pages); Assert.Equal("Review files", preview.Content);
             Assert.Contains("Partial inspection", ((TextBlock)window.FindName("PreviewText")).Text);
         }
         finally { window.Close(); }
@@ -121,8 +125,8 @@ public sealed partial class DesktopTests
             host.InitializeOptimization(); host.SetScanTarget(source.Path);
             var button = (Button)host.FindName("OptimizationButton");
             var hint = (TextBlock)host.FindName("OptimizationHint");
-            Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
-            host.SetBusy(true); Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
+            Assert.False(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
+            host.SetBusy(true); Assert.False(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
             host.SetBusy(false);
             Assert.True(ToolTipService.GetShowOnDisabled(button));
 #pragma warning disable WPF0001
@@ -168,11 +172,11 @@ public sealed partial class DesktopTests
             Assert.False(button.IsEnabled); Assert.Equal("Available after scan", hint.Text);
             ((Button)host.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => cancelled.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(cancelled.GetAwaiter().GetResult());
-            Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
+            Assert.True(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
             host.SetScanTarget(Path.Join(source.Path, "missing"));
             var failed = host.ScanCurrentPathAsync();
             PumpUntil(() => failed.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(failed.GetAwaiter().GetResult());
-            Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
+            Assert.True(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
         }
         finally
         {

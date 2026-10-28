@@ -1,98 +1,167 @@
 <Window x:Class="SpaceMaid.App.OptimizationWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Automatic optimization" Width="980" Height="790" MinWidth="720" MinHeight="640"
+        Title="Optimize space" Width="1100" Height="800" MinWidth="820" MinHeight="640"
         WindowStartupLocation="CenterOwner" Closing="Window_Closing">
-    <Grid Margin="20">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <StackPanel>
-            <DockPanel>
-                <TextBlock Text="Hourly while open" DockPanel.Dock="Right" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
-                <CheckBox x:Name="AutomaticBox" Content="Optimize automatically" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            </DockPanel>
-            <TextBlock Text="Permanently delete old generated files from selected rules. Originals, folders and unfamiliar files stay." TextWrapping="Wrap" Margin="0,7,0,5"/>
-            <TextBlock x:Name="ScopeText" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Opacity="0.7"/>
-        </StackPanel>
-        <StackPanel Grid.Row="1" x:Name="PolicyControls" Margin="0,10,0,0">
-            <WrapPanel VerticalAlignment="Center">
-                <TextBlock Text="Keep activity within" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="DaysBox" Width="48" VerticalContentAlignment="Center" AutomationProperties.Name="Days of recent activity to keep"/>
-                <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,22,0"/>
-                <TextBlock Text="Limit per run" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="LimitBox" Width="65" VerticalContentAlignment="Center" AutomationProperties.Name="Maximum megabytes per optimization run"/>
-                <TextBlock Text="MiB · up to 500 files" VerticalAlignment="Center" Margin="6,0,0,0"/>
-            </WrapPanel>
-        </StackPanel>
-        <ScrollViewer Grid.Row="2" MaxHeight="100" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
-            <ItemsControl x:Name="RuleList">
-                <ItemsControl.ItemTemplate><DataTemplate>
-                    <CheckBox IsChecked="{Binding Enabled}" HorizontalContentAlignment="Stretch" Margin="0,3,0,5" AutomationProperties.Name="{Binding Name}">
-                        <StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding Regeneration}" TextWrapping="Wrap" FontSize="12" Opacity="0.7"/></StackPanel>
-                    </CheckBox>
-                </DataTemplate></ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
-        <Grid Grid.Row="3">
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,8">
-                <Button x:Name="PreviewButton" DockPanel.Dock="Right" Content="Preview" Click="Preview_Click" Padding="14,5"/>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding IsSelected, ElementName=ExclusionsTab}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
-                    <Button x:Name="KeepFileButton" Content="Keep file" Click="KeepFile_Click" Padding="10,5" Margin="0,0,8,0"/>
-                    <Button x:Name="KeepFolderButton" Content="Keep folder" Click="KeepFolder_Click" Padding="10,5" Margin="0,0,8,0"/>
-                </StackPanel>
-                <TextBlock x:Name="PreviewText" Text="Select rules, then preview the exact files." TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
-            </DockPanel>
-            <TabControl Grid.Row="1" SelectionChanged="PreviewSelection_Changed">
-                <TabItem x:Name="GeneratedFilesTab" Header="Generated files">
-                    <DataGrid x:Name="FileList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Single" GridLinesVisibility="None" EnableRowVirtualization="True">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="File" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
-                                <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"/>
-                            <DataGridTextColumn Header="Producer / variant" Binding="{Binding Rule}" Width="200"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </TabItem>
-                <TabItem Header="Kept / results"><DataGrid x:Name="ResultList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="None">
-                    <DataGrid.Columns><DataGridTextColumn Header="File or folder" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
-                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
-                    </DataGridTextColumn><DataGridTextColumn Header="Result" Binding="{Binding Reason}" Width="*"/></DataGrid.Columns>
-                </DataGrid></TabItem>
-                <TabItem x:Name="ExclusionsTab" Header="Excluded locations">
-                    <Grid x:Name="ExclusionControls" Margin="8">
+    <Grid Margin="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,12">
+            <Button x:Name="AutomaticStatusButton" DockPanel.Dock="Right" Content="Automatic cleanup: off" Click="AutomaticSettings_Click" Padding="10,4" Margin="12,0,0,0"/>
+            <TextBlock x:Name="ScopeText" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+        </DockPanel>
+        <TabControl Grid.Row="1" SelectionChanged="PreviewSelection_Changed">
+            <TabItem x:Name="ActionsTab" Header="Actions">
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="235"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <Button x:Name="AddExcludedFolderButton" Content="Add folders…" Click="AddExcludedFolder_Click" Padding="10,4" Margin="0,0,8,0"/>
-                            <Button Content="Add files…" Click="AddExcludedFiles_Click" Padding="10,4"/>
-                            <TextBlock Text="Folders include their contents." FontSize="12" Opacity="0.7" VerticalAlignment="Center" Margin="12,0,0,0"/>
-                        </StackPanel>
-                        <TextBlock x:Name="NoExclusionsText" Grid.Row="1" Text="Nothing excluded." FontSize="13" Opacity="0.7" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        <ListBox x:Name="ExclusionsList" Grid.Row="1" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Excluded files and folders">
-                            <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style></ListBox.ItemContainerStyle>
+                        <Grid Margin="0,0,0,8">
+                            <TextBox x:Name="ActionSearch" TextChanged="ActionSearch_Changed" AutomationProperties.Name="Find an action or extension" ToolTip="Find an action or extension" VerticalContentAlignment="Center"/>
+                            <TextBlock Text="Find actions" IsHitTestVisible="False" Opacity="0.6" Margin="10,0" VerticalAlignment="Center">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=ActionSearch}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                        <ListBox x:Name="ActionList" Grid.Row="1" SelectionChanged="Action_Changed" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Optimization actions grouped by extension" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
+                            <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="6,4"/><Setter Property="Margin" Value="0,2"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style></ListBox.ItemContainerStyle>
+                            <ListBox.GroupStyle><GroupStyle><GroupStyle.HeaderTemplate><DataTemplate><TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="6,12,0,5" Opacity="0.75"/></DataTemplate></GroupStyle.HeaderTemplate></GroupStyle></ListBox.GroupStyle>
                             <ListBox.ItemTemplate><DataTemplate>
-                                <DockPanel ToolTip="{Binding Path}" Margin="0,3">
-                                    <Button DockPanel.Dock="Right" Content="Remove" Click="RemoveExclusion_Click" Padding="8,3" Margin="10,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="{Binding Path, StringFormat='Remove exclusion {0}'}"/>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="13"/>
-                                        <TextBlock Text="{Binding ParentPath}" TextTrimming="CharacterEllipsis" FontSize="11" Opacity="0.7"/>
-                                    </StackPanel>
-                                </DockPanel>
+                                <StackPanel Margin="3,5">
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Mode}" FontSize="11" Opacity="0.7" Margin="0,3,0,0"/>
+                                    <TextBlock Text="{Binding Status}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0">
+                                        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger></Style.Triggers></Style></TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
                             </DataTemplate></ListBox.ItemTemplate>
                         </ListBox>
                     </Grid>
-                </TabItem>
-            </TabControl>
-        </Grid>
-        <Grid Grid.Row="4" Margin="0,12,0,0">
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock x:Name="ActionTitle" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="ActionDescription" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                            <TextBlock x:Name="ActionConsequence" TextWrapping="Wrap" Opacity="0.75" FontSize="12" Margin="0,6,0,0"/>
+                        </StackPanel>
+                        <DockPanel Grid.Row="1" Margin="0,12,0,10">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button x:Name="KeepFileButton" Content="Keep file" Click="KeepFile_Click" Padding="10,5" Margin="0,0,6,0"/>
+                                <Button x:Name="KeepFolderButton" Content="Keep folder" Click="KeepFolder_Click" Padding="10,5" Margin="0,0,6,0"/>
+                                <Button x:Name="PreviewButton" Content="Review files" Click="Preview_Click" Padding="12,5"/>
+                                <Button x:Name="InspectToolButton" Content="Inspect tool" Click="InspectTool_Click" Padding="12,5" Visibility="Collapsed"/>
+                                <Button x:Name="ReviewNativeButton" Content="Review maintenance…" Click="ReviewNative_Click" Padding="12,5" Margin="6,0,0,0" Visibility="Collapsed"/>
+                                <Button x:Name="OpenWorkflowButton" Content="Open workflow" Click="OpenWorkflow_Click" Padding="12,5" Visibility="Collapsed"/>
+                            </StackPanel>
+                        </DockPanel>
+                        <Grid Grid.Row="2">
+                            <TabControl x:Name="GeneratedReview" SelectionChanged="PreviewSelection_Changed">
+                                <TabItem x:Name="GeneratedFilesTab" Header="Files">
+                                    <Grid>
+                                        <DataGrid x:Name="FileList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Single" GridLinesVisibility="None" EnableRowVirtualization="True" SelectionChanged="PreviewSelection_Changed">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="File" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
+                                                    <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
+                                                </DataGridTextColumn>
+                                                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="82"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <TextBlock x:Name="PreviewEmptyText" Text="Review files to check what can be removed." TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7" Margin="16" IsHitTestVisible="False"/>
+                                    </Grid>
+                                </TabItem>
+                                <TabItem x:Name="ResultsTab" Header="Kept / results">
+                                    <DataGrid x:Name="ResultList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="None">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="File or folder" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
+                                                <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn Header="Result" Binding="{Binding Reason}" Width="*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </TabItem>
+                            </TabControl>
+                            <ScrollViewer x:Name="NativeReview" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock x:Name="NativeStatusText" TextWrapping="Wrap" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="NativeRootText" TextWrapping="Wrap" Margin="0,6,0,8"/>
+                                    <TextBlock x:Name="NativeDetailsText" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <ItemsControl x:Name="NativeResources">
+                                        <ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,4,0,6"><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding Path}" TextWrapping="Wrap"/><TextBlock Text="{Binding Restoration}" TextWrapping="Wrap" FontSize="12" Opacity="0.75"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <Expander Header="Command and last report" Margin="0,8,0,0">
+                                        <StackPanel>
+                                            <TextBox x:Name="CommandText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" AutomationProperties.Name="Native maintenance command"/>
+                                            <TextBox x:Name="ReportText" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" BorderThickness="0" Background="Transparent" AutomationProperties.Name="Native maintenance report"/>
+                                        </StackPanel>
+                                    </Expander>
+                                </StackPanel>
+                            </ScrollViewer>
+                            <TextBlock x:Name="WorkflowText" Visibility="Collapsed" TextWrapping="Wrap" Opacity="0.75" Margin="0,8,0,0"/>
+                            <TextBlock x:Name="NoActionsText" Visibility="Collapsed" Text="No matching actions. Enable an extension or scan a location to find generated files." TextWrapping="Wrap" Opacity="0.75"/>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem x:Name="AutomaticTab" Header="Automatic cleanup">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <StackPanel>
+                        <CheckBox x:Name="AutomaticBox" Content="Clean selected generated files hourly while open" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="AutomaticScopeText" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                        <TextBlock x:Name="SavedScopeHint" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12" Visibility="Collapsed"/>
+                        <TextBlock Text="Native tools, models, conversations and virtual disks always require review." TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,6,0,0"/>
+                    </StackPanel>
+                    <StackPanel x:Name="PolicyControls" Grid.Row="1" Margin="0,12,0,12">
+                        <WrapPanel>
+                            <TextBlock Text="Keep recent activity" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="DaysBox" Width="48" VerticalContentAlignment="Center" AutomationProperties.Name="Days of recent activity to keep"/>
+                            <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,22,0"/>
+                            <TextBlock Text="Limit per run" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="LimitBox" Width="65" VerticalContentAlignment="Center" AutomationProperties.Name="Maximum megabytes per run"/>
+                            <TextBlock Text="MiB · up to 500 files" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                        </WrapPanel>
+                    </StackPanel>
+                    <Grid Grid.Row="2">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsControl x:Name="RuleList">
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <CheckBox IsChecked="{Binding Enabled}" HorizontalContentAlignment="Stretch" Margin="0,6,0,10" AutomationProperties.Name="{Binding Name}">
+                                    <StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding Provider}" FontSize="12" Opacity="0.7"/><TextBlock Text="{Binding Regeneration}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,3,0,0"/></StackPanel>
+                                </CheckBox>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl></ScrollViewer>
+                        <TextBlock x:Name="NoRulesText" Text="Scan a location with generated files to configure automatic cleanup." TextWrapping="Wrap" Opacity="0.7" Visibility="Collapsed"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem x:Name="ExclusionsTab" Header="Excluded locations">
+                <Grid x:Name="ExclusionControls" Margin="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button x:Name="AddExcludedFolderButton" Content="Add folders…" Click="AddExcludedFolder_Click" Padding="10,4" Margin="0,0,8,0"/>
+                        <Button Content="Add files…" Click="AddExcludedFiles_Click" Padding="10,4"/>
+                        <TextBlock Text="Folders include their contents." FontSize="12" Opacity="0.7" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                    </StackPanel>
+                    <TextBlock x:Name="NoExclusionsText" Grid.Row="1" Text="Nothing excluded." FontSize="13" Opacity="0.7" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <ListBox x:Name="ExclusionsList" Grid.Row="1" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Excluded files and folders">
+                        <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style></ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate><DataTemplate><DockPanel ToolTip="{Binding Path}" Margin="0,3">
+                            <Button DockPanel.Dock="Right" Content="Remove" Click="RemoveExclusion_Click" Padding="8,3" Margin="10,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="{Binding Path, StringFormat='Remove exclusion {0}'}"/>
+                            <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="13"/><TextBlock Text="{Binding ParentPath}" TextTrimming="CharacterEllipsis" FontSize="11" Opacity="0.7"/></StackPanel>
+                        </DockPanel></DataTemplate></ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        <Grid Grid.Row="2" Margin="0,10,0,0">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Margin="0,0,0,10"/>
+            <TextBlock x:Name="PreviewText" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,0,0,5"/>
             <DockPanel Grid.Row="1">
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button x:Name="SaveButton" Content="Save settings" Click="Save_Click" Padding="14,6" Margin="0,0,8,0"/>
-                    <Button x:Name="RunButton" Content="Delete previewed files" Click="Run_Click" IsEnabled="False" Padding="14,6" Margin="0,0,8,0"/>
-                    <Button x:Name="CloseButton" Content="Close" Click="Close_Click" Padding="14,6"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
+                    <Button x:Name="SaveButton" Content="Save settings" Click="Save_Click" Padding="12,6" Margin="0,0,8,0" Visibility="Collapsed"/>
+                    <Button x:Name="RunButton" Content="Delete previewed files" Click="Run_Click" IsEnabled="False" Padding="12,6" Margin="0,0,8,0"/>
+                    <Button x:Name="CloseButton" Content="Close" Click="Close_Click" Padding="12,6"/>
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                    <Expander x:Name="IntegrationErrors" Header="Unavailable actions" Visibility="Collapsed"><TextBlock x:Name="IntegrationErrorText" TextWrapping="Wrap"/></Expander>
                 </StackPanel>
             </DockPanel>
         </Grid>

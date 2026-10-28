@@ -8,6 +8,8 @@ public partial class OpenCodeSessionsView : UserControl
 {
     private CancellationToken _lifetime;
     private CancellationTokenSource? _work;
+    internal bool IsOptimizationBusy => _work is not null;
+    internal void FocusInspection() => InspectButton.Focus();
     private Task? _operation;
     private OpenCodeSessionSnapshot? _snapshot;
     private int _observedAge = 30;

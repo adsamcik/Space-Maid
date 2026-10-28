@@ -14,7 +14,7 @@
         <DockPanel Grid.RowSpan="3" Margin="0,0,14,0">
             <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
                 <RadioButton x:Name="ExtensionsTab" Content="Extensions" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
-                <Button x:Name="OptimizationButton" Content="Auto optimize" Click="Optimization_Click" Padding="10,5" Margin="0,10,0,0" IsEnabled="False" ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="OptimizationButton" Content="Optimize space" Click="Optimization_Click" Padding="10,5" Margin="0,10,0,0" IsEnabled="False" ToolTipService.ShowOnDisabled="True"/>
                 <TextBlock x:Name="OptimizationHint" Text="Scan first" FontSize="11" Margin="0,3,0,8" HorizontalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
                 <Button x:Name="UpdateButton" Content="Update available" Click="Updates_Click" Padding="10,5" Margin="0,0,0,8" Visibility="Collapsed"/>
                 <Button x:Name="MoreButton" Content="More" Click="More_Click" Padding="10,5" AutomationProperties.Name="More options">

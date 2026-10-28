@@ -95,6 +95,13 @@ public sealed class ToolCacheService
         }
     }
 
+    public Task<ToolCacheObservation> InspectAsync(ToolCacheKind kind, string? projectScope = null, CancellationToken token = default)
+    {
+        if (!Enum.IsDefined(kind)) throw new ArgumentOutOfRangeException(nameof(kind));
+        token.ThrowIfCancellationRequested();
+        return InspectOneAsync(kind, projectScope, token);
+    }
+
     private async Task<ToolCacheObservation> InspectOneAsync(ToolCacheKind kind, string? scope, CancellationToken token)
     {
         string name = kind switch { ToolCacheKind.Npm => "npm", ToolCacheKind.Pnpm => "pnpm", ToolCacheKind.NuGet => "NuGet", _ => kind.ToString() };

@@ -1,10 +1,22 @@
-# Automatic optimization
+# Optimize space
 
-Scan a location and wait for the scan to finish, then choose **Auto optimize**. The button shows when it will be available. Select rules, preview exact files and use **Delete previewed files** for one run. Select **Optimize automatically** and **Save settings** for recurring cleanup. All automatic actions are off by default.
+Choose **Optimize space** to browse actions grouped by the extension that provides them. Native tool inspection and extension workflows are available without a scan. Scan a location to add its generated-file actions; scanning pauses optimization until the results are ready.
+
+Select a generated-file action and choose **Review files**. This checks the exact files without enabling automatic cleanup. Review the files and kept results, then use **Delete previewed files** for one run. After deletion, **Scan again…** refreshes the location. Observed folder sizes are not advertised as guaranteed recovery.
+
+Package-cache actions use the installed tool through the host's fixed native adapters. **Inspect tool** resolves its version and configured locations without cleanup. Supported npm/pnpm maintenance requires a fresh review and explicit confirmation of all affected locations. NuGet, Cargo and Gradle remain inspection-only when no selective maintenance contract is supported. File exclusions block native maintenance if any affected scope overlaps an excluded location. Native commands have their own consequences and are not bounded by generated-file byte caps.
+
+Docker, WSL, model and agent-history actions open the owning extension at the relevant workflow. Inspection and confirmation remain there, retaining its selection, safeguards and native tooling. These actions never become unattended cleanup. Native extension activity pauses host optimization, and foreground host work disables the extension workspace until it finishes.
+
+In **Automatic cleanup**, explicitly enable the generated-file rules you want, choose retention and run limits, and save settings. All automatic actions are off by default. Native-only browsing without a scan preserves the saved automatic scope and rule consent. Exclusions can still be edited there.
+
+**Save exclusions** preserves the last saved automatic location and rule consent, including when browsing another drive. **Save automatic settings** explicitly configures the location shown in that tab; a warning identifies an existing schedule for another location. Existing automatic cleanup can be turned off without scanning again.
 
 Generated-file eviction permanently deletes verified resources; regeneration replaces undo. Ordinary folder cleanup still uses the Recycle Bin. Keep a file or its containing resource with **Keep file** / **Keep folder**, then save the exclusion for automatic runs.
 
 Under **Excluded locations**, use **Add folders…** or **Add files…** to browse for exclusions. Folders include their contents. Remove individual entries with **Remove**, then preview again and save settings.
+
+These file exclusions apply to generated files and host-managed native cache maintenance. Extension-owned workflows retain their own review and selection controls.
 
 ## Producer evidence
 
@@ -48,6 +60,10 @@ Settings, cursor, cooldowns and the last summary live in `optimization-settings.
 Retirement creates a durable recovery ref and record, then uses Git's worktree move to quarantine on the same volume. Quarantine still occupies space. Recovery can restore the checkout while it remains unchanged. After grace, finalization rechecks Git state and deletes only captured unchanged objects through native handles, retaining branches and shared Git storage. New/changed files, missing coverage, active operations, ignored data and unsupported move conditions stop retirement. No force or broad prune fallback is used. A bounded metadata preflight precedes inventory creation; each assessment has a 20-second deadline. The content ledger admits at most 4,000 objects / 256 MiB within a separate 10-second capture budget; large or ambiguous checkouts require review. Evidence means no observed recent activity, not proof that no external program cares about the checkout.
 
 ## Integrating another part of the app
+
+An extension can implement the optional `IOptimizationExtension` capability in `SpaceMaid.Extensions.Contracts`. Return stable action metadata identifying either a fixed `ToolCacheKind` adapter or an owning workflow ID. Declarations are metadata-only: do not launch tools, inspect files or start jobs while returning them. The host validates bounded declarations per extension and isolates invalid providers.
+
+For an owning workflow, its retained view implements `IOptimizationWorkflowView`. `OpenOptimizationWorkflow(id)` only selects/focuses the relevant workflow; it must reject unknown IDs or busy/cancelled views and must not start inspection or mutation. `IsOptimizationBusy` includes hidden nested workflows so host cleanup and updates can wait. Generated-file actions continue to come from scanned `IOpportunityExtension` findings, without a second detection pipeline.
 
 Attach an `AutomaticCleanupRule` to an `Opportunity` through `IOpportunityExtension`. Rules identify a stable provider, user-facing consequences, narrow suffixes, age and supported `GeneratedResourceKind`. The default kind is `Unverified` and cannot authorize eviction. A new producer format needs host proof support; extensions do not supply arbitrary deletion callbacks.
 
