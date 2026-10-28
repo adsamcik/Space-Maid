@@ -94,13 +94,20 @@ public partial class MainWindow
             scope.Path.Equals(request.Path, StringComparison.Ordinal) && (!scope.Recursive || request.Recursive)
             || request.Recursive && scope.Path.StartsWith(request.Path.EndsWith(Path.DirectorySeparatorChar)
                 ? request.Path : request.Path + Path.DirectorySeparatorChar, StringComparison.Ordinal)));
+        _staleScopes.UnionWith(updated.IncompleteRecheckScopes);
         _scanStale = _staleScopes.Count > 0;
         _scanStatus = note + $" Updated {updated.RecheckedPaths.Count:N0} locations in {timer.Elapsed.TotalSeconds:0.00}s; other folders retain earlier scan data.";
         string extensionStatus = OpportunityExtensions.Status(updated);
         if (extensionStatus.Length > 0) _scanStatus += " " + extensionStatus;
         StatusText.Text = _scanStatus;
-        log.Record("recheck-published", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, updated.RecheckedPaths, updated.AllocatedBytes, updated.LogicalBytes, Opportunities = _rows.Count });
-        if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
+        log.Record("recheck-published", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, updated.RecheckedPaths,
+            updated.IncompleteRecheckScopes, updated.WarningCount, updated.Warnings, updated.AllocatedBytes, updated.LogicalBytes, Opportunities = _rows.Count });
+        if (updated.IncompleteRecheckScopes.Count > 0)
+        {
+            MarkScanStale("Readable items refreshed. Some locations are unavailable; earlier values kept where available. See scan details.");
+            TreeNote.Text = "Partial refresh · Some locations unavailable";
+        }
+        else if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
         UpdateSelection();
         RestoreTreeViewport(viewport);
     }

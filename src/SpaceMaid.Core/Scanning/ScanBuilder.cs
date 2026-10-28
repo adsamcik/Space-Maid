@@ -180,13 +180,26 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         WarningReported?.Invoke(message);
     }
 
-    internal void CarryCoverage(ScanSnapshot scan)
+    internal void CarryCoverage(ScanSnapshot scan, IReadOnlySet<FileIdentity>? verified = null)
     {
-        _omissions = scan.WarningCount;
-        _warnings.AddRange(scan.Warnings.Take(8));
+        var unresolved = scan.UnreadableEntries.Where(id => verified?.Contains(id) != true).ToHashSet();
+        for (int index = 0; unresolved.Count > 0 && index < scan.Records.Length; index++)
+        {
+            var id = scan.Records[index].Identity;
+            if (!unresolved.Remove(id)) continue;
+            string? path = scan.EntryPath(scan.PrimaryLink(index));
+            Warn($"Earlier values retained for an unavailable location: {path ?? id.ToString()}", id);
+        }
+        // Namespace/accounting failures have no local identity that a focused
+        // recheck can establish as resolved. Preserve that coverage separately.
+        int unscoped = scan.WarningCount - scan.UnreadableEntries.Count;
+        if (unscoped > 0)
+        {
+            _omissions += unscoped;
+            _warnings.AddRange(scan.Warnings.Take(Math.Max(0, 8 - _warnings.Count)));
+        }
         for (int i = 0; i < scan.Records.Length; i++)
         {
-            if ((scan.EntryFlags[i] & 2) != 0) _incomplete.Add(scan.Records[i].Identity);
             if ((scan.EntryFlags[i] & 8) != 0) _unmeasuredDirectories.Add(scan.Records[i].Identity);
         }
     }
@@ -220,6 +233,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
             links[i] = link with { ParentIndex = parent };
             next[i] = heads[parent];
             heads[parent] = i;
+            flags[parent] |= (byte)(flags[link.FileIndex] & 2);
             if (first[link.FileIndex] < 0) first[link.FileIndex] = i;
             else
             {
@@ -280,6 +294,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
         return new(rootPath, backend, files, links, _names, RootIndex, first, heads, next,
             logical, allocated, AllStreams, AllocationData, CompleteVolumeLinks,
             _warnings.ToArray(), new(acquisition, timer.Elapsed, GC.GetTotalAllocatedBytes(false) - allocatedBefore,
-                process.PeakWorkingSet64), flags, _omissions, directoryCount, FallbackReason);
+                process.PeakWorkingSet64), flags, _omissions, directoryCount, FallbackReason)
+            { UnreadableEntries = _incomplete.ToHashSet() };
     }
 }

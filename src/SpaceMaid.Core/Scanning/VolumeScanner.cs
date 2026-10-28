@@ -49,7 +49,30 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
         var builder = new ScanBuilder();
         var reporter = new ScanReporter(null, null, timer, allocatedBefore, path);
-        try { AcquireDirectories(path, builder, reporter, token, recursive, validateIdentity: true); }
+        try
+        {
+            ScanRechecker.ValidateAncestors(path);
+            AcquireDirectories(path, builder, reporter, token, recursive, validateIdentity: true);
+        }
+        catch (Win32Exception error) when (builder.RootIndex < 0 && error.NativeErrorCode is 5 or 32 or 33)
+        {
+            // The requested folder itself may deny listing. Its readable parent
+            // can still establish the current name/type/ID, without claiming to
+            // have measured the folder or inheriting a replaced folder's tree.
+            string? parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path));
+            if (parent is null) throw;
+            ScanRechecker.ValidateAncestors(parent);
+            var siblings = new ScanBuilder();
+            AcquireDirectories(parent, siblings, reporter, token, recursive: false, validateIdentity: true);
+            var inventory = siblings.Build(parent, "Targeted Windows metadata", timer.Elapsed, allocatedBefore, token);
+            int? link = inventory.FindEntry(path);
+            if (inventory.WarningCount > 0 || link is null || !inventory.Entry(link.Value).IsDirectory) throw;
+            builder = new ScanBuilder { AllStreams = allStreams };
+            var record = inventory.Records[inventory.Entry(link.Value).FileIndex];
+            builder.RootIndex = builder.AddFile(record);
+            builder.Warn($"Could not read {path}: {error.Message}", record.Identity);
+            return builder.Build(path, "Targeted Windows metadata", timer.Elapsed, allocatedBefore, token);
+        }
         catch (Win32Exception ex) when (allowBasic && !allStreams && ex.NativeErrorCode is 1 or 50 or 87)
         {
             builder = new ScanBuilder { AllocationData = false };
@@ -136,8 +159,16 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
             for (int i = 0; i < inventory.Records.Length; i++)
             {
                 token.ThrowIfCancellationRequested();
+                // Directory enumeration already reported these failures. A
+                // second open only repeats the denial and cannot add coverage.
+                if (inventory.UnreadableEntries.Contains(inventory.Records[i].Identity)) continue;
                 string filePath = inventory.EntryPath(inventory.PrimaryLink(i)) ?? throw new IOException("A refreshed file path is unresolved.");
-                builder.ReplaceMetadata(ReadStreamMetadata(filePath, inventory.Records[i], ref buffer));
+                try { builder.ReplaceMetadata(ReadStreamMetadata(filePath, inventory.Records[i], ref buffer)); }
+                catch (Win32Exception error) when (error.NativeErrorCode is 5 or 32 or 33)
+                {
+                    builder.Warn($"Could not refresh metadata for {filePath}: {error.Message}", inventory.Records[i].Identity);
+                    diagnostic?.Invoke("stream-metadata-unavailable", new { Path = filePath, Win32Error = error.NativeErrorCode });
+                }
             }
         }
         finally { ArrayPool<byte>.Shared.Return(buffer); }

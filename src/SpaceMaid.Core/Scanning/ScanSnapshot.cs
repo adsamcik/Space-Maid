@@ -52,6 +52,8 @@ public sealed class ScanSnapshot : IOpportunityInventory
     public bool RetainsEarlierNtfsMetadata { get; init; }
     // Assigned only while constructing a snapshot, before publishing it.
     internal IReadOnlyList<NtfsJournalScope> JournalScopes { get; set; } = [];
+    // Direct failures, before incompleteness is propagated to parent folders.
+    internal IReadOnlySet<FileIdentity> UnreadableEntries { get; init; } = new HashSet<FileIdentity>();
 
     public string RootPath { get; }
     public string Backend { get; }
@@ -70,6 +72,7 @@ public sealed class ScanSnapshot : IOpportunityInventory
     public DateTime ScannedAtUtc { get; internal init; } = DateTime.UtcNow;
     public DateTime? LastRecheckUtc { get; internal init; }
     public IReadOnlyList<string> RecheckedPaths { get; internal init; } = [];
+    public IReadOnlyList<ScanRecheckRequest> IncompleteRecheckScopes { get; internal init; } = [];
     public long LogicalBytes => DirectoryLogical[RootIndex];
     public long AllocatedBytes => DirectoryAllocated[RootIndex];
 
