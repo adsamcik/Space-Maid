@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
@@ -17,6 +18,7 @@ public partial class OptimizationWindow : Window
     private readonly Action<OptimizationPolicy> _save;
     private readonly Func<OptimizationPreview, OptimizationPolicy, CancellationToken, Task<OptimizationResult>> _run;
     private readonly List<RuleRow> _rules;
+    private readonly ObservableCollection<ExclusionRow> _exclusions;
     private OptimizationPreview? _preview;
     private OptimizationPolicy? _previewPolicy;
     private CancellationTokenSource? _work;
@@ -36,7 +38,9 @@ public partial class OptimizationWindow : Window
         ScopeText.Text = scan.RootPath;
         DaysBox.Text = policy.KeepRecentDays.ToString(CultureInfo.InvariantCulture);
         LimitBox.Text = (policy.MaxBytesPerRun / (1024 * 1024)).ToString(CultureInfo.InvariantCulture);
-        ExclusionsBox.Text = string.Join(Environment.NewLine, policy.ExcludedPaths);
+        _exclusions = new(policy.ExcludedPaths.Select(path => new ExclusionRow(path)));
+        ExclusionsList.ItemsSource = _exclusions;
+        UpdateExclusionsView();
         _rules = findings.Where(f => f.AutomaticCleanup is not null)
             .DistinctBy(f => f.AutomaticCleanup!.ConsentKey(f.ProviderId))
             .Select(f => new RuleRow(f.AutomaticCleanup!.ConsentKey(f.ProviderId), f.AutomaticCleanup.Name,
@@ -60,7 +64,7 @@ public partial class OptimizationWindow : Window
         if (AutomaticBox.IsChecked == true && rules.Length == 0) throw new ArgumentException("Select at least one rule before enabling automatic optimization.");
         return (_basePolicy with { Enabled = AutomaticBox.IsChecked == true, ScopePath = _scan.RootPath, KeepRecentDays = days,
             MaxBytesPerRun = (long)mib * 1024 * 1024, EnabledRules = rules,
-            ExcludedPaths = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }).Validate();
+            ExcludedPaths = _exclusions.Select(row => row.Path).ToArray() }).Validate();
     }
 
     private async void Preview_Click(object sender, RoutedEventArgs e)
@@ -79,6 +83,7 @@ public partial class OptimizationWindow : Window
             FileList.ItemsSource = _preview.Files.Select(f => new DisplayFile(f.Path, Path.GetRelativePath(_scan.RootPath, f.Path),
                 SizeText.Format(f.EstimatedBytes), f.Rule.Name + (f.Evidence?.Variant is { Length: > 0 } variant && variant != "." ? " · " + variant : ""), f.ContainerPath)).ToArray();
             ShowResults(_preview.Skipped);
+            GeneratedFilesTab.IsSelected = true;
             PreviewText.Text = $"{_preview.Files.Count:N0} files · {SizeText.Format(_preview.EstimatedBytes)}"
                 + (_preview.UsesLogicalSize ? " logical size" : " estimated on disk") + (_preview.CoverageComplete ? "" : " · Partial inspection");
             StatusText.Text = $"{_preview.ExaminedEntries:N0} entries checked. Only files with verified producer evidence are eligible.";
@@ -117,20 +122,97 @@ public partial class OptimizationWindow : Window
 
     private void SetWorking(bool busy)
     {
-        AutomaticBox.IsEnabled = PolicyControls.IsEnabled = RuleList.IsEnabled = PreviewButton.IsEnabled = SaveButton.IsEnabled = !busy;
-        RunButton.IsEnabled = !busy && _preview?.Files.Count > 0;
+        AutomaticBox.IsEnabled = PolicyControls.IsEnabled = ExclusionControls.IsEnabled = RuleList.IsEnabled = PreviewButton.IsEnabled = SaveButton.IsEnabled = !busy;
+        UpdatePreviewActions();
         CloseButton.Content = busy ? "Cancel" : "Close";
+    }
+
+    private void PreviewSelection_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => UpdatePreviewActions();
+    private void UpdatePreviewActions()
+    {
+        if (RunButton is null) return;
+        RunButton.IsEnabled = _work is null && GeneratedFilesTab.IsSelected && _preview?.Files.Count > 0;
+        KeepFileButton.IsEnabled = KeepFolderButton.IsEnabled = _work is null && GeneratedFilesTab.IsSelected && FileList.SelectedItem is DisplayFile;
     }
     private void KeepFile_Click(object sender, RoutedEventArgs e) => KeepSelected(folder: false);
     private void KeepFolder_Click(object sender, RoutedEventArgs e) => KeepSelected(folder: true);
     private void KeepSelected(bool folder)
     {
         if (_work is not null || FileList.SelectedItem is not DisplayFile selected) return;
-        string path = folder ? selected.Container : selected.Path;
-        var exclusions = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        ExclusionsBox.Text = string.Join(Environment.NewLine, exclusions.Append(path).Distinct(StringComparer.OrdinalIgnoreCase));
+        try { AddExclusions([folder ? selected.Container : selected.Path]); }
+        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = "Could not add exclusion. " + error.Message; }
+    }
+
+    private void AddExcludedFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_work is not null) return;
+        try
+        {
+            var picker = new Microsoft.Win32.OpenFolderDialog { Title = "Exclude folders and their contents", InitialDirectory = _scan.RootPath, Multiselect = true };
+            if (picker.ShowDialog(this) == true) AddExclusions(picker.FolderNames);
+        }
+        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = "Could not add exclusions. " + error.Message; }
+    }
+
+    private void AddExcludedFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if (_work is not null) return;
+        try
+        {
+            var picker = new Microsoft.Win32.OpenFileDialog { Title = "Exclude files", InitialDirectory = _scan.RootPath, Multiselect = true, CheckFileExists = true };
+            if (picker.ShowDialog(this) == true) AddExclusions(picker.FileNames);
+        }
+        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = "Could not add exclusions. " + error.Message; }
+    }
+
+    internal void AddExclusions(IEnumerable<string> paths)
+    {
+        if (_work is not null) return;
+        var additions = paths.Select(OptimizationPolicy.NormalizePath).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(path => !_exclusions.Any(row => row.Path.Equals(path, StringComparison.OrdinalIgnoreCase))).ToArray();
+        if (_exclusions.Count + additions.Length > 256) throw new ArgumentException("Keep up to 256 excluded locations. Remove an exclusion before adding more.");
+        if (additions.Length == 0) { ExclusionsTab.IsSelected = true; StatusText.Text = "Already excluded."; return; }
+        foreach (string path in additions) _exclusions.Add(new(path));
+        ExclusionsChanged();
+        ExclusionsList.SelectedItem = _exclusions[^1];
+        ExclusionsList.ScrollIntoView(_exclusions[^1]);
+    }
+
+    private void RemoveExclusion_Click(object sender, RoutedEventArgs e)
+    {
+        if (_work is not null || sender is not System.Windows.Controls.Button { DataContext: ExclusionRow row } button) return;
+        int index = _exclusions.IndexOf(row);
+        bool restoreFocus = button.IsKeyboardFocusWithin;
+        if (!_exclusions.Remove(row)) return;
+        ExclusionsChanged();
+        if (restoreFocus)
+        {
+            if (_exclusions.Count == 0) AddExcludedFolderButton.Focus();
+            else { ExclusionsList.SelectedIndex = Math.Min(index, _exclusions.Count - 1); ExclusionsList.Focus(); }
+        }
+    }
+
+    private void UpdateExclusionsView()
+    {
+        ExclusionsTab.Header = _exclusions.Count == 0 ? "Excluded locations" : $"Excluded locations ({_exclusions.Count})";
+        NoExclusionsText.Visibility = _exclusions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ExclusionsList.Visibility = _exclusions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ExclusionsChanged()
+    {
+        UpdateExclusionsView(); ExclusionsTab.IsSelected = true;
         _preview = null; _cursor = 0; RunButton.IsEnabled = false;
-        StatusText.Text = "Excluded this location. Preview again; save settings to keep the exclusion for automatic runs.";
+        FileList.ItemsSource = ResultList.ItemsSource = null;
+        PreviewButton.Content = "Preview";
+        PreviewText.Text = "Exclusions changed. Preview again.";
+        StatusText.Text = "Save settings to keep these exclusions for automatic runs.";
+    }
+
+    internal sealed record ExclusionRow(string Path)
+    {
+        public string Name => System.IO.Path.GetFileName(Path) is { Length: > 0 } name ? name : Path;
+        public string ParentPath => System.IO.Path.GetDirectoryName(Path) ?? "";
     }
     internal sealed record DisplayFile(string Path, string DisplayPath, string Size, string Rule, string Container);
     private void ShowResults(IEnumerable<OptimizationSkipped> results) => ResultList.ItemsSource = results.Select(r =>

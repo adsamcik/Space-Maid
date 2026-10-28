@@ -4,6 +4,8 @@ Scan a location and wait for the scan to finish, then choose **Auto optimize**. 
 
 Generated-file eviction permanently deletes verified resources; regeneration replaces undo. Ordinary folder cleanup still uses the Recycle Bin. Keep a file or its containing resource with **Keep file** / **Keep folder**, then save the exclusion for automatic runs.
 
+Under **Excluded locations**, use **Add folders…** or **Add files…** to browse for exclusions. Folders include their contents. Remove individual entries with **Remove**, then preview again and save settings.
+
 ## Producer evidence
 
 Names and age only identify candidates. The host requires a supported producer contract, readable inputs, current native identities and exact content verification before eviction. Unknown formats and incomplete evidence remain protected.

@@ -22,9 +22,6 @@
                 <TextBox x:Name="LimitBox" Width="65" VerticalContentAlignment="Center" AutomationProperties.Name="Maximum megabytes per optimization run"/>
                 <TextBlock Text="MiB · up to 500 files" VerticalAlignment="Center" Margin="6,0,0,0"/>
             </WrapPanel>
-            <Expander Header="Excluded locations" Margin="0,8,0,8">
-                <TextBox x:Name="ExclusionsBox" AcceptsReturn="True" Height="75" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" AutomationProperties.Name="Excluded absolute paths, one per line" ToolTip="Absolute local paths, one per line. A folder also excludes its contents."/>
-            </Expander>
         </StackPanel>
         <ScrollViewer Grid.Row="2" MaxHeight="100" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
             <ItemsControl x:Name="RuleList">
@@ -39,12 +36,15 @@
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <DockPanel Margin="0,0,0,8">
                 <Button x:Name="PreviewButton" DockPanel.Dock="Right" Content="Preview" Click="Preview_Click" Padding="14,5"/>
-                <Button DockPanel.Dock="Right" Content="Keep folder" Click="KeepFolder_Click" Padding="10,5" Margin="0,0,8,0"/>
-                <Button DockPanel.Dock="Right" Content="Keep file" Click="KeepFile_Click" Padding="10,5" Margin="0,0,8,0"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding IsSelected, ElementName=ExclusionsTab}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                    <Button x:Name="KeepFileButton" Content="Keep file" Click="KeepFile_Click" Padding="10,5" Margin="0,0,8,0"/>
+                    <Button x:Name="KeepFolderButton" Content="Keep folder" Click="KeepFolder_Click" Padding="10,5" Margin="0,0,8,0"/>
+                </StackPanel>
                 <TextBlock x:Name="PreviewText" Text="Select rules, then preview the exact files." TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
             </DockPanel>
-            <TabControl Grid.Row="1">
-                <TabItem Header="Generated files">
+            <TabControl Grid.Row="1" SelectionChanged="PreviewSelection_Changed">
+                <TabItem x:Name="GeneratedFilesTab" Header="Generated files">
                     <DataGrid x:Name="FileList" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Single" GridLinesVisibility="None" EnableRowVirtualization="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="File" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
@@ -60,6 +60,29 @@
                         <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
                     </DataGridTextColumn><DataGridTextColumn Header="Result" Binding="{Binding Reason}" Width="*"/></DataGrid.Columns>
                 </DataGrid></TabItem>
+                <TabItem x:Name="ExclusionsTab" Header="Excluded locations">
+                    <Grid x:Name="ExclusionControls" Margin="8">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button x:Name="AddExcludedFolderButton" Content="Add folders…" Click="AddExcludedFolder_Click" Padding="10,4" Margin="0,0,8,0"/>
+                            <Button Content="Add files…" Click="AddExcludedFiles_Click" Padding="10,4"/>
+                            <TextBlock Text="Folders include their contents." FontSize="12" Opacity="0.7" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock x:Name="NoExclusionsText" Grid.Row="1" Text="Nothing excluded." FontSize="13" Opacity="0.7" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <ListBox x:Name="ExclusionsList" Grid.Row="1" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Excluded files and folders">
+                            <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style></ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate><DataTemplate>
+                                <DockPanel ToolTip="{Binding Path}" Margin="0,3">
+                                    <Button DockPanel.Dock="Right" Content="Remove" Click="RemoveExclusion_Click" Padding="8,3" Margin="10,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="{Binding Path, StringFormat='Remove exclusion {0}'}"/>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="13"/>
+                                        <TextBlock Text="{Binding ParentPath}" TextTrimming="CharacterEllipsis" FontSize="11" Opacity="0.7"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </DataTemplate></ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </TabItem>
             </TabControl>
         </Grid>
         <Grid Grid.Row="4" Margin="0,12,0,0">

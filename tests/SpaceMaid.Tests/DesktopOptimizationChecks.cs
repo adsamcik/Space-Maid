@@ -13,6 +13,7 @@ public sealed partial class DesktopTests
 {
     private static void CheckOptimization(Application app, string artifactRoot)
     {
+        CheckOptimizationExclusions(app, artifactRoot);
         using var fixture = new TestDirectory();
         using var settingsFixture = new TestDirectory();
         for (int i = 0; i < 24; i++) OptimizationTests.MakePython(fixture.Path, $"module_{i:00}");
