@@ -41,7 +41,7 @@ internal sealed class ExtensionInventory(Func<ScanSnapshot?> currentScan, Func<b
             return ReferenceEquals(currentScan(), scan) && !isScanStale() ? summary : null;
         }
         using var discovery = beginDiscovery();
-        var measured = await _operations.MeasureFolderAsync(path, token, diagnostic).ConfigureAwait(false);
+        var measured = await _operations.MeasureFolderAsync(path, token, diagnostic, currentScan()).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         return new InventoryFolderSize(measured.LogicalBytes, measured.HasAllocationData ? measured.AllocatedBytes : null,
             !measured.RootEntry.IsIncomplete && measured.WarningCount == 0, measured.ScannedAtUtc, measured.Backend, SizeWarnings(measured));

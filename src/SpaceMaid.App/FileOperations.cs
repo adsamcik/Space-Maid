@@ -7,9 +7,12 @@ namespace SpaceMaid.App;
 
 // Shared host entrypoint. Backend availability is evaluated per request; only
 // metadata uses NTFS. Shell and provider operations retain their live guards.
-internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSource = null, RecycleBinService? recycleBins = null)
+internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSource = null, RecycleBinService? recycleBins = null,
+    Func<ScanSnapshot?>? inventory = null)
 {
     private readonly RecycleBinService _recycleBins = recycleBins ?? new();
+    private readonly Dictionary<string, WeakReference<ScanSnapshot>> _measurements = new(StringComparer.Ordinal);
+    private readonly object _measurementGate = new();
 
     private INtfsLayoutSource? MetadataSource() => ntfsSource?.Invoke()
         ?? (Elevation.IsAdministrator ? new NativeNtfsLayoutSource() : null);
@@ -23,9 +26,23 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
             preferFast: source is not null, diagnostic: diagnostic, fastUnavailableReason: fastUnavailableReason);
     }
 
-    public Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default,
-        Action<string, object>? diagnostic = null)
-        => new VolumeScanner(MetadataSource()).MeasureFolderAsync(path, token, diagnostic);
+    public async Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default,
+        Action<string, object>? diagnostic = null, ScanSnapshot? previous = null)
+    {
+        path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        lock (_measurementGate)
+            if (_measurements.TryGetValue(path, out var cached) && cached.TryGetTarget(out var snapshot)
+                && (previous is null || snapshot.ScannedAtUtc >= previous.ScannedAtUtc)) previous = snapshot;
+        previous ??= inventory?.Invoke();
+        var measured = await new VolumeScanner(MetadataSource()).MeasureFolderAsync(path, token, diagnostic, previous).ConfigureAwait(false);
+        lock (_measurementGate)
+        {
+            // Do not retain a second large inventory for each extension/app.
+            if (_measurements.Count >= 64) _measurements.Remove(_measurements.Keys.First());
+            _measurements[path] = new(measured);
+        }
+        return measured;
+    }
 
     public Task<ScanSnapshot> RecheckAsync(ScanSnapshot scan, IEnumerable<ScanRecheckRequest> requests,
         CancellationToken token = default, Action<string, object>? diagnostic = null)
@@ -42,7 +59,7 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
         // Keep the selected identity, but obtain confirmation sizes from just
         // this folder. Unrelated stale inventory does not prevent recycling.
         var selected = await Task.Run(() => FolderDeletionTarget.FromScan(scan, link), token);
-        var current = await MeasureFolderAsync(selected.Path, token, diagnostic);
+        var current = await MeasureFolderAsync(selected.Path, token, diagnostic, scan);
         return await Task.Run(() =>
         {
             selected.ValidateCurrent();

@@ -3,7 +3,7 @@ using System.Text;
 
 namespace SpaceMaid.Core.Scanning;
 
-public enum ScanFrameKind : ushort { Hello = 1, Request = 2, Batch = 3, Complete = 4, Failure = 5, Cancel = 6, Cancelled = 7, FilesRequest = 8 }
+public enum ScanFrameKind : ushort { Hello = 1, Request = 2, Batch = 3, Complete = 4, Failure = 5, Cancel = 6, Cancelled = 7, FilesRequest = 8, JournalRequest = 9 }
 
 // A bounded, versioned stream protocol. Payloads are binary metadata, never
 // serialized paths/objects. Only serial read-only scans and cancellation.
@@ -13,8 +13,26 @@ public static class ScanPipeProtocol
     public const int MaximumPayload = 64 * 1024 * 1024 + 16;
     public const int MaximumFileIds = 1024;
     public const int MaximumFilesRequestPayload = 15 + 8 * MaximumFileIds;
-    public const ushort Version = 3;
+    public const ushort Version = 4;
     private const uint Magic = 0x534D4149;
+
+    public static byte[] CreateJournalRequest(long request, string volume, NtfsJournalCheckpoint? since)
+    {
+        if (volume.Length != 3 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':' || volume[2] != '\\')
+            throw new InvalidDataException("Only a local NTFS drive root is accepted.");
+        byte[] payload = new byte[since is null ? 11 : 35];
+        BinaryPrimitives.WriteInt64LittleEndian(payload, request);
+        Encoding.ASCII.GetBytes(volume).CopyTo(payload, 8);
+        if (since is { } checkpoint) NtfsChangeJournal.WriteCheckpoint(payload.AsSpan(11), checkpoint);
+        return payload;
+    }
+
+    internal static NtfsJournalCheckpoint? ReadJournalRequest(ReadOnlySpan<byte> payload) => payload.Length switch
+    {
+        11 => null,
+        35 => NtfsChangeJournal.ReadCheckpoint(payload[11..]),
+        _ => throw new InvalidDataException("Invalid NTFS journal request length.")
+    };
 
     public static byte[] CreateFilesRequest(long request, string volume, IReadOnlyList<FileIdentity> files)
     {

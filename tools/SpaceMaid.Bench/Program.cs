@@ -30,7 +30,7 @@ if (args.Length == 1 && args[0] == "--classify")
 
 if (args.Length == 0)
 {
-    Console.WriteLine("Usage: SpaceMaid.Bench <drive-or-folder> [--standard] [--log-directory <path>] | --classify");
+    Console.WriteLine("Usage: SpaceMaid.Bench <drive-or-folder> [--standard] [--recheck] [--log-directory <path>] | --classify");
     return 1;
 }
 using var cancellation = new CancellationTokenSource();
@@ -42,9 +42,20 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
 try
 {
     var timer = Stopwatch.StartNew();
-    var scan = await new VolumeScanner().ScanAsync(args[0], cancellationToken: cancellation.Token,
+    var reader = new VolumeScanner(args.Contains("--standard") ? null : new NativeNtfsLayoutSource());
+    var scan = await reader.ScanAsync(args[0], cancellationToken: cancellation.Token,
         preferFast: !args.Contains("--standard"), diagnostic: log is null ? null : d => log.Record(d.Event, d));
+    timer.Stop();
     log?.Record("benchmark-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, scan.Backend, scan.FallbackReason });
+    object? recheck = null;
+    if (args.Contains("--recheck"))
+    {
+        var recheckTimer = Stopwatch.StartNew();
+        var refreshed = await reader.MeasureFolderAsync(args[0], cancellation.Token,
+            (name, data) => log?.Record(name, data), scan);
+        recheck = new { refreshed.Backend, refreshed.FileCount, refreshed.LogicalBytes, refreshed.AllocatedBytes,
+            ElapsedMs = recheckTimer.Elapsed.TotalMilliseconds, refreshed.WarningCount };
+    }
     Console.WriteLine(JsonSerializer.Serialize(new {
         scan.RootPath, scan.Backend, scan.FallbackReason, scan.FileCount, scan.RegularFileCount,
         scan.DirectoryCount, scan.NameCount, scan.WarningCount,
@@ -56,7 +67,7 @@ try
         scan.Metrics.ManagedAllocatedBytes,
         PeakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64,
         scan.Warnings,
-        LogPath = log?.FilePath, LogError = log?.Error
+        Recheck = recheck, LogPath = log?.FilePath, LogError = log?.Error
     }, new JsonSerializerOptions { WriteIndented = true }));
     return 0;
 }

@@ -29,13 +29,20 @@ internal static class ScanPipeSession
                         if (request == activeRequest) active?.Cancel();
                     continue;
                 }
-                if (frame.Kind == ScanFrameKind.Request ? frame.Length != 11
-                    : frame.Kind != ScanFrameKind.FilesRequest || frame.Length is < 23 or > ScanPipeProtocol.MaximumFilesRequestPayload)
+                bool valid = frame.Kind switch
+                {
+                    ScanFrameKind.Request => frame.Length == 11,
+                    ScanFrameKind.FilesRequest => frame.Length is >= 23 and <= ScanPipeProtocol.MaximumFilesRequestPayload,
+                    ScanFrameKind.JournalRequest => frame.Length is 11 or 35,
+                    _ => false
+                };
+                if (!valid)
                     throw new InvalidDataException("Unexpected scan command.");
                 byte[] payload = new byte[frame.Length]; pipe.ReadExactly(payload);
                 long id = BinaryPrimitives.ReadInt64LittleEndian(payload);
                 string volume = Encoding.ASCII.GetString(payload, 8, 3);
                 FileIdentity[]? files = frame.Kind == ScanFrameKind.FilesRequest ? ScanPipeProtocol.ReadFilesRequest(payload) : null;
+                NtfsJournalCheckpoint? since = frame.Kind == ScanFrameKind.JournalRequest ? ScanPipeProtocol.ReadJournalRequest(payload) : null;
                 lock (stateGate)
                 {
                     if (active is not null || id <= lastRequest)
@@ -43,7 +50,7 @@ internal static class ScanPipeSession
                     lastRequest = activeRequest = id;
                     active = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
                     var requestCancellation = active;
-                    worker = Task.Run(() => Acquire(id, volume, files, requestCancellation));
+                    worker = Task.Run(() => Acquire(id, volume, files, frame.Kind == ScanFrameKind.JournalRequest, since, requestCancellation));
                 }
             }
         }
@@ -56,7 +63,8 @@ internal static class ScanPipeSession
             await worker.ConfigureAwait(false);
         }
 
-        void Acquire(long id, string volume, FileIdentity[]? files, CancellationTokenSource cancellation)
+        void Acquire(long id, string volume, FileIdentity[]? files, bool journal, NtfsJournalCheckpoint? since,
+            CancellationTokenSource cancellation)
         {
             Exception? failure = null;
             try
@@ -67,7 +75,13 @@ internal static class ScanPipeSession
                     cancellation.Token.ThrowIfCancellationRequested();
                     ScanPipeProtocol.WriteBlock(pipe, id, block);
                 }
-                if (files is null) source.Acquire(volume, Consume, cancellation.Token);
+                if (journal)
+                {
+                    var timer = System.Diagnostics.Stopwatch.StartNew();
+                    var changes = source.ReadJournal(volume, since, cancellation.Token);
+                    Consume(new(NtfsChangeJournal.Encode(changes), timer.Elapsed.TotalMilliseconds));
+                }
+                else if (files is null) source.Acquire(volume, Consume, cancellation.Token);
                 else source.AcquireFiles(volume, files, Consume, cancellation.Token);
             }
             catch (Exception ex) { failure = ex; }

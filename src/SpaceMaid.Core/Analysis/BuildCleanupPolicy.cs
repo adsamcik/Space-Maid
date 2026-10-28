@@ -163,17 +163,18 @@ public static class BuildCleanupProtection
     // Last-minute checks are scoped to the target, not merged into the full
     // inventory. Builds can become active while a large batch is progressing.
     public static async Task<BuildCleanupAssessment> CheckCurrentAsync(Opportunity location, BuildCleanupPolicy policy,
-        CancellationToken token = default)
+        CancellationToken token = default, ScanSnapshot? previous = null, INtfsLayoutSource? layoutSource = null)
     {
-        var reader = new VolumeScanner();
-        var output = await reader.ReadDirectoryAsync(location.Path, true, token, allStreams: false, allowBasic: true).ConfigureAwait(false);
+        var reader = new VolumeScanner(layoutSource);
+        bool allStreams = previous?.IncludesAllDataStreams == true;
+        var output = await reader.ReadDirectoryAsync(location.Path, true, token, allStreams, allowBasic: true, previous: previous).ConfigureAwait(false);
         if (output.WarningCount > 0) return new(CleanupReadiness.Protected, null, "Current activity could not be checked · Kept");
         var current = location with { DirectoryIndex = output.RootIndex, IsBuildOutput = true };
         var assessment = Assess(output, [current], policy, token)[output.RootIndex];
         string? parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(location.Path));
         if (parent is not null && assessment.State != CleanupReadiness.Protected)
         {
-            var source = await reader.ReadDirectoryAsync(parent, false, token, allStreams: false, allowBasic: true).ConfigureAwait(false);
+            var source = await reader.ReadDirectoryAsync(parent, false, token, allStreams, allowBasic: true, previous: previous).ConfigureAwait(false);
             if (source.WarningCount > 0) return new(CleanupReadiness.Protected, assessment.LastActivityUtc, "Project activity could not be checked · Kept");
             DateTime cutoff = DateTime.UtcNow.AddDays(-policy.KeepRecentDays);
             foreach (int link in source.Children(source.RootIndex))

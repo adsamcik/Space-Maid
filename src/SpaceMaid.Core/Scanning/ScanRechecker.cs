@@ -27,7 +27,8 @@ public static class ScanRechecker
             if (!visited.Add(path)) continue;
             ValidateAncestors(path);
             diagnostic?.Invoke("recheck-read-start", new { Path = path, request.Recursive });
-            var fresh = await scanner.ReadDirectoryAsync(path, request.Recursive, token, scan.IncludesAllDataStreams, diagnostic: diagnostic);
+            var fresh = await scanner.ReadDirectoryAsync(path, request.Recursive, token, scan.IncludesAllDataStreams,
+                diagnostic: diagnostic, previous: scan);
             if (fresh.WarningCount > 0) throw new IOException("The recheck was incomplete: " + string.Join(" ", fresh.Warnings));
             replacements.Add(new(path, request.Recursive, fresh));
             diagnostic?.Invoke("recheck-read-complete", new { Path = path, fresh.FileCount, fresh.NameCount, fresh.Backend,
@@ -188,7 +189,8 @@ public static class ScanRechecker
             result.FirstLinks, result.ChildHeads, result.NextLinks, result.DirectoryLogical, result.DirectoryAllocated,
             scan.IncludesAllDataStreams, true, false, result.Warnings, scan.Metrics, result.EntryFlags, result.WarningCount, result.DirectoryCount, result.FallbackReason)
         { ScannedAtUtc = scan.ScannedAtUtc, LastRecheckUtc = DateTime.UtcNow,
-            RecheckedPaths = replacements.Select(r => r.Path).ToArray(), RetainsEarlierNtfsMetadata = retainedNtfsMetadata };
+            RecheckedPaths = replacements.Select(r => r.Path).ToArray(), RetainsEarlierNtfsMetadata = retainedNtfsMetadata,
+            JournalScopes = VolumeScanner.MergeJournalScopes(scan, replacements) };
 
         void AddName(FileRecord file, FileIdentity parent, string name)
         {

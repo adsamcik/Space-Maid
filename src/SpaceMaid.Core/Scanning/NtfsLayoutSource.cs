@@ -15,9 +15,11 @@ public interface INtfsLayoutSource
     void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token);
     void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token) =>
         throw new NotSupportedException("This metadata source does not support scoped NTFS queries.");
+    NtfsJournalChanges ReadJournal(string volume, NtfsJournalCheckpoint? since, CancellationToken token) =>
+        throw new NotSupportedException("This metadata source does not support the NTFS change journal.");
 }
 
-public sealed class NativeNtfsLayoutSource : INtfsLayoutSource
+public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
 {
     public static string ValidateVolume(string volume)
     {

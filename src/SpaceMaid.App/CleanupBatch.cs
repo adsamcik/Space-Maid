@@ -109,7 +109,7 @@ internal static class CleanupBatch
                             var assessment = currentAssessments[build.DirectoryIndex];
                             if (assessment.State == CleanupReadiness.Protected) throw new InvalidOperationException(assessment.Reason);
                             if (!build.IsBuildOutput) continue;
-                            var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token);
+                            var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token, validation.Snapshot);
                             if (live.State == CleanupReadiness.Protected
                                 || live.State == CleanupReadiness.NeedsReview && assessment.State == CleanupReadiness.Ready)
                                 throw new InvalidOperationException(live.Reason);

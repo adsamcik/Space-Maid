@@ -31,5 +31,6 @@ internal sealed partial class FileOperations
     // Activity needs current directory timestamps, rather than data-stream
     // allocation. The existing directory-only reader avoids extra NTFS queries.
     public Task<BuildCleanupAssessment> CheckBuildActivityAsync(Opportunity location, BuildCleanupPolicy policy,
-        CancellationToken token = default) => BuildCleanupProtection.CheckCurrentAsync(location, policy, token);
+        CancellationToken token = default, ScanSnapshot? previous = null)
+        => BuildCleanupProtection.CheckCurrentAsync(location, policy, token, previous ?? inventory?.Invoke(), MetadataSource());
 }

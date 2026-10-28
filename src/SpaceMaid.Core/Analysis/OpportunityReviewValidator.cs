@@ -83,7 +83,7 @@ public static class OpportunityReviewValidator
                 }
                 var fresh = await reader.ReadDirectoryAsync(scope.Path, scope.Recursive, readToken,
                     allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData,
-                    diagnostic: (name, data) => { lock (reportGate) diagnostic?.Invoke(name, data); }).ConfigureAwait(false);
+                    diagnostic: (name, data) => { lock (reportGate) diagnostic?.Invoke(name, data); }, previous: scan).ConfigureAwait(false);
                 if (fresh.WarningCount > 0) throw new IOException("The selected scope could not be fully validated: " + string.Join(" ", fresh.Warnings));
                 lock (reportGate)
                 {
@@ -306,6 +306,12 @@ public static class OpportunityReviewValidator
         {
             _gate.Wait(token);
             try { source.AcquireFiles(volume, files, consume, token); }
+            finally { _gate.Release(); }
+        }
+        public NtfsJournalChanges ReadJournal(string volume, NtfsJournalCheckpoint? since, CancellationToken token)
+        {
+            _gate.Wait(token);
+            try { return source.ReadJournal(volume, since, token); }
             finally { _gate.Release(); }
         }
         public void Dispose() => _gate.Dispose();

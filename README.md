@@ -22,7 +22,7 @@ Release builds check this repository's GitHub Releases daily when enabled, inclu
 
 Enable fast scanning when prompted to authorize the read-only NTFS helper. The app stays unelevated; standard scanning remains available if you decline.
 
-The same helper accelerates folder scans, cleanup review, rechecks and app-size refreshes with scoped NTFS metadata queries. Current folder membership and cleanup safeguards are still checked; unsupported queries fall back to standard metadata reads.
+The same helper accelerates folder scans, cleanup review, rechecks and app-size refreshes with scoped NTFS metadata queries. Rechecks use cached file identities and the NTFS change journal to reread changed folders and new branches, while checking current sizes in batches. A verified move to the Recycle Bin can reuse the folder's existing tree. Journal gaps, hard-link changes and unsupported queries fall back to focused metadata reads; cleanup safeguards remain live. No background rescanning is required.
 
 The host's shared `FileOperations` API chooses the available metadata backend per request. Scanning, folder measurement, cleanup review/planning, worktree and build-activity checks, refreshes and extension metadata discovery use that service. Photo discovery streams bounded batches of current directory metadata; size measurements can use scoped NTFS queries. Recycling, emptying the bin and making files online-only use their Windows Shell or sync-provider APIs through the same entrypoint, retaining confirmation and live identity checks. Callers do not select backends or request elevation themselves.
 

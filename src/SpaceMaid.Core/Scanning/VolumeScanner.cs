@@ -7,15 +7,15 @@ using System.IO.Enumeration;
 
 namespace SpaceMaid.Core.Scanning;
 
-public sealed class VolumeScanner(INtfsLayoutSource? scopedSource = null)
+public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null)
 {
     // Scoped app-folder measurements need current stream sizes: NTFS directory
     // entries for other hard-link names can retain earlier EOF/allocation values.
     // Attribute-only handles also include named DATA streams, without content IO.
     public async Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default,
-        Action<string, object>? diagnostic = null)
+        Action<string, object>? diagnostic = null, ScanSnapshot? previous = null)
     {
-        try { return await ReadDirectoryAsync(path, recursive: true, token, allStreams: true, diagnostic: diagnostic).ConfigureAwait(false); }
+        try { return await ReadDirectoryAsync(path, recursive: true, token, allStreams: true, diagnostic: diagnostic, previous: previous).ConfigureAwait(false); }
         catch (Win32Exception error) when (error.NativeErrorCode is 1 or 50 or 87)
         { return await ReadDirectoryAsync(path, recursive: true, token, allowBasic: true).ConfigureAwait(false); }
     }
@@ -23,12 +23,28 @@ public sealed class VolumeScanner(INtfsLayoutSource? scopedSource = null)
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, bool preferFast = true, Action<ScanDiagnostic>? diagnostic = null,
         INtfsLayoutSource? layoutSource = null, string? fastUnavailableReason = null) =>
-        Task.Run(() => Scan(path, progress, cancellationToken, preferFast, diagnostic, layoutSource ?? scopedSource, fastUnavailableReason), cancellationToken);
+        Task.Run(() =>
+        {
+            var source = layoutSource ?? scopedSource ?? (preferFast ? new NativeNtfsLayoutSource() : null);
+            var reader = source == scopedSource ? this : new VolumeScanner(source);
+            var checkpoint = reader.CaptureJournal(path, cancellationToken, null);
+            var snapshot = Scan(path, progress, cancellationToken, preferFast, diagnostic, source, fastUnavailableReason);
+            AttachJournal(snapshot, true, checkpoint);
+            return snapshot;
+        }, cancellationToken);
 
     // Parent rechecks read immediate names only, including at a drive root.
     internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token,
-        bool allStreams = false, bool allowBasic = false, Action<string, object>? diagnostic = null) => Task.Run(() =>
+        bool allStreams = false, bool allowBasic = false, Action<string, object>? diagnostic = null,
+        ScanSnapshot? previous = null) => Task.Run(() =>
+        allStreams && previous is not null ? TryReadIncremental(path, recursive, previous, token, diagnostic)
+            ?? ReadDirectoryCore(path, recursive, token, allStreams, allowBasic, diagnostic)
+            : ReadDirectoryCore(path, recursive, token, allStreams, allowBasic, diagnostic), token);
+
+    private ScanSnapshot ReadDirectoryCore(string path, bool recursive, CancellationToken token,
+        bool allStreams, bool allowBasic, Action<string, object>? diagnostic)
     {
+        var checkpoint = allStreams ? CaptureJournal(path, token, diagnostic) : null;
         var timer = Stopwatch.StartNew();
         long allocatedBefore = GC.GetTotalAllocatedBytes(false);
         var builder = new ScanBuilder();
@@ -46,8 +62,10 @@ public sealed class VolumeScanner(INtfsLayoutSource? scopedSource = null)
             backend = RefreshStreams(path, recursive, builder, scopedSource, timer, allocatedBefore, token, diagnostic)
                 ? "Fast NTFS scoped metadata" : "Targeted Windows stream metadata";
         }
-        return builder.Build(path, backend, timer.Elapsed, allocatedBefore, token);
-    }, token);
+        var snapshot = builder.Build(path, backend, timer.Elapsed, allocatedBefore, token);
+        AttachJournal(snapshot, recursive, checkpoint);
+        return snapshot;
+    }
 
     // Membership comes from fresh, identity-checked directory enumeration. The
     // helper supplies stream metadata only; its names cannot widen the scope.

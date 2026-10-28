@@ -69,6 +69,24 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
     public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
         => AcquireRequest(volume, null, consume, token);
 
+    public NtfsJournalChanges ReadJournal(string volume, NtfsJournalCheckpoint? since, CancellationToken token)
+    {
+        if (since is { } checkpoint) NtfsChangeJournal.ValidateCheckpoint(checkpoint);
+        NtfsJournalChanges? result = null;
+        AcquireRequest(volume, null, block =>
+        {
+            if (result is not null) throw new InvalidDataException("The helper returned multiple NTFS journal results.");
+            result = NtfsChangeJournal.Decode(block.Data.Span);
+        }, token, journal: true, since);
+        if (result is null) throw new InvalidDataException("The helper did not return an NTFS journal result.");
+        if (since is { } previous && (result.Checkpoint.VolumeSerial != previous.VolumeSerial
+            || result.Checkpoint.JournalId != previous.JournalId || result.Checkpoint.NextUsn < previous.NextUsn))
+            throw new InvalidDataException("The helper returned an unrelated NTFS journal result.");
+        if (since is null && result.Changes.Count != 0)
+            throw new InvalidDataException("The helper returned changes without a journal checkpoint request.");
+        return result;
+    }
+
     public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -78,7 +96,8 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
         AcquireRequest(volume, captured, consume, token);
     }
 
-    private void AcquireRequest(string volume, FileIdentity[]? files, Action<NtfsLayoutBlock> consume, CancellationToken token)
+    private void AcquireRequest(string volume, FileIdentity[]? files, Action<NtfsLayoutBlock> consume, CancellationToken token,
+        bool journal = false, NtfsJournalCheckpoint? since = null)
     {
         // Validation/cancellation before sending cannot poison the idle session.
         token.ThrowIfCancellationRequested();
@@ -88,9 +107,10 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
             token.ThrowIfCancellationRequested();
             if (!IsAvailable) throw new IOException("The fast-scan helper is no longer connected.");
             long id = ++_request;
-            ScanFrameKind kind = files is null ? ScanFrameKind.Request : ScanFrameKind.FilesRequest;
+            ScanFrameKind kind = journal ? ScanFrameKind.JournalRequest : files is null ? ScanFrameKind.Request : ScanFrameKind.FilesRequest;
             byte[] request;
-            if (files is null)
+            if (journal) request = ScanPipeProtocol.CreateJournalRequest(id, volume, since);
+            else if (files is null)
             {
                 request = new byte[11]; BinaryPrimitives.WriteInt64LittleEndian(request, id);
                 Encoding.ASCII.GetBytes(volume).CopyTo(request, 8);
@@ -123,6 +143,7 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
                     var frame = ScanPipeProtocol.ReadHeader(_pipe);
                     if (frame.Kind is not (ScanFrameKind.Batch or ScanFrameKind.Complete or ScanFrameKind.Cancelled or ScanFrameKind.Failure)
                         || frame.Kind == ScanFrameKind.Batch && frame.Length < 16
+                        || journal && frame.Kind == ScanFrameKind.Batch && frame.Length > 44 + NtfsChangeJournal.MaximumChanges * 24
                         || frame.Kind is ScanFrameKind.Complete or ScanFrameKind.Cancelled && frame.Length != 8
                         || frame.Kind == ScanFrameKind.Failure && frame.Length is not (>= 12 and <= 4108))
                         throw new InvalidDataException("Unexpected helper response.");

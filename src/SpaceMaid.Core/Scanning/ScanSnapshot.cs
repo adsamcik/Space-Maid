@@ -50,6 +50,8 @@ public sealed class ScanSnapshot : IOpportunityInventory
     internal char[] NameArena => _names;
     internal byte[] EntryFlags => _entryFlags;
     public bool RetainsEarlierNtfsMetadata { get; init; }
+    // Assigned only while constructing a snapshot, before publishing it.
+    internal IReadOnlyList<NtfsJournalScope> JournalScopes { get; set; } = [];
 
     public string RootPath { get; }
     public string Backend { get; }

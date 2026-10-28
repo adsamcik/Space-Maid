@@ -24,7 +24,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        Operations = new(() => _scanHelper?.IsAvailable == true ? _scanHelper : null);
+        Operations = new(() => _scanHelper?.IsAvailable == true ? _scanHelper : null, inventory: () => _snapshot);
         InitializeComponent();
         InitializeTreeColumns();
         Activated += Window_Activated;
