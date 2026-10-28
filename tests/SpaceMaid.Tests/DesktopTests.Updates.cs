@@ -33,8 +33,15 @@ public sealed partial class DesktopTests
             automatic.IsChecked = false; automatic.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.False(downloads.IsEnabled);
             automatic.IsChecked = true; automatic.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            manager.Release.PublishedUtc = DateTimeOffset.UtcNow.AddHours(-1);
             downloads.IsChecked = true; downloads.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => !updates.Busy, TimeSpan.FromSeconds(5));
+            Assert.False(updates.Ready); Assert.Equal(0, manager.Downloads);
+            Assert.Contains("24-hour protection", ((TextBlock)view.FindName("StatusText")).Text);
+            Assert.True(((Button)view.FindName("ActionButton")).IsEnabled);
+            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-protection-{theme}.png"), 430, 350);
+            manager.Release.PublishedUtc = DateTimeOffset.UtcNow.AddDays(-2);
+            check = updates.CheckAsync(); PumpUntil(() => check.IsCompleted, TimeSpan.FromSeconds(5)); check.GetAwaiter().GetResult();
             Assert.True(updates.AutomaticDownloads); Assert.True(updates.Ready);
             Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-{theme}.png"), 430, 330);
             var action = (Button)view.FindName("ActionButton");

@@ -93,8 +93,8 @@ public sealed class GitHubUpdateTests
         {
             prerelease = false, published_at = "2026-10-28T00:00:00Z", assets = new[]
             {
-                new { name = "releases.win.json", browser_download_url = root + "releases.win.json" },
-                new { name = target.FileName, browser_download_url = root + target.FileName }
+                new { name = "releases.win.json", browser_download_url = root + "releases.win.json", updated_at = "2026-10-27T00:00:00Z" },
+                new { name = target.FileName, browser_download_url = root + target.FileName, updated_at = "2026-10-28T00:30:00Z" }
             }
         } });
         var handler = new ResponseHandler(request => new(HttpStatusCode.OK)
@@ -113,6 +113,7 @@ public sealed class GitHubUpdateTests
             var update = await manager.CheckForUpdatesAsync();
             Assert.Equal("1.1.0", update!.TargetFullRelease.Version.ToString());
             Assert.Equal(target.SHA256, update.TargetFullRelease.SHA256);
+            Assert.Equal(DateTimeOffset.Parse("2026-10-29T00:30:00Z"), GitHubUpdateSource.AutomaticDownloadAfter(update.TargetFullRelease));
         }
         Assert.Equal(2, handler.Requests);
     }

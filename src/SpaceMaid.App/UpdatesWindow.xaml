@@ -9,7 +9,7 @@
         <ProgressBar x:Name="ProgressBar" Height="5" Minimum="0" Maximum="100" Margin="0,14,0,0" Visibility="Collapsed" />
         <CheckBox x:Name="AutomaticBox" Content="Check automatically each day" Margin="0,22,0,0" Click="Automatic_Click" />
         <CheckBox x:Name="DownloadBox" Content="Download updates automatically" Margin="0,10,0,0" Click="DownloadAutomatically_Click" />
-        <TextBlock Text="You choose when to restart and install." TextWrapping="Wrap" Opacity="0.65" Margin="0,10,0,0" />
+        <TextBlock Text="Automatic downloads wait 24 hours after release. You choose when to restart and install." TextWrapping="Wrap" Opacity="0.65" Margin="0,10,0,0" />
         <Expander x:Name="ErrorDetails" Header="Details" Visibility="Collapsed" Margin="0,14,0,0"><ScrollViewer MaxHeight="130"><TextBox x:Name="ErrorText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" /></ScrollViewer></Expander>
         <TextBlock x:Name="BusyHint" Text="Finish active jobs before restarting." Visibility="Collapsed" Opacity="0.65" Margin="0,18,0,0" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">

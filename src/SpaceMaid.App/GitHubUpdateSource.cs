@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json;
 using Velopack;
 using Velopack.Logging;
 using Velopack.Sources;
@@ -12,6 +13,49 @@ internal sealed class GitHubUpdateSource(string repository, bool prerelease, IFi
     : GithubSource(AppUpdates.RepositoryUrl(repository) ?? throw new ArgumentException("Invalid repository.", nameof(repository)),
         null, prerelease, downloader ?? new GitHubUpdateDownloader(repository))
 {
+    protected override async Task<GithubRelease[]> GetReleases(bool includePrereleases)
+    {
+        // Velopack does not retain package timestamps; keep the GitHub API's
+        // dates alongside each release so a new upload restarts the safety wait.
+        string response = await Downloader.DownloadString(
+            $"https://api.github.com/repos{RepoUri.AbsolutePath}/releases?per_page=10&page=1",
+            GetRequestHeaders("application/vnd.github+json")).ConfigureAwait(false);
+        using var json = JsonDocument.Parse(response);
+        var releases = new List<GithubRelease>();
+        foreach (var item in json.RootElement.EnumerateArray())
+        {
+            var release = item.Deserialize<GithubRelease>() ?? throw new InvalidDataException("Invalid GitHub release.");
+            if ((!includePrereleases && release.Prerelease) || (item.TryGetProperty("draft", out var draft) && draft.GetBoolean())) continue;
+            var modified = new Dictionary<string, DateTimeOffset?>(StringComparer.Ordinal);
+            foreach (var asset in item.GetProperty("assets").EnumerateArray())
+                modified.Add(asset.GetProperty("name").GetString()!, ReadDate(asset, "updated_at"));
+            releases.Add(new TimedRelease(release, ReadDate(item, "published_at"), modified));
+        }
+        return releases.OrderByDescending(release => release.PublishedAt).ToArray();
+    }
+
+    private static DateTimeOffset? ReadDate(JsonElement item, string property) => item.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.String && value.TryGetDateTimeOffset(out var date) ? date.ToUniversalTime() : null;
+
+    internal static DateTimeOffset? AutomaticDownloadAfter(VelopackAsset asset)
+    {
+        if (asset is not GitBaseAsset { Release: TimedRelease release } || release.PublishedUtc is not { } published
+            || !release.PackageModifiedUtc.TryGetValue(asset.FileName, out var changed) || changed is not { } modified) return null;
+        var latest = published > modified ? published : modified;
+        return latest <= DateTimeOffset.MaxValue.AddHours(-24) ? latest.AddHours(24) : null;
+    }
+
+    internal sealed class TimedRelease : GithubRelease
+    {
+        internal DateTimeOffset? PublishedUtc { get; set; }
+        internal Dictionary<string, DateTimeOffset?> PackageModifiedUtc { get; }
+        internal TimedRelease(GithubRelease release, DateTimeOffset? published, Dictionary<string, DateTimeOffset?> modified)
+        {
+            Name = release.Name; Prerelease = release.Prerelease; PublishedAt = release.PublishedAt; Assets = release.Assets;
+            PublishedUtc = published; PackageModifiedUtc = modified;
+        }
+    }
+
     public override async Task<VelopackAssetFeed> GetReleaseFeed(IVelopackLogger logger, string? appId, string channel,
         Guid? stagingId = null, VelopackAsset? latestLocalRelease = null)
     {

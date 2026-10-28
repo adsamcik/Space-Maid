@@ -130,6 +130,57 @@ public sealed class UpdateTests
     }
 
     [Theory]
+    [InlineData(1439, 2880, false)]
+    [InlineData(2880, 1439, false)]
+    [InlineData(1440, 1440, true)]
+    [InlineData(1441, 1441, true)]
+    [InlineData(-60, 2880, false)]
+    [InlineData(2880, -60, false)]
+    [InlineData(null, 2880, false)]
+    [InlineData(2880, null, false)]
+    public async Task AutomaticDownloadRequiresBothReleaseAndPackageToBe24HoursOld(int? publishedMinutes, int? changedMinutes, bool allowed)
+    {
+        using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
+        var manager = new StubUpdateManager(fixture.Path);
+        manager.Release.PublishedUtc = publishedMinutes is { } p ? clock.Now.AddMinutes(-p) : null;
+        manager.Release.PackageModifiedUtc[manager.Target.FileName] = changedMinutes is { } m ? clock.Now.AddMinutes(-m) : null;
+        using var updates = new AppUpdates(manager, Path.Join(fixture.Path, "settings.json"), Path.Join(fixture.Path, "Logs"), clock);
+        updates.SetAutomaticDownloads(true);
+        await updates.RunAutomaticAsync();
+        Assert.Equal(allowed, updates.Ready); Assert.Equal(allowed ? 1 : 0, manager.Downloads);
+        Assert.Equal("1.1.0", updates.AvailableVersion); Assert.Null(updates.Error);
+        if (!allowed)
+        {
+            Assert.Contains(publishedMinutes is null || changedMinutes is null ? "release age unavailable" : "24-hour protection", updates.Status);
+            await updates.DownloadAsync(); // A deliberate manual update can bypass the waiting period.
+            Assert.True(updates.Ready); Assert.Equal(1, manager.Downloads);
+        }
+    }
+
+    [Fact]
+    public async Task ProtectionPeriodIncludesTheExact24HourBoundaryAndRechecksPackageChanges()
+    {
+        using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
+        var manager = new StubUpdateManager(fixture.Path);
+        manager.Release.PublishedUtc = clock.Now.AddHours(-24).AddTicks(1);
+        manager.Release.PackageModifiedUtc[manager.Target.FileName] = clock.Now.AddHours(-48);
+        using var updates = new AppUpdates(manager, Path.Join(fixture.Path, "settings.json"), Path.Join(fixture.Path, "Logs"), clock);
+        updates.SetAutomaticDownloads(true);
+        await updates.CheckAsync(); Assert.Equal(0, manager.Downloads);
+        clock.Now = clock.Now.AddTicks(1);
+        await updates.CheckAsync(); Assert.Equal(1, manager.Downloads); Assert.True(updates.Ready);
+        var replacement = Target(); replacement.SHA256 = new string('B', 64);
+        manager.Target = FixtureSource.Attach(replacement, manager.Release);
+        // A new upload resets the wait, even on the same old release tag.
+        manager.Release.PackageModifiedUtc[manager.Target.FileName] = clock.Now;
+        await updates.CheckAsync(); Assert.Equal(1, manager.Downloads); Assert.False(updates.Ready);
+        clock.Now = clock.Now.AddHours(24);
+        await updates.RunAutomaticAsync(); Assert.Equal(2, manager.Downloads); Assert.True(updates.Ready);
+    }
+
+    [Theory]
     [InlineData("0.9.0")]
     [InlineData("1.0.0")]
     [InlineData("1.1.0-beta.1")]
@@ -231,14 +282,21 @@ public sealed class UpdateTests
 
     internal sealed class StubUpdateManager : UpdateManager
     {
-        internal VelopackAsset Target { get; } = UpdateTests.Target();
+        internal VelopackAsset Target { get; set; }
+        internal GitHubUpdateSource.TimedRelease Release { get; }
         internal int Downloads { get; private set; }
         internal int Checks { get; private set; }
         internal bool HoldDownload { get; set; }
         internal Exception? CheckError { get; set; }
         internal TaskCompletionSource DownloadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal StubUpdateManager(string path) : base(new SimpleFileSource(new DirectoryInfo(path)),
-            locator: new TestVelopackLocator("SpaceMaid", "1.0.0", path)) { }
+            locator: new TestVelopackLocator("SpaceMaid", "1.0.0", path))
+        {
+            var target = UpdateTests.Target();
+            var old = DateTimeOffset.UtcNow.AddDays(-2);
+            Release = new(new GithubRelease(), old, new() { [target.FileName] = old });
+            Target = FixtureSource.Attach(target, Release);
+        }
         public override Task<UpdateInfo?> CheckForUpdatesAsync()
         {
             Checks++;
@@ -251,5 +309,17 @@ public sealed class UpdateTests
             if (HoldDownload) await Task.Delay(Timeout.Infinite, cancelToken);
             progress?.Invoke(100);
         }
+    }
+
+    private sealed class FixtureSource : GithubSource
+    {
+        private FixtureSource() : base("https://github.com/owner/Space-Maid", null, true) { }
+        internal static VelopackAsset Attach(VelopackAsset asset, GithubRelease release) => new GitBaseAsset(asset, release);
+    }
+
+    private sealed class UpdateClock : TimeProvider
+    {
+        internal DateTimeOffset Now { get; set; } = new(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 }

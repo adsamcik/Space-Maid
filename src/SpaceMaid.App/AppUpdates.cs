@@ -17,6 +17,7 @@ internal sealed class AppUpdates : IDisposable
     private readonly UpdateManager? _manager;
     private readonly string _settingsPath;
     private readonly ScanLog _log;
+    private readonly TimeProvider _time;
     private CancellationTokenSource? _operationCancellation;
     private bool _stopped;
     private UpdateInfo? _available;
@@ -35,13 +36,14 @@ internal sealed class AppUpdates : IDisposable
     internal string Status { get; private set; }
     internal string? Error { get; private set; }
     internal bool AutomaticCheckDue => Supported && AutomaticChecks && (!_lastCheck.HasValue
-        || DateTimeOffset.UtcNow - _lastCheck.Value >= TimeSpan.FromDays(1));
+        || _time.GetUtcNow() - _lastCheck.Value >= TimeSpan.FromDays(1));
 
-    internal AppUpdates(UpdateManager? manager, string settingsPath, string logDirectory)
+    internal AppUpdates(UpdateManager? manager, string settingsPath, string logDirectory, TimeProvider? time = null)
     {
         _manager = manager;
         _settingsPath = settingsPath;
         _log = new(logDirectory);
+        _time = time ?? TimeProvider.System;
         Status = Supported ? "Check for updates" : "Updates are available in release installations.";
         try
         {
@@ -54,7 +56,7 @@ internal sealed class AppUpdates : IDisposable
                 AutomaticDownloads = settings.AutomaticDownloads;
                 _lastCheck = settings.LastCheckUtc;
                 // A clock change must not disable checking indefinitely.
-                if (_lastCheck > DateTimeOffset.UtcNow) _lastCheck = null;
+                if (_lastCheck > _time.GetUtcNow()) _lastCheck = null;
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
@@ -97,7 +99,8 @@ internal sealed class AppUpdates : IDisposable
     internal Task CheckAsync() => StartOperation(async token =>
     {
         await CheckCoreAsync(token);
-        if (AutomaticChecks && AutomaticDownloads && _available is not null && !Ready)
+        if (AutomaticChecks && AutomaticDownloads && _available is not null && !Ready
+            && GitHubUpdateSource.AutomaticDownloadAfter(_available.TargetFullRelease) is { } after && _time.GetUtcNow() >= after)
             await DownloadCoreAsync(token);
     });
     internal Task DownloadAsync() => StartOperation(DownloadCoreAsync);
@@ -137,7 +140,7 @@ internal sealed class AppUpdates : IDisposable
     {
         Status = "Checking…"; Notify();
         _log.Record("update-check", new { CurrentVersion });
-        _lastCheck = DateTimeOffset.UtcNow;
+        _lastCheck = _time.GetUtcNow();
         SaveSettings();
         // Velopack's feed API has no cancellation argument. WaitAsync bounds the UI
         // wait; the late feed result cannot update state or download anything.
@@ -150,6 +153,12 @@ internal sealed class AppUpdates : IDisposable
             || previous?.SHA256 != next?.SHA256) Ready = false;
         _available = update;
         Status = update is null ? "Up to date" : Ready ? "Ready to restart" : $"Version {AvailableVersion} available";
+        if (update is not null && !Ready && AutomaticChecks && AutomaticDownloads)
+        {
+            var after = GitHubUpdateSource.AutomaticDownloadAfter(update.TargetFullRelease);
+            if (after is null) Status += " · Automatic download paused: release age unavailable";
+            else if (_time.GetUtcNow() < after) Status += " · Waiting for 24-hour protection period";
+        }
         _log.Record("update-result", new { AvailableVersion });
     }
 
