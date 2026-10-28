@@ -1,0 +1,53 @@
+<Window x:Class="SpaceMaid.App.AgentAccessWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Agent access" Width="860" Height="720" MinWidth="720" MinHeight="620"
+        WindowStartupLocation="CenterOwner" FontFamily="Segoe UI" FontSize="14"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
+    <Grid Margin="20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,12">
+            <TextBlock Text="Share cleanup summaries" FontSize="20" FontWeight="SemiBold"/>
+            <TextBlock Text="Agents see counts, sizes and policy flags. Names, paths and contents stay in Space Maid." TextWrapping="Wrap" Margin="0,5,0,0"/>
+        </StackPanel>
+        <Grid Grid.Row="1" Margin="0,0,0,12" x:Name="ScopeControls">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="230"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <StackPanel Margin="0,0,12,8"><Label Content="Scanned folder" Target="{Binding ElementName=ScopeBox}" Padding="0,0,0,4"/><TextBox x:Name="ScopeBox" IsReadOnly="True" Padding="6"/></StackPanel>
+            <StackPanel Grid.Column="1"><Label Content="Agent access level" Target="{Binding ElementName=LevelBox}" Padding="0,0,0,4"/><ComboBox x:Name="LevelBox" SelectedIndex="0" Padding="6"><ComboBoxItem Content="Summary only"/><ComboBoxItem Content="Aggregate groups"/><ComboBoxItem Content="Suggest groups for review"/></ComboBox></StackPanel>
+            <Expander Grid.Row="1" Grid.ColumnSpan="2" Header="Exclude locations">
+                <StackPanel Margin="0,6,0,0"><TextBlock Text="Full paths inside this folder, one per line. Excluded data is omitted from totals and groups." TextWrapping="Wrap" Margin="0,0,0,5"/><TextBox x:Name="ExclusionsBox" Height="64" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Excluded locations"/></StackPanel>
+            </Expander>
+        </Grid>
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <TextBlock x:Name="SummaryText" Text="Sharing is off. Start a session to preview what an agent can see." TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <DataGrid x:Name="GroupsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Single" AutomationProperties.Name="Shared aggregate groups">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Tool class" Binding="{Binding ToolClass}" Width="*"/>
+                    <DataGridTextColumn Header="Storage" Binding="{Binding StorageClass}" Width="*"/>
+                    <DataGridTextColumn Header="Folders" Binding="{Binding Locations}" Width="70"/>
+                    <DataGridTextColumn Header="Logical bytes" Binding="{Binding LogicalBytes, StringFormat=N0}" Width="115"/>
+                    <DataGridTextColumn Header="Policy" Binding="{Binding Policy}" Width="150"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+        <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <Expander x:Name="SetupExpander" IsEnabled="False" ToolTip="Paste this setup into your agent client's MCP configuration. It is valid only while this session stays open.">
+                <Expander.Header><StackPanel Orientation="Horizontal"><TextBlock Text="MCP connection setup" VerticalAlignment="Center"/><Button Content="Copy setup" Click="Copy_Click" Margin="12,0,0,0" Padding="10,4"/></StackPanel></Expander.Header>
+                <TextBox x:Name="SetupBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" Height="64" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,6,0,0" AutomationProperties.Name="MCP connection configuration"/>
+            </Expander>
+            <TextBlock x:Name="SuggestionText" TextWrapping="Wrap" Margin="0,8,0,0"/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <Button x:Name="ReviewButton" Content="Review suggested folders…" Click="Review_Click" IsEnabled="False" Padding="12,5" Margin="0,0,8,0"/>
+                <Button x:Name="DismissButton" Content="Dismiss suggestion" Click="Dismiss_Click" IsEnabled="False" Padding="12,5"/>
+            </StackPanel>
+        </StackPanel>
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,12,0"><TextBlock x:Name="AccessStatus" Text="Off" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock Text="Aggregates can reveal tool use and storage sizes. This connection cannot restrict an agent's other tools." FontSize="12" Opacity="0.7" TextWrapping="Wrap" Margin="0,4,0,0"/></StackPanel>
+            <Button x:Name="ShareButton" Grid.Column="1" Content="Start sharing" Click="Share_Click" Padding="16,6" VerticalAlignment="Center"/>
+        </Grid>
+    </Grid>
+</Window>

@@ -7,6 +7,11 @@ public partial class App : Application
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetCommandLineArgs().Skip(1).FirstOrDefault() == "--agent-stdio")
+        {
+            Environment.ExitCode = AgentAccess.AgentConnection.RunStdioAsync().GetAwaiter().GetResult();
+            return;
+        }
         // Applying stays behind the verified, user-selected restart action.
         Velopack.VelopackApp.Build().SetAutoApplyOnStartup(false).Run();
         var app = new App();

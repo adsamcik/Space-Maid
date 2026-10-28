@@ -17,6 +17,12 @@ public partial class MainWindow
         foreach (var id in items) paths.Add((await session.DetailsAsync(id, token)).Path);
         if (_closing || _work is not null || _scanStale || !ReferenceEquals(_snapshot, capturedScan))
             throw new InvalidOperationException("The scan changed before review. Refresh the suggestions.");
+        return await ReviewKnownPathsAsync(capturedScan, paths, token);
+    }
+
+    private async Task<EvidenceCleanupReviewResult> ReviewKnownPathsAsync(SpaceMaid.Core.Scanning.ScanSnapshot capturedScan,
+        HashSet<string> paths, CancellationToken token)
+    {
         // Map to already discovered host-owned rules, never synthesize an
         // Opportunity or deletion target from a model's text/path.
         var matching = _rows.Where(row => paths.Contains(row.Item.Path)).ToArray();

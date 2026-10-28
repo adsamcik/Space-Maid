@@ -37,7 +37,7 @@ public partial class MainWindow
     }
 
     private void More_Click(object sender, RoutedEventArgs e)
-    { MoreButton.ContextMenu.PlacementTarget = MoreButton; MoreButton.ContextMenu.IsOpen = true; }
+    { AddAgentAccessMenu(); MoreButton.ContextMenu.PlacementTarget = MoreButton; MoreButton.ContextMenu.IsOpen = true; }
 
     private void Updates_Click(object sender, RoutedEventArgs e)
     {
