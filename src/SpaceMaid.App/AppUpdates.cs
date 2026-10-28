@@ -10,7 +10,7 @@ using Velopack.Sources;
 
 namespace SpaceMaid.App;
 
-// One UI-owned update operation. Only an explicit Download reads package content;
+// One UI-owned update operation. Downloads require a click or a saved opt-in;
 // applying an update is deferred until the host has drained all of its workers.
 internal sealed class AppUpdates : IDisposable
 {
@@ -25,6 +25,7 @@ internal sealed class AppUpdates : IDisposable
     internal Task? Operation { get; private set; }
     internal bool Supported => _manager?.IsInstalled == true;
     internal bool AutomaticChecks { get; private set; } = true;
+    internal bool AutomaticDownloads { get; private set; }
     internal bool Busy => Operation is not null;
     internal bool Ready { get; private set; }
     internal int Progress { get; private set; }
@@ -50,6 +51,7 @@ internal sealed class AppUpdates : IDisposable
                 var settings = JsonSerializer.Deserialize<UpdateSettings>(System.IO.File.ReadAllText(settingsPath))
                     ?? throw new InvalidDataException("Invalid update settings.");
                 AutomaticChecks = settings.AutomaticChecks;
+                AutomaticDownloads = settings.AutomaticDownloads;
                 _lastCheck = settings.LastCheckUtc;
                 // A clock change must not disable checking indefinitely.
                 if (_lastCheck > DateTimeOffset.UtcNow) _lastCheck = null;
@@ -65,8 +67,8 @@ internal sealed class AppUpdates : IDisposable
         var repository = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(item => item.Key == "GitHubRepository")?.Value;
         UpdateManager? manager = null;
-        if (RepositoryUrl(repository) is { } url && VelopackLocator.Current.CurrentlyInstalledVersion is { } version)
-            manager = new VerifiedUpdateManager(new GithubSource(url, null, version.IsPrerelease));
+        if (RepositoryUrl(repository) is not null && VelopackLocator.Current.CurrentlyInstalledVersion is { } version)
+            manager = new VerifiedUpdateManager(new GitHubUpdateSource(repository!, version.IsPrerelease));
         return new(manager, settingsPath, logDirectory);
     }
 
@@ -83,7 +85,21 @@ internal sealed class AppUpdates : IDisposable
         AutomaticChecks = previous; Notify(); return false;
     }
 
-    internal Task CheckAsync() => StartOperation(CheckCoreAsync);
+    internal bool SetAutomaticDownloads(bool enabled)
+    {
+        bool previous = AutomaticDownloads;
+        AutomaticDownloads = enabled;
+        if (SaveSettings()) { Notify(); return true; }
+        AutomaticDownloads = previous; Notify(); return false;
+    }
+
+    internal Task RunAutomaticAsync() => AutomaticCheckDue && !Busy ? CheckAsync() : Task.CompletedTask;
+    internal Task CheckAsync() => StartOperation(async token =>
+    {
+        await CheckCoreAsync(token);
+        if (AutomaticChecks && AutomaticDownloads && _available is not null && !Ready)
+            await DownloadCoreAsync(token);
+    });
     internal Task DownloadAsync() => StartOperation(DownloadCoreAsync);
 
     private Task StartOperation(Func<CancellationToken, Task> work)
@@ -127,8 +143,11 @@ internal sealed class AppUpdates : IDisposable
         // wait; the late feed result cannot update state or download anything.
         var update = await _manager!.CheckForUpdatesAsync().WaitAsync(TimeSpan.FromSeconds(30), token);
         token.ThrowIfCancellationRequested();
-        if (update is not null) ValidateTarget(update.TargetFullRelease, _manager.AppId);
-        if (_available?.TargetFullRelease.SHA256 != update?.TargetFullRelease.SHA256) Ready = false;
+        if (update is not null) ValidateUpdate(update, _manager);
+        var previous = _available?.TargetFullRelease;
+        var next = update?.TargetFullRelease;
+        if (previous?.FileName != next?.FileName || previous?.Size != next?.Size
+            || previous?.SHA256 != next?.SHA256) Ready = false;
         _available = update;
         Status = update is null ? "Up to date" : Ready ? "Ready to restart" : $"Version {AvailableVersion} available";
         _log.Record("update-result", new { AvailableVersion });
@@ -136,21 +155,30 @@ internal sealed class AppUpdates : IDisposable
 
     internal static void ValidateTarget(VelopackAsset asset, string? appId)
     {
-        if (!string.Equals(asset.PackageId, appId, StringComparison.Ordinal)
-            || asset.Type != VelopackAssetType.Full || asset.Size <= 0
+        if (string.IsNullOrEmpty(appId) || !string.Equals(asset.PackageId, appId, StringComparison.Ordinal)
+            || asset.Version is null || asset.Type != VelopackAssetType.Full || asset.Size is <= 0 or > 1_073_741_824
             || asset.SHA256 is null || !Regex.IsMatch(asset.SHA256, @"\A[0-9a-fA-F]{64}\z", RegexOptions.CultureInvariant)
             || string.IsNullOrWhiteSpace(asset.FileName) || Path.GetFileName(asset.FileName) != asset.FileName
-            || asset.FileName.IndexOfAny(['/', '\\', ':']) >= 0 || !asset.FileName.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+            || asset.FileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || asset.FileName != $"{appId}-{asset.Version}-full.nupkg")
             throw new InvalidDataException("The release does not contain a valid Space Maid update package.");
+    }
+
+    internal static void ValidateUpdate(UpdateInfo update, UpdateManager manager)
+    {
+        ValidateTarget(update.TargetFullRelease, manager.AppId);
+        if (update.IsDowngrade || manager.CurrentVersion is not { } current || update.TargetFullRelease.Version <= current
+            || (!current.IsPrerelease && update.TargetFullRelease.Version.IsPrerelease))
+            throw new InvalidDataException("The release is not a newer version for this installation.");
     }
 
     private async Task DownloadCoreAsync(CancellationToken token)
     {
         if (_available is null) return;
         Ready = false; Progress = 0; Status = "Downloading…"; Notify();
-        ValidateTarget(_available.TargetFullRelease, _manager!.AppId);
+        ValidateUpdate(_available, _manager!);
         var progress = new Progress<int>(value => { if (!_stopped && Operation is not null) { Progress = value; Notify(); } });
-        await _manager.DownloadUpdatesAsync(_available, value => ((IProgress<int>)progress).Report(value), token);
+        await _manager!.DownloadUpdatesAsync(_available, value => ((IProgress<int>)progress).Report(value), token);
         token.ThrowIfCancellationRequested();
         Ready = true; Progress = 100; Status = "Ready to restart";
         _log.Record("update-downloaded", new { AvailableVersion });
@@ -158,7 +186,8 @@ internal sealed class AppUpdates : IDisposable
 
     internal async Task ScheduleRestartAsync()
     {
-        if (!Ready || _available is null) throw new InvalidOperationException("Download the update first.");
+        if (Busy || !Ready || _available is null) throw new InvalidOperationException("Download the update first.");
+        ValidateUpdate(_available, _manager!);
         if (_manager is VerifiedUpdateManager verified) await verified.VerifyPreparedAsync(_available.TargetFullRelease);
         _manager!.WaitExitThenApplyUpdates(_available.TargetFullRelease, silent: false, restart: true);
         _log.Record("update-apply", new { AvailableVersion });
@@ -177,7 +206,7 @@ internal sealed class AppUpdates : IDisposable
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            System.IO.File.WriteAllText(temp, JsonSerializer.Serialize(new UpdateSettings(AutomaticChecks, _lastCheck)));
+            System.IO.File.WriteAllText(temp, JsonSerializer.Serialize(new UpdateSettings(AutomaticChecks, _lastCheck, AutomaticDownloads)));
             System.IO.File.Move(temp, _settingsPath, overwrite: true);
             return true;
         }
@@ -188,7 +217,7 @@ internal sealed class AppUpdates : IDisposable
 
     private void Notify() { if (!_stopped) Changed?.Invoke(); }
     public void Dispose() { _stopped = true; Cancel(); _log.Dispose(); }
-    private sealed record UpdateSettings(bool AutomaticChecks, DateTimeOffset? LastCheckUtc);
+    private sealed record UpdateSettings(bool AutomaticChecks, DateTimeOffset? LastCheckUtc, bool AutomaticDownloads = false);
 }
 
 internal sealed class VerifiedUpdateManager(IUpdateSource source, IVelopackLocator? locator = null)
@@ -196,7 +225,7 @@ internal sealed class VerifiedUpdateManager(IUpdateSource source, IVelopackLocat
 {
     public override async Task DownloadUpdatesAsync(UpdateInfo updates, Action<int>? progress = null, CancellationToken cancelToken = default)
     {
-        AppUpdates.ValidateTarget(updates.TargetFullRelease, AppId);
+        AppUpdates.ValidateUpdate(updates, this);
         await base.DownloadUpdatesAsync(updates, progress, cancelToken);
         cancelToken.ThrowIfCancellationRequested();
         // Also verify an already-cached package: Velopack's cache fast path skips it.
@@ -209,5 +238,9 @@ internal sealed class VerifiedUpdateManager(IUpdateSource source, IVelopackLocat
         }
     }
 
-    internal Task VerifyPreparedAsync(VelopackAsset asset) => VerifyPackageChecksumAsync(asset);
+    internal Task VerifyPreparedAsync(VelopackAsset asset)
+    {
+        AppUpdates.ValidateTarget(asset, AppId);
+        return VerifyPackageChecksumAsync(asset);
+    }
 }

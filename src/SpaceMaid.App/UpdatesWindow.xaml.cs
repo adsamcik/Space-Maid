@@ -22,6 +22,8 @@ public partial class UpdatesWindow : Window
         StatusText.Text = _updates.Status;
         AutomaticBox.IsChecked = _updates.AutomaticChecks;
         AutomaticBox.IsEnabled = _updates.Supported;
+        DownloadBox.IsChecked = _updates.AutomaticDownloads;
+        DownloadBox.IsEnabled = _updates.Supported && _updates.AutomaticChecks;
         CheckButton.IsEnabled = _updates.Supported && !_updates.Busy;
         ActionButton.Visibility = _updates.AvailableVersion is null ? Visibility.Collapsed : Visibility.Visible;
         ActionButton.Content = _updates.Ready ? "Restart and update" : "Download update";
@@ -43,4 +45,9 @@ public partial class UpdatesWindow : Window
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => _updates.Cancel();
     private void Automatic_Click(object sender, RoutedEventArgs e) => _updates.SetAutomaticChecks(AutomaticBox.IsChecked == true);
+    private async void DownloadAutomatically_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updates.SetAutomaticDownloads(DownloadBox.IsChecked == true) && _updates.AutomaticDownloads)
+            await _updates.CheckAsync();
+    }
 }

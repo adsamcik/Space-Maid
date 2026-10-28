@@ -18,7 +18,7 @@ Download the **Setup** installer from [Releases](https://github.com/adsamcik/Spa
 
 Release binaries are currently unsigned.
 
-Release builds check this repository's GitHub Releases for updates once a day when enabled. Choose **Download**, then **Restart and update** when ready; settings and photo catalogs are retained. Prerelease builds also receive prereleases. Source builds do not check for updates.
+Release builds check this repository's GitHub Releases daily when enabled, including while the app stays open. In **More → Updates**, enable **Download updates automatically** to prepare updates in the background, or download them manually. Choose **Restart and update** when ready; active jobs must finish first, and settings and photo catalogs are retained. Downloads use HTTPS, stay on GitHub's release hosts and are checked against the release's SHA-256 and size before installation. Older versions are rejected; stable builds ignore prereleases. Source builds do not check for updates.
 
 Enable fast scanning when prompted to authorize the read-only NTFS helper. The app stays unelevated; standard scanning remains available if you decline.
 

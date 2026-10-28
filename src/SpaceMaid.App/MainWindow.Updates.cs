@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.App;
@@ -10,6 +11,7 @@ public partial class MainWindow
     private AppUpdates? _updates;
     private UpdatesWindow? _updatesWindow;
     private bool _restartForUpdate;
+    private DispatcherTimer? _updateTimer;
     internal string UpdateSettingsPath { get; set; } = AppData.File("update-settings.json");
 
     private void InitializeUpdates()
@@ -18,7 +20,9 @@ public partial class MainWindow
         _updates = AppUpdates.Create(UpdateSettingsPath, Path.Combine(LogDirectory, "Updates"));
         _updates.Changed += UpdateUpdateButton;
         UpdateUpdateButton();
-        if (_updates.AutomaticCheckDue) _ = _updates.CheckAsync();
+        _updateTimer = new(TimeSpan.FromHours(1), DispatcherPriority.Background,
+            (_, _) => _ = _updates.RunAutomaticAsync(), Dispatcher);
+        _ = _updates.RunAutomaticAsync();
     }
 
     private bool CanRestartForUpdate() => !_closing && _work is null && !_browsing && !_openingPath

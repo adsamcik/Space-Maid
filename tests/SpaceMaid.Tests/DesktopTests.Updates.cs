@@ -27,8 +27,16 @@ public sealed partial class DesktopTests
         {
             var check = updates.CheckAsync(); PumpUntil(() => check.IsCompleted, TimeSpan.FromSeconds(5)); check.GetAwaiter().GetResult();
             Assert.Equal("Download update", ((Button)view.FindName("ActionButton")).Content);
-            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-{theme}.png"), 430, 270);
-            var download = updates.DownloadAsync(); PumpUntil(() => download.IsCompleted, TimeSpan.FromSeconds(5)); download.GetAwaiter().GetResult();
+            var automatic = (CheckBox)view.FindName("AutomaticBox");
+            var downloads = (CheckBox)view.FindName("DownloadBox");
+            Assert.False(downloads.IsChecked); Assert.True(downloads.IsEnabled);
+            automatic.IsChecked = false; automatic.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.False(downloads.IsEnabled);
+            automatic.IsChecked = true; automatic.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            downloads.IsChecked = true; downloads.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => !updates.Busy, TimeSpan.FromSeconds(5));
+            Assert.True(updates.AutomaticDownloads); Assert.True(updates.Ready);
+            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-{theme}.png"), 430, 330);
             var action = (Button)view.FindName("ActionButton");
             Assert.Equal("Restart and update", action.Content); Assert.True(action.IsEnabled);
             var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

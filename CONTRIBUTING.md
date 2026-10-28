@@ -51,6 +51,8 @@ Use `v1.2.3-beta.1` for a prerelease. Tags require three version numbers, each a
 
 Keep every generated update package and feed asset on the release. The app discovers its repository from the build's `GitHubRepository` property; no owner name or access token is embedded. Releases must be public for unauthenticated update checks. Older plain ZIP builds need one manual install or extraction of a new release to enable updates.
 
+The updater requires full packages named `SpaceMaid-<version>-full.nupkg` on the matching `v<version>` release, with SHA-256 and a positive size of at most 1 GiB. Requests and redirects are restricted to HTTPS on the build's repository and GitHub's release asset host. Metadata reads are bounded to 2 MiB, downloads to 1 GiB and 15 minutes. Cached packages are checked again before restart. Automatic downloads require a saved opt-in; installation always requires **Restart and update**, after host workers stop. Update settings from older builds retain manual downloads. These checks trust the GitHub repository and HTTPS; binaries and feeds are not independently publisher-signed, so protect repository and release access accordingly.
+
 Prepare a release locally by publishing with `-p:Version=0.1.0-beta.1 -p:GitHubRepository=adsamcik/Space-Maid`, then running `tools/ci/New-ReleasePackage.ps1 -PackagePath artifacts/package -Tag v0.1.0-beta.1 -OutputPath artifacts/release-beta.1`. Use an empty output folder. Version-specific notes in `docs/releases/<tag>.md` are included automatically. Packaging does not create or publish a tag or GitHub release.
 
 Failed uploads leave a draft that a rerun can finish. Published assets are preserved on reruns; use a new tag for changed binaries.
