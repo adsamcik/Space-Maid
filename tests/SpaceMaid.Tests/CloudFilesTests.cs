@@ -11,6 +11,7 @@ namespace SpaceMaid.Tests;
 public sealed class CloudFilesTests
 {
     [Fact]
+    [Trait("Stage", "System")]
     public async Task HydratedSyncRootCacheIsKeptBeforeNativeMaintenanceCanTraverseIt()
     {
         using var fixture = new ToolCacheFixture();
@@ -73,6 +74,7 @@ public sealed class CloudFilesTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task WindowsPlaceholderRequestsAreRevalidatedAndReportedAsQueued()
     {
         var operations = new FileOperations(() => throw new InvalidOperationException("Cloud operations must not request NTFS metadata."));

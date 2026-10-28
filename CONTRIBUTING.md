@@ -8,15 +8,28 @@ Use the .NET 10 SDK pinned in [global.json](global.json). On Windows:
 
 ```powershell
 dotnet build SpaceMaid.slnx -c Release -m:1
-dotnet test tests/SpaceMaid.Tests -c Release --no-build --filter 'FullyQualifiedName!~SpaceMaid.Tests.DesktopTests'
-dotnet test tests/SpaceMaid.Tests -c Release --no-build --filter 'FullyQualifiedName~SpaceMaid.Tests.DesktopTests'
+./tools/Test.ps1 -NoBuild -Filter 'FullyQualifiedName~SpaceMaid.Tests.PathNavigationTests'
 ```
 
-Run desktop tests as a normal user. Three raw-volume checks require administrator access and are skipped otherwise. A successful build does not establish native cleanup, cloud-provider or desktop interaction behavior.
+Tests have two stages:
 
-Keep desktop and non-desktop tests in separate test processes, as CI does. WPF's process-wide pack-resource lookup cannot distinguish directly referenced extension assemblies from copies loaded into the app's extension contexts. Combining both groups can make Photos resources resolve from the wrong assembly. Both groups remain required. See the [WPF resource cache](https://github.com/dotnet/wpf/blob/main/src/Microsoft.DotNet.Wpf/src/PresentationFramework/MS/Internal/AppModel/ResourceContainer.cs). Optional native Python/npm checks use existing installed tools and owned offline fixtures; they never install tools or use personal caches.
+- **Unit:** the routine default. Run only the classes or methods affected by the change, including safe owned-file fixtures. Do not run the entire suite after every edit. The test project defaults to `tools/testing/Unit.runsettings`, excluding tests marked `[Trait("Stage", "System")]`.
+- **System:** Windows/UI and native integration checks that open windows, use the Windows shell or Recycle Bin, register cloud placeholders, query raw volumes, launch host helpers or sandbox workers, or require installed native tools. Run these sparingly, only when the changed behavior needs that evidence. Mark new tests with the same trait when they require this stage.
 
-CI additionally downloads the official portable pnpm 10.34.9 executable through `tools/ci/Get-TestPnpm.ps1`, verifies its pinned SHA-256, and requires the real offline pruning test to execute. It is a test input under `artifacts/ci-inputs`, not an installed or bundled app dependency. To run the same fixture locally, set `SPACEMAID_TEST_PNPM` to that script's returned path before running the non-desktop group. Source tarballs, installed files, configuration and cache locations all stay inside owned temporary fixtures.
+Use `tools/Test.ps1` for targeted runs: plain `dotnet test --filter` overrides the settings-file filter. The helper requires a targeted `-Filter` and combines it with the stage boundary, even when the filter contains `|`. A selection matching no tests fails. Use `-ListTests` to inspect a selection without running it. Omit `-NoBuild` when the test binaries need rebuilding.
+
+When system verification is necessary, select the affected test:
+
+```powershell
+./tools/Test.ps1 -Stage System -NoBuild -Filter 'FullyQualifiedName~DeletionTests.WindowsRecyclesOnlyTheFixtureFolderAndPreservesItsContents'
+./tools/Test.ps1 -Stage System -Desktop -NoBuild -Filter 'FullyQualifiedName~SpaceMaid.Tests.DesktopTests'
+```
+
+Run desktop tests as a normal user. Raw-volume checks require administrator access and are skipped otherwise. A successful build does not establish native cleanup, cloud-provider or desktop interaction behavior.
+
+The system stage keeps desktop and other tests in separate test processes: use `-Desktop` for the desktop harness. WPF's process-wide pack-resource lookup cannot distinguish directly referenced extension assemblies from copies loaded into the app's extension contexts. Combining both groups can make Photos resources resolve from the wrong assembly. See the [WPF resource cache](https://github.com/dotnet/wpf/blob/main/src/Microsoft.DotNet.Wpf/src/PresentationFramework/MS/Internal/AppModel/ResourceContainer.cs). Optional native Python/npm checks use existing installed tools and owned offline fixtures; they never install tools or use personal caches.
+
+CI additionally downloads the official portable pnpm 10.34.9 executable through `tools/ci/Get-TestPnpm.ps1`, verifies its pinned SHA-256, and requires the real offline pruning test to execute. It is a test input under `artifacts/ci-inputs`, not an installed or bundled app dependency. To run the same fixture locally, set `SPACEMAID_TEST_PNPM` to that script's returned path before selecting it in the system stage. Source tarballs, installed files, configuration and cache locations all stay inside owned temporary fixtures.
 
 For builds using `ArtifactsPath` outside the checkout, set `SPACEMAID_TEST_REPOSITORY` to the repository root before running desktop tests so screenshots and workflow diagnostics have a known destination. Run binaries from their physical output path; extension and model-worker safety checks intentionally reject junction ancestors.
 
@@ -28,7 +41,7 @@ Linux can build the Windows package but cannot run WPF or Windows integration te
 dotnet publish src/SpaceMaid.App/SpaceMaid.App.csproj -c Release -r win-x64 -p:EnableWindowsTargeting=true --output artifacts/package -m:1
 ```
 
-[CI](.github/workflows/ci.yml) runs on pull requests and pushes to `main`: Linux builds and verifies the package, then Windows runs the same build's tests. Test results and desktop diagnostics are retained as workflow artifacts.
+[CI](.github/workflows/ci.yml) retains its full validation gate on isolated GitHub-hosted runners: Linux builds and verifies the package, then Windows runs the same build's unit and system stages. This does not require repeating either full stage on the local desktop. Test results and desktop diagnostics are retained as workflow artifacts.
 
 ## Report a bug
 

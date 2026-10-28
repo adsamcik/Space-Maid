@@ -10,6 +10,7 @@ using Xunit;
 
 namespace SpaceMaid.Tests;
 
+[Trait("Stage", "System")]
 public sealed class NativeToolCacheIntegrationTests
 {
     [LocalNativeNpmFact]

@@ -25,6 +25,7 @@ public sealed class ModelSandboxTests
     }
 
     [PublishedModelWorkerFact]
+    [Trait("Stage", "System")]
     public async Task WorkerOnlyReadsItsGrantedModelAndRuntime()
     {
         using var fixture = new SandboxFixture();
@@ -81,6 +82,7 @@ public sealed class ModelSandboxTests
     }
 
     [PublishedModelWorkerFact]
+    [Trait("Stage", "System")]
     public async Task NativeBackendLoadsAndRejectsAMalformedModelInsideTheSandbox()
     {
         using var fixture = new SandboxFixture();
@@ -105,6 +107,7 @@ public sealed class ModelSandboxTests
     }
 
     [PublishedModelWorkerFact]
+    [Trait("Stage", "System")]
     public async Task DisposalKillsIdleWorkerAndRemovesOnlyItsOwnPermissionsAndProfile()
     {
         using var fixture = new SandboxFixture();
@@ -130,6 +133,7 @@ public sealed class ModelSandboxTests
     }
 
     [PublishedModelWorkerFact]
+    [Trait("Stage", "System")]
     public void FailedModelGrantRestoresRuntimePermissions()
     {
         using var fixture = new SandboxFixture();
@@ -141,6 +145,7 @@ public sealed class ModelSandboxTests
     }
 
     [PublishedModelWorkerFact]
+    [Trait("Stage", "System")]
     public void RedirectedModelIsRejectedAndRuntimeGrantsAreRolledBack()
     {
         using var fixture = new SandboxFixture();

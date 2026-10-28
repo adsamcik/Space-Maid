@@ -109,6 +109,7 @@ public sealed class DeletionTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task WindowsRecyclesOnlyTheFixtureFolderAndPreservesItsContents()
     {
         using var fixture = new TestDirectory();
@@ -160,6 +161,7 @@ public sealed class DeletionTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task LockedFixtureFilesCannotReportRecycledSuccessAndCanBeRetriedAfterClosing()
     {
         using var fixture = new TestDirectory();

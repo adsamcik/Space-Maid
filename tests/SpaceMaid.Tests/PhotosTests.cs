@@ -225,6 +225,7 @@ public sealed class PhotosTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task WindowsCloudPlaceholdersRemainMetadataOnlyWithoutToolOrThumbnailReads()
     {
         using var directory = new TestDirectory(); var source = Path.Join(directory.Path, "cloud"); Directory.CreateDirectory(source);

@@ -11,6 +11,7 @@ namespace SpaceMaid.Tests;
 public sealed class ScannerTests
 {
     [ElevatedNtfsFact]
+    [Trait("Stage", "System")]
     public void NativeLayoutBatchPreservesTheMftDataStreamSizes()
     {
         string root = Path.GetPathRoot(Environment.CurrentDirectory)!;

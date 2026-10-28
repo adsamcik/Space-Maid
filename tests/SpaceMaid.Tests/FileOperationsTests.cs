@@ -95,6 +95,7 @@ public sealed class FileOperationsTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task RecyclingUsesWindowsShellWithLiveGuardsAndPreservesOwnedNestedContents()
     {
         using var fixture = new TestDirectory();

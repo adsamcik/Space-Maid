@@ -140,6 +140,7 @@ public sealed class ScopedScannerTests
     }
 
     [ElevatedNtfsFact]
+    [Trait("Stage", "System")]
     public async Task NativeFilteredLookupMatchesLiveOwnedNamedStreams()
     {
         using var fixture = new TestDirectory();

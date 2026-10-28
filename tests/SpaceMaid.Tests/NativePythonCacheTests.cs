@@ -10,6 +10,7 @@ using Xunit.Abstractions;
 
 namespace SpaceMaid.Tests;
 
+[Trait("Stage", "System")]
 public sealed class NativePythonCacheTests(ITestOutputHelper output)
 {
     [LocalPythonFact]

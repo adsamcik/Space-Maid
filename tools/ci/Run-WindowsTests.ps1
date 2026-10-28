@@ -49,9 +49,11 @@ if ($TestUserProcess) {
     # WPF resolves pack resources process-wide by assembly name. Unit tests
     # reference extension types directly; desktop tests load those assemblies
     # into their production contexts. Use fresh test hosts to avoid collisions.
-    & dotnet vstest $assembly '--TestCaseFilter:FullyQualifiedName!~SpaceMaid.Tests.DesktopTests' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-tests.trx'
+    & dotnet vstest $assembly '--TestCaseFilter:Stage!=System' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-unit-tests.trx'
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & dotnet vstest $assembly '--TestCaseFilter:FullyQualifiedName~SpaceMaid.Tests.DesktopTests' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-desktop-tests.trx'
+    & dotnet vstest $assembly '--TestCaseFilter:Stage=System&FullyQualifiedName!~SpaceMaid.Tests.DesktopTests' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-system-tests.trx'
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & dotnet vstest $assembly '--TestCaseFilter:Stage=System&FullyQualifiedName~SpaceMaid.Tests.DesktopTests' "--ResultsDirectory:$results" '--Logger:trx;LogFileName=windows-desktop-tests.trx'
     exit $LASTEXITCODE
 }
 

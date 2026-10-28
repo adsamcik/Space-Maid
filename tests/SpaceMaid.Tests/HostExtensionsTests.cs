@@ -221,6 +221,7 @@ public sealed class HostExtensionsTests
     }
 
     [LocalExifToolFact]
+    [Trait("Stage", "System")]
     public async Task RealPersistentExifToolVerifiesCopiedPngAndReusesOwnedProcess()
     {
         using var fixture = new TestDirectory();
@@ -245,6 +246,7 @@ public sealed class HostExtensionsTests
     }
 
     [LocalExifToolFact]
+    [Trait("Stage", "System")]
     public async Task BrokerShutdownCancelsPausedRequestsBeforeWaitingForRequestLane()
     {
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -257,6 +259,7 @@ public sealed class HostExtensionsTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task RealCloudPlaceholderIsRejectedBeforeToolLaunch()
     {
         using var fixture = new TestDirectory();

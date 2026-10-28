@@ -42,6 +42,7 @@ public sealed class HelperTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task OwnedHelperReusesItsProcessAfterCancellationOrNativeAccessFailureAndExitsOnDisconnect()
     {
         var connected = await HelperLayoutSource.CreateAsync(false);
@@ -140,6 +141,7 @@ public sealed class HelperTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task DeadHelperIsUnavailableAndCanBeReplaced()
     {
         using var source = await HelperLayoutSource.CreateAsync(false);
@@ -199,6 +201,7 @@ public sealed class HelperTests
     }
 
     [HelperAcceptanceFact]
+    [Trait("Stage", "System")]
     public async Task MeasureBoundedNativeTransportAgainstDirectAcquisition()
     {
         string volume = Path.GetPathRoot(Environment.CurrentDirectory)!;

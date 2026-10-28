@@ -1,0 +1,6 @@
+<RunSettings>
+  <RunConfiguration>
+    <TestCaseFilter>Stage=System</TestCaseFilter>
+    <TreatNoTestsAsError>true</TreatNoTestsAsError>
+  </RunConfiguration>
+</RunSettings>

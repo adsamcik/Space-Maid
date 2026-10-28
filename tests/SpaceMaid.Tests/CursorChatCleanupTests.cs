@@ -86,6 +86,7 @@ public sealed class CursorChatCleanupTests
     }
 
     [Fact]
+    [Trait("Stage", "System")]
     public async Task WindowsRecyclesTheOwnedWholeChatWithItsDatabaseSidecars()
     {
         using var fixture = new TestDirectory(); var (home, path) = Create(fixture.Path);
