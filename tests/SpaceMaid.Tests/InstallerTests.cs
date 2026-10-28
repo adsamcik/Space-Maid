@@ -8,6 +8,81 @@ namespace SpaceMaid.Tests;
 
 public sealed class InstallerTests
 {
+    [Fact]
+    public void ExistingInstallationUsesManifestVersionAndRegisteredLocation()
+    {
+        using var directory = new TestDirectory();
+        string registered = CreateInstallation(directory.Path, "Custom installation", "0.1.0-alpha.2");
+        string fallback = CreateInstallation(directory.Path, "Default", "0.1.0");
+
+        InstalledApplication installation = Assert.IsType<InstalledApplication>(InstallationDiscovery.Find([registered, fallback]));
+        Assert.Equal(registered, installation.Folder);
+        Assert.Equal("0.1.0-alpha.2", installation.Version.ToString());
+        Assert.True(installation.NeedsUpdate("0.1.0-beta.1"));
+    }
+
+    [Fact]
+    public void StaleRegistrationFallsBackToVerifiedDefaultInstallation()
+    {
+        using var directory = new TestDirectory();
+        string fallback = CreateInstallation(directory.Path, "Default", "0.1.0-beta.1");
+
+        Assert.Equal(fallback, InstallationDiscovery.Find([null, "relative", Path.Join(directory.Path, "Missing"), fallback])?.Folder);
+        Assert.Null(InstallationDiscovery.Find([Path.Join(directory.Path, "Missing")]));
+    }
+
+    [Theory]
+    [InlineData("0.1.0-alpha.2", "0.1.0-beta.1", true)]
+    [InlineData("0.1.0-beta.1", "0.1.0-beta.1", false)]
+    [InlineData("0.1.0", "0.1.0-beta.1", false)]
+    [InlineData("0.2.0", "0.1.0", false)]
+    [InlineData("0.1.0-beta.2", "0.1.0-beta.10", true)]
+    [InlineData("0.1.0+old", "0.1.0+new", false)]
+    public void UpdateChoiceRespectsSemanticVersionOrder(string installed, string setup, bool update)
+        => Assert.Equal(update, new InstalledApplication("unused", Velopack.SemanticVersion.Parse(installed)).NeedsUpdate(setup));
+
+    [Theory]
+    [InlineData("portable")]
+    [InlineData("updater")]
+    [InlineData("app")]
+    [InlineData("manifest")]
+    [InlineData("wrong-product")]
+    [InlineData("wrong-executable")]
+    [InlineData("invalid-version")]
+    [InlineData("invalid-xml")]
+    [InlineData("dtd")]
+    public void UnverifiedAndPortableFoldersAreNotNormalInstallations(string damage)
+    {
+        using var directory = new TestDirectory();
+        string folder = CreateInstallation(directory.Path, "Installation", "0.1.0-alpha.2");
+        string manifest = Path.Join(folder, "current", "sq.version");
+        switch (damage)
+        {
+            case "portable": File.WriteAllText(Path.Join(folder, ".portable"), ""); break;
+            case "updater": File.Delete(Path.Join(folder, "Update.exe")); break;
+            case "app": File.Delete(Path.Join(folder, "current", "SpaceMaid.App.exe")); break;
+            case "manifest": File.Delete(manifest); break;
+            case "wrong-product": File.WriteAllText(manifest, Manifest("0.1.0", "AnotherApp")); break;
+            case "wrong-executable": File.WriteAllText(manifest, Manifest("0.1.0").Replace("SpaceMaid.App.exe", "Other.exe")); break;
+            case "invalid-version": File.WriteAllText(manifest, Manifest("unknown")); break;
+            case "invalid-xml": File.WriteAllText(manifest, "broken"); break;
+            case "dtd": File.WriteAllText(manifest, "<!DOCTYPE package [<!ENTITY version '0.1.0'>]>" + Manifest("&version;")); break;
+        }
+
+        Assert.Null(InstallationDiscovery.Read(folder));
+        Assert.True(Directory.Exists(folder));
+    }
+
+    [Fact]
+    public void UpdateTargetsExistingFolderAndExactPackageWithoutReinstalling()
+    {
+        var installation = new InstalledApplication(@"C:\Custom Apps\Space Maid", Velopack.SemanticVersion.Parse("0.1.0-alpha.2"));
+        var command = installation.UpdateCommand(@"C:\Setup Files\Update.nupkg");
+
+        Assert.Equal(@"C:\Custom Apps\Space Maid\Update.exe", command.FileName);
+        Assert.Equal(new[] { "apply", "--rootDir", installation.Folder, "--package", @"C:\Setup Files\Update.nupkg", "--norestart" }, command.ArgumentList);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -145,5 +220,16 @@ public sealed class InstallerTests
     }
 
     private static string Digest(MemoryStream stream) => Convert.ToHexString(SHA256.HashData(stream.ToArray()));
+    private static string CreateInstallation(string parent, string name, string version)
+    {
+        string folder = Path.Join(parent, name);
+        Directory.CreateDirectory(Path.Join(folder, "current"));
+        File.WriteAllText(Path.Join(folder, "Update.exe"), "updater");
+        File.WriteAllText(Path.Join(folder, "current", "SpaceMaid.App.exe"), "app");
+        File.WriteAllText(Path.Join(folder, "current", "sq.version"), Manifest(version));
+        return folder;
+    }
+    private static string Manifest(string version, string id = "SpaceMaid")
+        => $"<package xmlns='http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd'><metadata><id>{id}</id><version>{version}</version><mainExe>SpaceMaid.App.exe</mainExe></metadata></package>";
     private sealed class CallbackProgress(Action callback) : IProgress<double> { public void Report(double value) => callback(); }
 }

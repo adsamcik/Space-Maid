@@ -20,9 +20,13 @@
         </StackPanel>
         <StackPanel x:Name="ModePanel" Grid.Row="1">
             <RadioButton x:Name="InstallMode" IsChecked="True" GroupName="Mode" Padding="10" Margin="0,0,0,10" Checked="OnModeChanged">
-                <StackPanel><TextBlock Text="Install for me" FontSize="17" FontWeight="SemiBold" /><TextBlock Text="Start menu · Update checks" Opacity="0.65" Margin="0,4,0,0" /></StackPanel>
+                <StackPanel>
+                    <TextBlock x:Name="InstallModeTitle" Text="Install for me" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock x:Name="InstallModeDescription" Text="Start menu · Update checks" TextWrapping="Wrap" Opacity="0.65" Margin="0,4,0,0" />
+                    <TextBlock x:Name="InstalledFolderLabel" TextWrapping="Wrap" Opacity="0.65" Margin="0,4,0,0" Visibility="Collapsed" />
+                </StackPanel>
             </RadioButton>
-            <RadioButton x:Name="PortableMode" GroupName="Mode" Padding="10" Checked="OnModeChanged">
+            <RadioButton x:Name="PortableMode" GroupName="Mode" Padding="10" Checked="OnModeChanged" AutomationProperties.Name="Portable folder">
                 <StackPanel><TextBlock Text="Portable folder" FontSize="17" FontWeight="SemiBold" /><TextBlock Text="Keep the app and settings together" Opacity="0.65" Margin="0,4,0,0" /></StackPanel>
             </RadioButton>
         </StackPanel>

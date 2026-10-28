@@ -6,6 +6,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Velopack" Version="1.2.161" />
     <Resource Include="../../assets/branding/space-maid-visor.ico" Link="Assets/SpaceMaid.ico" />
     <EmbeddedResource Include="../../LICENSE" LogicalName="SpaceMaid.Installer.Notices.SpaceMaid.LICENSE" />
     <EmbeddedResource Include="../../THIRD_PARTY_NOTICES.md" LogicalName="SpaceMaid.Installer.Notices.SpaceMaid.THIRD_PARTY_NOTICES.md" />
@@ -16,12 +17,16 @@
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>PortableSha256</_Parameter1><_Parameter2>$(InstallerPortableSha256)</_Parameter2>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UpdateSha256</_Parameter1><_Parameter2>$(InstallerUpdateSha256)</_Parameter2>
+    </AssemblyAttribute>
     <EmbeddedResource Include="$(InstallerSetupPayload)" LogicalName="SpaceMaid.Installer.Payload.Setup.exe" Condition="'$(InstallerSetupPayload)' != ''" />
     <EmbeddedResource Include="$(InstallerPortablePayload)" LogicalName="SpaceMaid.Installer.Payload.Portable.zip" Condition="'$(InstallerPortablePayload)' != ''" />
+    <EmbeddedResource Include="$(InstallerUpdatePayload)" LogicalName="SpaceMaid.Installer.Payload.Update.nupkg" Condition="'$(InstallerUpdatePayload)' != ''" />
   </ItemGroup>
-  <Target Name="ValidateInstallerPayloads" BeforeTargets="PrepareForBuild" Condition="'$(InstallerSetupPayload)' != '' or '$(InstallerPortablePayload)' != ''">
-    <Error Condition="!Exists('$(InstallerSetupPayload)') or !Exists('$(InstallerPortablePayload)')" Text="Both native Setup and portable ZIP payloads are required." />
-    <Error Condition="'$(InstallerSetupSha256)' == '' or '$(InstallerPortableSha256)' == ''" Text="Installer payload SHA-256 values are required." />
+  <Target Name="ValidateInstallerPayloads" BeforeTargets="PrepareForBuild" Condition="'$(InstallerSetupPayload)' != '' or '$(InstallerPortablePayload)' != '' or '$(InstallerUpdatePayload)' != ''">
+    <Error Condition="!Exists('$(InstallerSetupPayload)') or !Exists('$(InstallerPortablePayload)') or !Exists('$(InstallerUpdatePayload)')" Text="Native Setup, portable ZIP and full update package payloads are required." />
+    <Error Condition="'$(InstallerSetupSha256)' == '' or '$(InstallerPortableSha256)' == '' or '$(InstallerUpdateSha256)' == ''" Text="Installer payload SHA-256 values are required." />
   </Target>
   <Target Name="EmbedInstallerRuntimeNotices" AfterTargets="ResolveFrameworkReferences" BeforeTargets="PrepareResourceNames" Condition="'$(SelfContained)' == 'true'">
     <ItemGroup>

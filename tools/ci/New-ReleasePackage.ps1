@@ -30,7 +30,7 @@ $changes
 
 Windows x64. Run **SpaceMaid-$($release.Version)-win-x64-Setup.exe**, or extract the portable ZIP and run **Space Maid.exe**.
 
-Setup offers normal installation or a portable folder. Normal installation installs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) when needed; portable mode requires it to be installed already.
+Setup detects an existing installation and offers to update it while keeping settings and catalogs. New installations can use normal installation or a portable folder. Normal installation installs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) when needed; portable mode requires it to be installed already.
 Original code is MIT licensed; dependency and imported-data terms are in the included notices.
 "@).TrimStart() | Set-Content -LiteralPath $notes -Encoding utf8NoBOM
 Push-Location $repository
@@ -72,12 +72,15 @@ $nativeInstaller = Join-Path $bootstrap 'Setup.exe'
 Move-Item -LiteralPath $installer -Destination $nativeInstaller
 $setupHash = (Get-FileHash -LiteralPath $nativeInstaller -Algorithm SHA256).Hash
 $portableHash = (Get-FileHash -LiteralPath $portableDownload -Algorithm SHA256).Hash
+$updatePackage = Join-Path $output "SpaceMaid-$($release.Version)-full.nupkg"
+$updateHash = (Get-FileHash -LiteralPath $updatePackage -Algorithm SHA256).Hash
 Push-Location $repository
 try {
     dotnet publish src/SpaceMaid.Installer/SpaceMaid.Installer.csproj -c Release -r win-x64 --self-contained true `
         -p:EnableWindowsTargeting=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
         "-p:Version=$($release.Version)" "-p:InstallerSetupPayload=$nativeInstaller" "-p:InstallerPortablePayload=$portableDownload" `
         "-p:InstallerSetupSha256=$setupHash" "-p:InstallerPortableSha256=$portableHash" `
+        "-p:InstallerUpdatePayload=$updatePackage" "-p:InstallerUpdateSha256=$updateHash" `
         --artifacts-path (Join-Path $bootstrap 'build') --output (Join-Path $bootstrap 'published') -m:1
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the installation-mode bootstrap.' }
 }

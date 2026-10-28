@@ -11,30 +11,50 @@ namespace SpaceMaid.Installer;
 public partial class InstallerWindow : Window
 {
     private readonly InstallerPayloads _payloads = new(Assembly.GetExecutingAssembly());
+    private readonly Func<InstalledApplication?> _findInstallation;
+    private InstalledApplication? _installation;
     private CancellationTokenSource? _cancellation;
     private bool _nativeInstall;
     private bool _completed;
     private string? _portableFolder;
 
-    public InstallerWindow()
+    public InstallerWindow() : this(InstallationDiscovery.Find) { }
+
+    internal InstallerWindow(Func<InstalledApplication?> findInstallation)
     {
+        _findInstallation = findInstallation;
         InitializeComponent();
+        _installation = _findInstallation();
         VersionLabel.Text = _payloads.Version;
         FolderPath.Text = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Space Maid");
         RuntimePanel.Visibility = DesktopRuntime.IsAvailable() ? Visibility.Collapsed : Visibility.Visible;
-        if (!_payloads.IsAvailable)
-        {
-            Status.Text = "This build has no installation files. Download Setup from GitHub Releases.";
-            ActionButton.IsEnabled = false;
-        }
+        RefreshChoice();
     }
 
     private void OnModeChanged(object sender, RoutedEventArgs e)
     {
         if (FolderPanel is null) return;
-        FolderPanel.Visibility = PortableMode.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ActionButton.Content = PortableMode.IsChecked == true ? "Create portable app" : "Install";
-        Status.Text = "";
+        RefreshChoice();
+    }
+
+    private void RefreshChoice()
+    {
+        bool portable = PortableMode.IsChecked == true;
+        bool update = _installation?.NeedsUpdate(_payloads.Version) == true;
+        FolderPanel.Visibility = portable ? Visibility.Visible : Visibility.Collapsed;
+        InstallModeTitle.Text = _installation is null ? "Install for me" : update ? "Update Space Maid" : "Open Space Maid";
+        System.Windows.Automation.AutomationProperties.SetName(InstallMode, InstallModeTitle.Text);
+        InstallModeDescription.Text = _installation is null ? "Start menu · Update checks"
+            : update ? $"{_installation.Version} → {_payloads.Version}\nCloses Space Maid; keeps settings and catalogs"
+            : _installation.Version.ToString() == _payloads.Version ? $"Version {_installation.Version} is already installed"
+            : $"Newer version {_installation.Version} is installed";
+        InstalledFolderLabel.Text = _installation?.Folder ?? "";
+        InstalledFolderLabel.Visibility = _installation is null ? Visibility.Collapsed : Visibility.Visible;
+        ActionButton.Content = portable ? "Create portable app" : _installation is null ? "Install" : update ? "Update" : "Open Space Maid";
+        bool needsPayload = portable || _installation is null || update;
+        ActionButton.IsEnabled = !needsPayload || _payloads.IsAvailable;
+        Status.Text = needsPayload && !_payloads.IsAvailable
+            ? "This build has no installation files. Download Setup from GitHub Releases." : "";
     }
 
     private void OnBrowse(object sender, RoutedEventArgs e)
@@ -52,11 +72,28 @@ public partial class InstallerWindow : Window
             return;
         }
         bool portable = PortableMode.IsChecked == true;
+        InstalledApplication? installation = _installation;
+        if (!portable)
+        {
+            InstalledApplication? current = _findInstallation();
+            if (current != installation)
+            {
+                _installation = current;
+                RefreshChoice();
+                Status.Text = "The installation changed. Review the available action and try again.";
+                return;
+            }
+            if (installation is not null && !installation.NeedsUpdate(_payloads.Version))
+            {
+                TryOpen(Path.Join(installation.Folder, "current", "SpaceMaid.App.exe"));
+                return;
+            }
+        }
         _cancellation = new CancellationTokenSource();
         ModePanel.IsEnabled = FolderPanel.IsEnabled = ActionButton.IsEnabled = false;
         Progress.Visibility = Visibility.Visible;
         Progress.IsIndeterminate = !portable;
-        Status.Text = portable ? "Preparing portable app…" : "Preparing installation…";
+        Status.Text = portable ? "Preparing portable app…" : installation is null ? "Preparing installation…" : "Preparing update…";
         try
         {
             var progress = new Progress<double>(value => Progress.Value = value * 100);
@@ -76,17 +113,34 @@ public partial class InstallerWindow : Window
             }
             else
             {
-                using PreparedSetup setup = await _payloads.PrepareSetupAsync(_cancellation.Token);
+                using PreparedPayload setup = installation is null
+                    ? await _payloads.PrepareSetupAsync(_cancellation.Token)
+                    : await _payloads.PrepareUpdateAsync(_cancellation.Token);
                 _cancellation.Token.ThrowIfCancellationRequested();
+                if (_findInstallation() != installation)
+                    throw new IOException("The installation changed. Close Setup and try again.");
+                // Native Setup replaces its entire destination. Never use it on existing data.
+                if (installation is null) PortableInstaller.ValidateDestination(InstallationDiscovery.DefaultFolder);
                 // Once Setup applies changes, its own dialog owns cancellation and rollback.
                 _nativeInstall = true;
                 CancelButton.IsEnabled = false;
-                Status.Text = "Installing…";
-                using Process process = Process.Start(new ProcessStartInfo(setup.Path) { UseShellExecute = true })
+                Status.Text = installation is null ? "Installing…" : "Updating…";
+                ProcessStartInfo command = installation?.UpdateCommand(setup.Path)
+                    ?? new ProcessStartInfo(setup.Path) { UseShellExecute = true };
+                if (installation is null)
+                {
+                    command.ArgumentList.Add("--installto");
+                    command.ArgumentList.Add(InstallationDiscovery.DefaultFolder);
+                }
+                using Process process = Process.Start(command)
                     ?? throw new IOException("Setup could not start. Try running Setup again.");
                 await process.WaitForExitAsync();
                 _nativeInstall = false;
-                if (process.ExitCode != 0) throw new IOException("Installation did not finish. Try again.");
+                if (process.ExitCode != 0) throw new IOException(installation is null ? "Installation did not finish. Try again." : "Update did not finish. Try again.");
+                InstalledApplication? installed = InstallationDiscovery.Read(installation?.Folder ?? InstallationDiscovery.DefaultFolder);
+                if (installed is null || installed.Version != Velopack.SemanticVersion.Parse(_payloads.Version))
+                    throw new IOException("Setup did not finish. Close Space Maid and try again.");
+                if (installation is not null && !TryOpen(Path.Join(installed.Folder, "current", "SpaceMaid.App.exe"))) return;
                 _completed = true;
                 Close();
             }
@@ -103,7 +157,15 @@ public partial class InstallerWindow : Window
             _cancellation = null;
             Progress.Visibility = Visibility.Collapsed;
             CancelButton.IsEnabled = true;
-            if (_portableFolder is null) ModePanel.IsEnabled = FolderPanel.IsEnabled = ActionButton.IsEnabled = _payloads.IsAvailable;
+            if (_portableFolder is null)
+            {
+                ModePanel.IsEnabled = FolderPanel.IsEnabled = true;
+                // Retain the result/error until the user changes mode or retries.
+                _installation = _findInstallation();
+                string result = Status.Text;
+                RefreshChoice();
+                Status.Text = result;
+            }
         }
     }
 
@@ -138,9 +200,9 @@ public partial class InstallerWindow : Window
         window.SetResourceReference(ForegroundProperty, "WindowForeground");
         window.ShowDialog();
     }
-    private void TryOpen(string path)
+    private bool TryOpen(string path)
     {
-        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-        catch (Exception error) when (error is Win32Exception or IOException or InvalidOperationException) { Status.Text = "Could not open it. " + error.Message; }
+        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); return true; }
+        catch (Exception error) when (error is Win32Exception or IOException or InvalidOperationException) { Status.Text = "Could not open it. " + error.Message; return false; }
     }
 }
