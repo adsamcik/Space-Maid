@@ -69,6 +69,7 @@ public partial class MainWindow : Window
         ClearPreliminary();
         _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
         _snapshot = null;
+        UpdateOptimizationAvailability(_work is not null);
         _snapshotVolumeId = null;
         _scanStale = false;
         _staleScopes.Clear();
@@ -96,6 +97,7 @@ public partial class MainWindow : Window
         _extensions?.SetDiscoveryBusy(busy);
         UpdatePathAvailability(busy);
         UpdateFastScanButton(busy);
+        UpdateOptimizationAvailability(busy);
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;

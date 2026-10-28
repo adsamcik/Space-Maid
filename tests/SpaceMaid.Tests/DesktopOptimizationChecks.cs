@@ -118,7 +118,33 @@ public sealed partial class DesktopTests
         try
         {
             host.InitializeOptimization(); host.SetScanTarget(source.Path);
-            var scan = host.ScanCurrentPathAsync(); PumpUntil(() => scan.IsCompleted, TimeSpan.FromSeconds(15)); Assert.True(scan.GetAwaiter().GetResult());
+            var button = (Button)host.FindName("OptimizationButton");
+            var hint = (TextBlock)host.FindName("OptimizationHint");
+            Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
+            host.SetBusy(true); Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
+            host.SetBusy(false);
+            Assert.True(ToolTipService.GetShowOnDisabled(button));
+#pragma warning disable WPF0001
+            foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
+            {
+                app.ThemeMode = theme;
+                string name = theme == ThemeMode.Light ? "light" : "dark";
+                Render(host, Path.Join(FindRepository(), "artifacts", "ui", $"optimization-scan-first-{name}.png"), 1020, 820);
+            }
+#pragma warning restore WPF0001
+            var scan = host.ScanCurrentPathAsync();
+            Assert.False(button.IsEnabled); Assert.Equal("Available after scan", hint.Text);
+            Assert.Contains("scan to finish", System.Windows.Automation.AutomationProperties.GetHelpText(button));
+            Render(host, Path.Join(FindRepository(), "artifacts", "ui", "optimization-scanning-dark.png"), 1020, 820);
+            PumpUntil(() => scan.IsCompleted, TimeSpan.FromSeconds(15)); Assert.True(scan.GetAwaiter().GetResult());
+            Assert.True(button.IsEnabled); Assert.Equal(Visibility.Collapsed, hint.Visibility);
+            host.SetBusy(true);
+            Assert.False(button.IsEnabled); Assert.Equal("Available when idle", hint.Text);
+            host.SetBusy(false); Assert.True(button.IsEnabled);
+            Render(host, Path.Join(FindRepository(), "artifacts", "ui", "optimization-ready-dark.png"), 1020, 820);
+#pragma warning disable WPF0001
+            app.ThemeMode = ThemeMode.System;
+#pragma warning restore WPF0001
             var disabled = host.TryAutomaticOptimizationAsync(); PumpUntil(() => disabled.IsCompleted, TimeSpan.FromSeconds(5)); disabled.GetAwaiter().GetResult();
             Assert.Equal(2, Directory.GetFiles(Path.Join(source.Path, "__pycache__")).Length);
             var snapshot = (ScanSnapshot)typeof(MainWindow).GetField("_snapshot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(host)!;
@@ -137,6 +163,15 @@ public sealed partial class DesktopTests
             Assert.Empty(Directory.GetFiles(Path.Join(source.Path, "__pycache__")));
             Assert.Equal(2, Directory.GetFiles(source.Path, "*.py").Length);
             Assert.Equal(2, Directory.GetFiles(Path.Join(state.Path, "logs", "Optimization"), "*.jsonl").Length);
+            var cancelled = host.ScanCurrentPathAsync();
+            Assert.False(button.IsEnabled); Assert.Equal("Available after scan", hint.Text);
+            ((Button)host.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => cancelled.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(cancelled.GetAwaiter().GetResult());
+            Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
+            host.SetScanTarget(Path.Join(source.Path, "missing"));
+            var failed = host.ScanCurrentPathAsync();
+            PumpUntil(() => failed.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(failed.GetAwaiter().GetResult());
+            Assert.False(button.IsEnabled); Assert.Equal("Scan first", hint.Text);
         }
         finally
         {

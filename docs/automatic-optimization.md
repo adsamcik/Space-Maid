@@ -1,6 +1,6 @@
 # Automatic optimization
 
-Scan a location, then choose **Auto optimize**. Select rules, preview exact files and use **Delete previewed files** for one run. Select **Optimize automatically** and **Save settings** for recurring cleanup. All automatic actions are off by default.
+Scan a location and wait for the scan to finish, then choose **Auto optimize**. The button shows when it will be available. Select rules, preview exact files and use **Delete previewed files** for one run. Select **Optimize automatically** and **Save settings** for recurring cleanup. All automatic actions are off by default.
 
 Generated-file eviction permanently deletes verified resources; regeneration replaces undo. Ordinary folder cleanup still uses the Recycle Bin. Keep a file or its containing resource with **Keep file** / **Keep folder**, then save the exclusion for automatic runs.
 

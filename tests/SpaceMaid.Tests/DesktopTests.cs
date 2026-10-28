@@ -190,6 +190,18 @@ public sealed partial class DesktopTests
                 Assert.Contains("backend-selected", events);
                 Assert.Contains("app-scan-complete", events);
                 Assert.Contains("Standard Windows scan", ((TextBlock)window.FindName("BackendStatusText")).Text);
+                SetStage("opening automatic optimization after the scan completes");
+                var optimizeButton = (Button)window.FindName("OptimizationButton");
+                Assert.True(optimizeButton.IsEnabled);
+                Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("OptimizationHint")).Visibility);
+                OptimizationWindow? optimizationDialog = null;
+                window.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    optimizationDialog = app.Windows.OfType<OptimizationWindow>().Single();
+                    optimizationDialog.Close();
+                }));
+                optimizeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.NotNull(optimizationDialog);
                 SetStage("showing historical drive suggestions and recent folders");
                 drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();

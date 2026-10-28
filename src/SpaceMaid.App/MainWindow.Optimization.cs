@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Threading;
 using SpaceMaid.Core.Optimization;
 using SpaceMaid.Core.Scanning;
@@ -14,6 +15,21 @@ public partial class MainWindow
     private DispatcherTimer? _optimizationTimer;
     private OptimizationWindow? _optimizationWindow;
     private Task<OptimizationResult>? _optimizationTask;
+
+    private void UpdateOptimizationAvailability(bool busy)
+    {
+        bool available = !_closing && !_scanning && !busy && _work is null && _snapshot is not null;
+        string hint = _scanning ? "Available after scan" : _snapshot is null ? "Scan first" : "Available when idle";
+        string help = available ? "Choose rules and preview generated files for this location."
+            : _scanning ? "Wait for the scan to finish, then choose rules and preview files."
+            : _snapshot is null ? "Complete a scan to choose rules and preview generated files."
+            : "Wait for the current work to finish.";
+        OptimizationButton.IsEnabled = available;
+        OptimizationButton.ToolTip = help;
+        AutomationProperties.SetHelpText(OptimizationButton, help);
+        OptimizationHint.Text = available ? "" : hint;
+        OptimizationHint.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     internal void InitializeOptimization()
     {
@@ -48,7 +64,7 @@ public partial class MainWindow
 
     private void Optimization_Click(object sender, RoutedEventArgs e)
     {
-        if (_closing || _work is not null || _optimizationWindow is not null) return;
+        if (!OptimizationButton.IsEnabled || _closing || _work is not null || _optimizationWindow is not null) return;
         if (_snapshot is not { } scan) { StatusText.Text = "Scan a location before setting up automatic optimization."; return; }
         var findings = _rows.Select(row => row.Item).ToArray();
         _optimizationWindow = new(scan, findings, Operations, _optimizationSettings, SaveOptimizationPolicy,

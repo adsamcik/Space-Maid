@@ -12,6 +12,7 @@ public partial class MainWindow
 {
     private HelperLayoutSource? _scanHelper;
     private bool _fastEnabled;
+    private bool _scanning;
     private string _scanStatus = "Ready · Scan a drive to explore space";
     private TimeSpan _detectionElapsed, _presentationElapsed;
 
@@ -29,6 +30,7 @@ public partial class MainWindow
         ClearResults();
         using var work = new CancellationTokenSource();
         _work = work;
+        _scanning = true;
         using var log = new ScanLog(LogDirectory);
         _scanLogPath = log.FilePath;
         OpenLogButton.Visibility = _scanLogPath is null ? Visibility.Collapsed : Visibility.Visible;
@@ -165,6 +167,7 @@ public partial class MainWindow
             }
             if (!_closing && log.Error is not null) BackendStatusText.Text += $" · Logging unavailable: {log.Error}";
             _work = null;
+            _scanning = false;
             if (!_closing) SetBusy(false);
             if (!_closing) _ = Dispatcher.BeginInvoke(new Action(async () => await TryAutomaticOptimizationAsync()));
         }
