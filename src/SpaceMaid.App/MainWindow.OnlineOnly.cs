@@ -9,7 +9,7 @@ public partial class MainWindow
 {
     internal async Task MakeOnlineOnlyAsync(ScanSnapshot scan, int link)
     {
-        if (!CanUseFolderMenu(scan) || _scanStale) return;
+        if (!CanUseFolderMenu(scan)) return;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("make-online-only", scan.EntryPath(link)!);
         _work = work; SetBusy(true);

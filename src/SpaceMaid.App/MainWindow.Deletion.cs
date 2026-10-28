@@ -41,7 +41,6 @@ public partial class MainWindow
     private async Task<RecycleResult?> DeleteFolderAsync(ScanSnapshot scan, int link)
     {
         if (!CanUseFolderMenu(scan)) return null;
-        if (_scanStale) { StatusText.Text = "Results are out of date. Rescan before deleting another folder."; return null; }
         _deleting = true; // Guard modal reentrancy as well as repeated key presses.
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("recycle", scan.EntryPath(link) ?? scan.RootPath);
@@ -51,13 +50,16 @@ public partial class MainWindow
         try
         {
             SetBusy(true);
-            // Resolve and validate live metadata off the dispatcher. The
-            // selected entry is captured before opening the confirmation.
-            var target = await Task.Run(() => FolderDeletionTarget.FromScan(scan, link), work.Token);
-            if (_closing || work.IsCancellationRequested) return null;
+            StatusText.Text = "Checking selected folder…";
+            var target = await Operations.PrepareRecycleAsync(scan, link, work.Token, log.Record);
+            if (_closing || work.IsCancellationRequested || !ReferenceEquals(_snapshot, scan)) return null;
             var confirmation = new RecycleFolderWindow(target) { Owner = this };
             if (confirmation.ShowDialog() != true || _closing || work.IsCancellationRequested)
-            { log.Record("recycle-confirmation-cancelled", new { target.Path }); return null; }
+            {
+                log.Record("recycle-confirmation-cancelled", new { target.Path });
+                if (!_closing) StatusText.Text = "Folder unchanged.";
+                return null;
+            }
             StatusText.Text = $"Moving to Recycle Bin: {target.Path} · Windows shows progress and cancellation.";
             started = true;
             var result = await Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
@@ -86,9 +88,13 @@ public partial class MainWindow
         }
         catch (OperationCanceledException)
         {
-            if (!_closing && started) MarkScanStale(outcome is { Cancelled: false }
-                ? "Folder moved. Refresh cancelled; recheck to update results."
-                : "Recycling cancelled. Some contents may already have moved. Recheck or rescan to refresh the results.");
+            if (!_closing)
+            {
+                if (started) MarkScanStale(outcome is { Cancelled: false }
+                    ? "Folder moved. Refresh cancelled; recheck to update results."
+                    : "Recycling cancelled. Some contents may already have moved. Recheck or rescan to refresh the results.");
+                else StatusText.Text = "Folder check cancelled. Nothing was moved.";
+            }
             return outcome;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or UnauthorizedAccessException

@@ -9,6 +9,45 @@ namespace SpaceMaid.Tests;
 
 public sealed class DeletionTests
 {
+    [Fact]
+    public async Task RecyclePreparationChecksCurrentContentsAndRetainsIdentityGuards()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "folder")).FullName;
+        string file = Path.Join(folder, "data.bin");
+        File.WriteAllBytes(file, new byte[4096]);
+        var operations = new FileOperations();
+        var scan = await operations.MeasureFolderAsync(fixture.Path);
+        int link = scan.FindEntry(folder)!.Value;
+        File.WriteAllBytes(file, new byte[8192]);
+        File.WriteAllBytes(file + ":extra", new byte[4096]);
+        var target = await operations.PrepareRecycleAsync(scan, link, default);
+        Assert.Equal(4096, scan.Entry(link).LogicalBytes);
+        Assert.Equal(12288, target.LogicalBytes);
+        Assert.Equal(folder, target.Path);
+        target.ValidateCurrent();
+        Directory.Move(folder, folder + "-original");
+        Directory.CreateDirectory(folder);
+        Assert.Throws<InvalidOperationException>(target.ValidateCurrent);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => operations.PrepareRecycleAsync(scan, link, default));
+        Assert.Equal(8192, new FileInfo(Path.Join(folder + "-original", "data.bin")).Length);
+    }
+
+    [Fact]
+    public async Task CancelledAndMissingRecycleChecksDoNotReturnATarget()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "folder")).FullName;
+        var operations = new FileOperations();
+        var scan = await operations.MeasureFolderAsync(fixture.Path);
+        int link = scan.FindEntry(folder)!.Value;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operations.PrepareRecycleAsync(scan, link, new(true)));
+        Assert.True(Directory.Exists(folder));
+        Directory.Move(folder, folder + "-moved");
+        Assert.NotNull(await Record.ExceptionAsync(() => operations.PrepareRecycleAsync(scan, link, default)));
+        Assert.True(Directory.Exists(folder + "-moved"));
+    }
+
     [Theory]
     [InlineData(@"C:\")]
     [InlineData(@"G:\$Recycle.Bin\example")]

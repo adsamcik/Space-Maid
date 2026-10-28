@@ -36,6 +36,20 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
         IProgress<OpportunityValidationProgress>? progress = null)
         => OpportunityReviewValidator.ValidateAsync(scan, selected, token, diagnostic, discover, progress, MetadataSource());
 
+    public async Task<FolderDeletionTarget> PrepareRecycleAsync(ScanSnapshot scan, int link, CancellationToken token,
+        Action<string, object>? diagnostic = null)
+    {
+        // Keep the selected identity, but obtain confirmation sizes from just
+        // this folder. Unrelated stale inventory does not prevent recycling.
+        var selected = await Task.Run(() => FolderDeletionTarget.FromScan(scan, link), token);
+        var current = await MeasureFolderAsync(selected.Path, token, diagnostic);
+        return await Task.Run(() =>
+        {
+            selected.ValidateCurrent();
+            return FolderDeletionTarget.FromScan(current, -1);
+        }, token);
+    }
+
     public Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null) => FolderRecycler.RecycleAsync(target, owner, token, diagnostic);
 

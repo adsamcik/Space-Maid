@@ -451,10 +451,17 @@ public sealed partial class DesktopTests
                 Assert.Equal("No skipped-path warnings", ((TextBlock)details.FindName("CoverageText")).Text);
                 Assert.Contains(Descendants(startup.Content as DependencyObject).OfType<Button>(), b => Equals(b.Content, "Continue without admin"));
 
-                SetStage("checking folder Delete confirmation and its safe default");
+                SetStage("checking current folder contents on demand after invalidation");
                 var returnToFolder = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
                 PumpUntil(() => returnToFolder.IsCompleted, TimeSpan.FromSeconds(10));
                 returnToFolder.GetAwaiter().GetResult();
+                window.MarkScanStale("Fixture inventory invalidated.", [new(project, false)]);
+                File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[16384]);
+                RightClick(window, tree, keyboard: true);
+                PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
+                Assert.True(((MenuItem)tree.ContextMenu.Items[1]).IsEnabled);
+                RenderMenu(tree.ContextMenu, Path.Join(FindRepository(), "artifacts", "ui", "stale-folder-menu.png"));
+                tree.ContextMenu.IsOpen = false;
                 Exception? confirmationFailure = null;
                 bool confirmed = false;
                 var confirmationTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
@@ -470,7 +477,8 @@ public sealed partial class DesktopTests
                         Assert.Equal("bin", ((TextBlock)dialog.FindName("TargetName")).Text);
                         Assert.False(((Expander)dialog.FindName("DeletionDetails")).IsExpanded);
                         Assert.Equal(Visibility.Collapsed, ((TextBlock)dialog.FindName("PartialScanNote")).Visibility);
-                        Assert.Contains("8 KiB", ((TextBlock)dialog.FindName("TargetSize")).Text);
+                        Assert.Contains("16 KiB", ((TextBlock)dialog.FindName("TargetSize")).Text);
+                        Render(dialog, Path.Join(FindRepository(), "artifacts", "ui", "recycle-rechecked.png"), 520, 300);
                         confirmed = true;
                     }
                     catch (Exception ex) { confirmationFailure = ex; }
@@ -485,6 +493,10 @@ public sealed partial class DesktopTests
                 Assert.True(deleteKey.Handled);
                 Assert.True(confirmed);
                 Assert.True(Directory.Exists(bin));
+                Assert.Equal(16384, new FileInfo(Path.Join(bin, "sample.dll")).Length);
+                Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
+                File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[8192]);
+                BuildActivityFixture.AgeProject(project);
                 Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
                 // Delete while the exact path text field is focused must not
                 // invoke folder recycling.
@@ -494,7 +506,7 @@ public sealed partial class DesktopTests
                 pathField.RaiseEvent(fieldKey);
                 Assert.False(fieldKey.Handled);
 
-                SetStage("recycling a fixture through the actual UI and marking its scan stale");
+                SetStage("recycling a fixture through the actual UI after invalidation");
                 var approveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
                     var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
@@ -593,6 +605,7 @@ public sealed partial class DesktopTests
                     int cloudLink = cloudScan.FindEntry(cloudFile)!.Value;
                     var goCloud = window.NavigateToEntryAsync(cloudLink);
                     PumpUntil(() => goCloud.IsCompleted, TimeSpan.FromSeconds(10)); goCloud.GetAwaiter().GetResult();
+                    window.MarkScanStale("Unrelated fixture metadata invalidated.", [new(project)]);
                     RightClick(window, tree, keyboard: true);
                     PumpUntil(() => tree.ContextMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, "Make online-only")), TimeSpan.FromSeconds(10));
                     Assert.True(tree.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "Make online-only")).IsEnabled);

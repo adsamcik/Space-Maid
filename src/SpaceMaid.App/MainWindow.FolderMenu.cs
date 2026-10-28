@@ -41,8 +41,7 @@ public partial class MainWindow
                 if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
             };
             string? recycleRoot = RecycleBinService.RootForFolder(path);
-            string? blocked = recycleRoot is not null ? null : _scanStale ? "Rescan before deleting another folder."
-                : FolderDeletionTarget.SelectionBlockReason(scan, link);
+            string? blocked = recycleRoot is not null ? null : FolderDeletionTarget.SelectionBlockReason(scan, link);
             var recycle = new MenuItem
             {
                 Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
@@ -74,9 +73,9 @@ public partial class MainWindow
         menu.Items.Remove(checking);
         if (state is not null)
         {
-            bool enabled = !_scanStale && (state.IsDirectory || state.CanRequestOnlineOnly);
+            bool enabled = state.IsDirectory || state.CanRequestOnlineOnly;
             var online = new MenuItem { Header = "Make online-only", IsEnabled = enabled,
-                ToolTip = _scanStale ? "Recheck this folder or rescan first." : enabled ? $"Managed by {state.Provider}"
+                ToolTip = enabled ? $"Managed by {state.Provider}"
                     : state.LocalBytes == 0 ? "This file is already online-only." : "This file is unsynced or excluded by the provider." };
             ToolTipService.SetShowOnDisabled(online, true);
             online.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await MakeOnlineOnlyAsync(scan, link); };

@@ -83,6 +83,13 @@ public sealed class ScopedScannerTests
         var fresh = await new VolumeScanner().MeasureFolderAsync(fixture.Path);
         var source = new MetadataSource(fresh);
         var operations = new FileOperations(() => source);
+        var recycle = await operations.PrepareRecycleAsync(original, original.FindEntry(output)!.Value, default);
+        Assert.Equal(output, recycle.Path);
+        Assert.Equal(12288, recycle.LogicalBytes);
+        var outputIds = new[] { output, file }.Select(path =>
+            fresh.Records[fresh.Entry(fresh.FindEntry(path)!.Value).FileIndex].Identity).ToHashSet();
+        Assert.All(source.Requests.SelectMany(ids => ids), id => Assert.Contains(id, outputIds));
+        Assert.Equal(0, source.WholeVolumeCalls);
         var checkedSelection = await operations.ReviewCleanupAsync(original, [selected],
             discover: DeveloperOpportunityFixture.Find);
         Assert.Equal(12288, Assert.Single(checkedSelection.ValidatedLocations).LogicalBytes);
