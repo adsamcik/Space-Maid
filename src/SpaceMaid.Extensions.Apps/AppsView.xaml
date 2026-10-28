@@ -66,7 +66,10 @@
                 <TextBox Text="{Binding PathText, Mode=OneWay}" IsReadOnly="True" Background="Transparent" BorderThickness="0" Padding="0" FontSize="12" AutomationProperties.Name="Selected app folder" />
                 <Expander Header="Size details" Style="{StaticResource CompactDetails}" FontSize="12" Margin="0,5,12,0"><ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto"><TextBlock Text="{Binding Details}" TextWrapping="Wrap" Opacity="0.75" Margin="0,5,8,0" /></ScrollViewer></Expander>
             </StackPanel>
-            <Button x:Name="OpenButton" Grid.Column="1" Content="Open folder" VerticalAlignment="Top" Click="Open_Click" Padding="12,5" Margin="8,0,0,0" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button x:Name="ExploreButton" Content="Explore in Space Maid" Click="Explore_Click" Padding="12,5" Margin="8,0,0,0"/>
+                <Button x:Name="OpenButton" Content="Open folder" Click="Open_Click" Padding="12,5" Margin="8,0,0,0" />
+            </StackPanel>
         </Grid>
         <Expander Grid.Row="4" Header="Discovery details" Style="{StaticResource CompactDetails}" FontSize="12" Margin="0,8,0,0">
             <TextBlock x:Name="CoverageText" Text="Install folders only. App data and caches elsewhere are excluded. Windows Store packages and apps outside known locations may need Add app folder." TextWrapping="Wrap" Opacity="0.7" Margin="0,5,0,0" />

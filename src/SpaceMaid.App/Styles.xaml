@@ -18,6 +18,24 @@
             <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter Property="FontWeight" Value="SemiBold" /><Setter TargetName="Underline" Property="Visibility" Value="Visible" /></Trigger></ControlTemplate.Triggers>
         </ControlTemplate></Setter.Value></Setter>
     </Style>
+    <Style x:Key="WorkspaceNavigation" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{DynamicResource WindowForeground}"/>
+        <Setter Property="Padding" Value="12,10"/><Setter Property="Margin" Value="0,2"/>
+        <Setter Property="ToolTip" Value="{Binding Content, RelativeSource={RelativeSource Self}}"/>
+        <Setter Property="ContentTemplate"><Setter.Value><DataTemplate><TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis"/></DataTemplate></Setter.Value></Setter>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+            <Border x:Name="Surface" Background="Transparent" CornerRadius="5" BorderThickness="1" BorderBrush="Transparent">
+                <Grid><Border x:Name="Indicator" Width="3" Height="18" CornerRadius="2" HorizontalAlignment="Left" Background="{DynamicResource AccentButtonBackground}" Visibility="Collapsed"/>
+                <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" RecognizesAccessKey="True"/></Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/></Trigger>
+                <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/><Setter TargetName="Indicator" Property="Visibility" Value="Visible"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource WindowForeground}"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style x:Key="ColumnHeader" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
         <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />

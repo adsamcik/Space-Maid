@@ -15,7 +15,7 @@ internal sealed record ExtensionManifest(string Id, string Name, string Version,
 internal sealed record ExtensionLocation(string Directory, bool Enabled = true);
 internal sealed record ExtensionSettings(List<ExtensionLocation> Directories, List<string> DisabledIds);
 internal sealed record LoadedExtension(string Id, string Name, string Directory, string Status,
-    FrameworkElement? View = null, string? Error = null);
+    FrameworkElement? View = null, string? Error = null, string? Version = null, bool SupportsOpportunities = false);
 
 internal sealed class ExtensionRuntime : IAsyncDisposable
 {
@@ -31,6 +31,9 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     private readonly List<LoadedExtension> _entries = [];
     private readonly bool _administrator;
     private readonly Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? _evidenceReview;
+    private readonly IExtensionNavigation? _navigation;
+    private readonly Dictionary<string, bool> _initialEnabled = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _addedIds = new(StringComparer.OrdinalIgnoreCase);
     private ExtensionSettings _settings;
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _initializing;
@@ -47,9 +50,10 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     internal ExtensionRuntime(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Action<string> reveal,
         string? dataRoot = null, string? bundleRoot = null, string? logDirectory = null, bool? administrator = null,
         Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? evidenceReview = null,
-        FileOperations? operations = null)
+        FileOperations? operations = null, IExtensionNavigation? navigation = null)
     {
         _evidenceReview = evidenceReview;
+        _navigation = navigation;
         _administrator = administrator ?? Elevation.IsAdministrator;
         _dataRoot = dataRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid", "Extensions");
         _bundleRoot = bundleRoot ?? Path.Combine(AppContext.BaseDirectory, "Extensions");
@@ -92,7 +96,8 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
                 var manifest = ReadManifest(directory); id = manifest.Id; name = manifest.Name;
                 if (!ids.Add(id)) throw new InvalidDataException("Another extension has the same ID. Only one directory per extension is supported.");
                 bool enabled = candidate.Enabled && !_settings.DisabledIds.Contains(id, StringComparer.OrdinalIgnoreCase);
-                if (!enabled) { _entries.Add(new(id, name, directory, "Disabled · restart to apply changes")); continue; }
+                _initialEnabled[id] = enabled;
+                if (!enabled) { _entries.Add(new(id, name, directory, "Disabled", Version: manifest.Version)); continue; }
                 if (SettingsError is not null) { _entries.Add(new(id, name, directory, "Unavailable", Error: SettingsError)); continue; }
                 if (_administrator)
                 { _entries.Add(new(id, name, directory, "Unavailable", Error: "Reopen Space Maid without administrator access to use extensions.")); continue; }
@@ -111,14 +116,15 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
                     throw new InvalidDataException("The extension descriptor differs from its manifest.");
                 string dataDirectory = Path.Combine(_dataRoot, id), cacheDirectory = Path.Combine(dataDirectory, "Cache");
                 System.IO.Directory.CreateDirectory(dataDirectory); System.IO.Directory.CreateDirectory(cacheDirectory);
-                var host = new Host(dataDirectory, cacheDirectory, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
+                var host = new Host(dataDirectory, cacheDirectory, _navigation, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
                 FrameworkElement? view = instance.CreateView();
                 if (instance is IOpportunityExtension opportunities) Opportunities.Register(id, opportunities);
+                bool supportsOpportunities = instance is IOpportunityExtension;
                 _loaded.Add(instance); instance = null;
-                _entries.Add(new(id, name, directory, "Loaded", view));
+                _entries.Add(new(id, name, directory, "Loaded", view, Version: manifest.Version, SupportsOpportunities: supportsOpportunities));
                 _diagnostics.Record("extension-loaded", new { Id = id, manifest.Version, manifest.ContractVersion });
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { if (instance is not null) await instance.DisposeAsync(); throw; }
@@ -151,7 +157,9 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         }
         return await _evidenceReview(session, selected, linked.Token);
     }
-    internal ExtensionsWindow CreateManagerWindow(Window owner) => new(this) { Owner = owner };
+    internal bool HasPendingChange(LoadedExtension entry) => SettingsError is null
+        && (_initialEnabled.ContainsKey(entry.Id) || _addedIds.Contains(entry.Id))
+        && IsEnabled(entry) != _initialEnabled.GetValueOrDefault(entry.Id);
     internal bool IsEnabled(LoadedExtension entry) => SettingsError is null && !_settings.DisabledIds.Contains(entry.Id, StringComparer.OrdinalIgnoreCase)
         && !_settings.Directories.Any(value => value.Directory.Equals(entry.Directory, StringComparison.OrdinalIgnoreCase) && !value.Enabled);
     internal void SetEnabled(LoadedExtension entry, bool enabled)
@@ -168,8 +176,12 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         if (_settings.Directories.Count >= 64) throw new InvalidOperationException("At most 64 trusted extension directories are supported.");
         if (_settings.Directories.Any(value => value.Directory.Equals(path, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("This extension directory has already been added.");
+        if (_entries.Any(entry => entry.Id.Equals(manifest.Id, StringComparison.OrdinalIgnoreCase))
+            || _addedIds.Contains(manifest.Id))
+            throw new InvalidOperationException("An extension with this ID is already installed.");
         var directories = _settings.Directories.ToList(); directories.Add(new(path));
         SaveSettings(new(directories, DisabledIdsForExplicitSave().Where(value => !value.Equals(manifest.Id, StringComparison.OrdinalIgnoreCase)).ToList()));
+        _addedIds.Add(manifest.Id);
         return manifest;
     }
     internal bool TryAddTrustedDirectory(string path, out ExtensionManifest? manifest, out string? error)
@@ -242,10 +254,10 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         _loaded.Clear(); _diagnostics.Dispose(); _lifetime.Dispose();
         // Contexts intentionally remain loaded until process exit; settings apply on restart.
     }
-    private sealed record Host(string DataDirectory, string CacheDirectory, IInventoryReader Inventory,
+    private sealed record Host(string DataDirectory, string CacheDirectory, IExtensionNavigation? Navigation, IInventoryReader Inventory,
         IExtensionJobs Jobs, IToolBroker Tools, Action<string> Reveal,
         Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>> EvidenceReview,
-        Action<string, object> Diagnostics) : IExtensionHost, IExtensionEvidenceReview
+        Action<string, object> Diagnostics) : IExtensionHost, IExtensionEvidenceReview, IExtensionNavigationHost
     {
         public void RevealLocation(string path) => Reveal(path);
         public void Log(string eventName, object data) => Diagnostics(eventName, data);

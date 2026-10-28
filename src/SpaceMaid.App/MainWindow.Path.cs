@@ -21,6 +21,7 @@ public partial class MainWindow
         if (_currentPath.Equals(path, StringComparison.Ordinal) && DriveRootText.Text.Length > 0) return;
         string? previousRoot = Path.GetPathRoot(_currentPath);
         _currentPath = path;
+        PublishExtensionContext();
         UpdateDriveLocation();
         OpportunityScopeText.Visibility = OpportunityScopeText.Text == path ? Visibility.Collapsed : Visibility.Visible;
         if (!_editingPath) PathEditor.Text = path;
@@ -117,6 +118,7 @@ public partial class MainWindow
     private void BeginPathEdit()
     {
         if (!PathBar.IsEnabled) return;
+        ExploreTab.IsChecked = true;
         _driveRestoreAttempted = true;
         if (!_editingPath) PathEditor.Text = _currentPath;
         _editingPath = true;
@@ -154,7 +156,7 @@ public partial class MainWindow
     private async void Window_PathKeyDown(object sender, KeyEventArgs e)
     {
         if (e.SystemKey == Key.Down && Keyboard.Modifiers == ModifierKeys.Alt && PathBar.IsEnabled)
-        { e.Handled = true; Drives_Click(DrivesButton, new RoutedEventArgs()); }
+        { e.Handled = true; ExploreTab.IsChecked = true; Drives_Click(DrivesButton, new RoutedEventArgs()); }
         else if (e.Key == Key.L && Keyboard.Modifiers == ModifierKeys.Control
             || e.SystemKey == Key.D && Keyboard.Modifiers == ModifierKeys.Alt)
         { e.Handled = true; BeginPathEdit(); }

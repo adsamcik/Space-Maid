@@ -10,7 +10,7 @@ using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.Extensions.Apps;
 
-public partial class AppsView : UserControl, IDriveExtensionView
+public partial class AppsView : UserControl, IDriveExtensionView, IExtensionContextView
 {
     private readonly IExtensionHost _host;
     private readonly CancellationToken _lifetime;
@@ -27,6 +27,7 @@ public partial class AppsView : UserControl, IDriveExtensionView
     {
         _host = host; _lifetime = lifetime;
         InitializeComponent();
+        ExploreButton.Visibility = (host as IExtensionNavigationHost)?.Navigation is null ? Visibility.Collapsed : Visibility.Visible;
         AppList.ItemsSource = _rows;
         var view = CollectionViewSource.GetDefaultView(_rows);
         view.Filter = item => item is AppRow row && Matches(row);
@@ -42,6 +43,17 @@ public partial class AppsView : UserControl, IDriveExtensionView
         _rows.Clear(); DetailsPanel.Visibility = Visibility.Collapsed;
         StatusText.Text = $"Apps on {root}";
         if (IsVisible) _ = RefreshAsync(false);
+    }
+    public void SetContext(ExtensionViewContext context)
+    {
+        if (context.DriveRoot is { Length: > 0 } root) SetDrive(root);
+    }
+
+    private async void Explore_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppList.SelectedItem is not AppRow { App.Path: { } path }
+            || (_host as IExtensionNavigationHost)?.Navigation is not { } navigation) return;
+        if (!await navigation.ExploreFolderAsync(path)) StatusText.Text = "Could not open this folder. Finish the current operation and try again.";
     }
     internal Task RefreshAsync(bool refreshSizes = true)
     {

@@ -94,6 +94,7 @@ public partial class MainWindow : Window
 
     internal void SetBusy(bool busy)
     {
+        UpdateExtensionWorkspace();
         _extensions?.SetDiscoveryBusy(busy);
         UpdatePathAvailability(busy);
         UpdateFastScanButton(busy);
@@ -149,6 +150,7 @@ public partial class MainWindow : Window
     { if (e.PropertyName == nameof(OpportunityRow.Selected) && !_changingOpportunitySelection) UpdateSelection(); }
     private void UpdateSelection()
     {
+        PublishExtensionContext();
         UpdateOpportunitySelection();
     }
 

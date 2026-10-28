@@ -974,6 +974,8 @@ public sealed partial class DesktopTests
                     Assert.Same(appHelper, typeof(MainWindow).GetField("_scanHelper", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
                     Assert.True(appHelper.IsAvailable); Assert.False(appHelper.Exit.IsCompleted);
                 }
+                BeginWorkflow("Extension workspaces");
+                CheckExtensionWorkspace(window, app, FindRepository());
                 SetStage("closing windows");
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();

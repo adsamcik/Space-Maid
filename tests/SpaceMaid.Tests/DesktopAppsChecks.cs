@@ -30,6 +30,7 @@ public sealed partial class DesktopTests
         // default load context conflicts with WPF's assembly-name resource cache.
         var view = packaged;
         var type = view.GetType(); var assembly = type.Assembly;
+        host.Navigation = (type.GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view) as IExtensionNavigationHost)?.Navigation;
         type.GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(view, host);
         var discoveryProperty = type.GetProperty("Discover", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var appType = assembly.GetType("SpaceMaid.Extensions.Apps.DetectedApp")!;
@@ -115,8 +116,9 @@ public sealed partial class DesktopTests
         content.Content = packaged;
     }
 
-    private sealed class AppsUiHost(string path) : IExtensionHost, IInventoryReader, IInventoryFolderSizes
+    private sealed class AppsUiHost(string path) : IExtensionHost, IInventoryReader, IInventoryFolderSizes, IExtensionNavigationHost
     {
+        public IExtensionNavigation? Navigation { get; set; }
         public string DataDirectory => path;
         public string CacheDirectory => path;
         public IInventoryReader Inventory => this;

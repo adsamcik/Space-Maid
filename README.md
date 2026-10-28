@@ -42,6 +42,7 @@ dotnet run --project src/SpaceMaid.App -c Release
 
 - [Scanner, cleanup and validation history](docs/user-guide-and-validation-history.md)
 - [Extension and Photos architecture](docs/extensions-and-photos-design.md)
+- [Extension workspace and navigation API](docs/extension-workspace.md)
 - [Create an Opportunities extension](docs/opportunity-extensions.md)
 - [Local assistant setup](docs/local-assistant.md)
 - [Inventory evidence and accounting](docs/inventory-evidence.md)

@@ -28,7 +28,7 @@ public partial class MainWindow
         {
             _extensions = new ExtensionRuntime(() => _snapshot, () => _scanStale, RevealExtensionLocation,
                 dataRoot: ExtensionDataRoot, logDirectory: Path.Join(LogDirectory, "Extensions"), evidenceReview: ReviewAssistantEvidenceAsync,
-                operations: Operations);
+                operations: Operations, navigation: new WorkspaceNavigation(this));
             _extensions.JobsChanged += ExtensionJobsChanged;
             _extensions.SetDiscoveryBusy(_work is not null);
             await _extensions.InitializeAsync(_extensionLifetime.Token);
@@ -49,23 +49,36 @@ public partial class MainWindow
             else AppsStatusText.Text = Elevation.IsAdministrator
                 ? "Reopen Space Maid without administrator access to use Apps and extensions."
                 : apps is null ? "Apps unavailable · Check Extensions" : $"Apps · {apps.Status}\n{apps.Error}";
+            InitializeExtensionWorkspace();
             ExtensionsReady = true;
         }
         catch (OperationCanceledException) when (_extensionLifetime.IsCancellationRequested) { }
         catch (Exception error)
-        { if (!_closing) AppsStatusText.Text = ExtensionsStatusText.Text = $"Extensions could not start: {error.Message}"; }
+        {
+            if (!_closing)
+            {
+                string message = $"Extensions could not start. Reopen Space Maid to retry. {error.Message}";
+                AppsStatusText.Text = ExtensionsStatusText.Text = message;
+                if (_extensions is not null)
+                {
+                    _extensionManager ??= new ExtensionsView(_extensions, entry => OpenExtension(entry.Id));
+                    ExtensionManagerContent.Content = _extensionManager;
+                    _extensionManager.ShowStartupError(message);
+                }
+                else ExtensionManagerContent.Content = new System.Windows.Controls.TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new(24) };
+            }
+        }
         finally { ExtensionsReady = true; }
     }
 
     private void UpdateAppsDrive()
     {
-        if (AppsContent?.Content is IDriveExtensionView view && Path.GetPathRoot(_currentPath) is { Length: > 0 } root)
-            view.SetDrive(root);
+        PublishExtensionContext();
     }
 
     private void Extensions_Click(object sender, RoutedEventArgs e)
     {
-        if (_extensions is not null && !_closing) _extensions.CreateManagerWindow(this).ShowDialog();
+        if (!_closing) ExtensionsTab.IsChecked = true;
     }
 
     private void ExtensionJobsChanged()

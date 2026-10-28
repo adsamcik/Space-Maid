@@ -359,6 +359,7 @@ public partial class MainWindow
         PhotosPanel.Visibility = PhotosTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         UpdateAppsDrive();
         AppsPanel.Visibility = AppsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        UpdateExtensionWorkspace();
     }
     private async void ShowInTree_Click(object sender, RoutedEventArgs e)
     {
