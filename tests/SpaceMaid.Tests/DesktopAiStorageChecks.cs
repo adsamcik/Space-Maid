@@ -1,3 +1,4 @@
+using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using System.Reflection;
 using System.Windows;
@@ -18,14 +19,14 @@ public sealed partial class DesktopTests
         var analysis = runtime.Opportunities.Analyze(scan, default);
         var load = window.InitializeExplorerAsync(scan, analysis.Findings, default);
         PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
-        ((TextBox)window.FindName("OpportunitySearch")).Text = "";
-        ((ComboBox)window.FindName("OpportunityTypeFilter")).SelectedIndex = 0;
-        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
+        ((TextBox)OpportunityControl(window, "OpportunitySearch")).Text = "";
+        ((ComboBox)OpportunityControl(window, "OpportunityTypeFilter")).SelectedIndex = 0;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 0;
         typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, [scan, analysis.Findings, analysis.Groups, null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var cards = (ItemsControl)OpportunityControl(window, "CleanupGroupCards");
         var models = Assert.Single(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "AI models & data");
         Assert.Equal(3, models.Children.Count); Assert.True(models.CanSelectGroup);
         Assert.Contains(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "Agent file checkpoints");
@@ -49,16 +50,16 @@ public sealed partial class DesktopTests
         Assert.False(ollama.CanSelectGroup);
         Descendants(container).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, ollama))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        var list = (ListBox)window.FindName("OpportunityGrid");
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         var row = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
         Assert.Equal("Manage in owning tool", row.Review); Assert.Contains("AI models", row.Item.SuggestedAction);
-        Assert.False(row.CanSelect); Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        Assert.False(row.CanSelect); Assert.False(((Button)OpportunityControl(window, "SelectListedButton")).IsEnabled);
         row.Selected = true; Assert.False(row.Selected);
         Assert.Contains("Space Maid keeps", row.Item.Caution);
-        Assert.Equal("AI models & data › Ollama", ((TextBlock)window.FindName("CleanupScopeText")).Text);
+        Assert.Equal("AI models & data › Ollama", ((TextBlock)OpportunityControl(window, "CleanupScopeText")).Text);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-ai-model-details.png"), 1220, 910);
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 1;
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 1;
     }
 }

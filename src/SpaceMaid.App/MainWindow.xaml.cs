@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.App;
 
@@ -29,7 +30,6 @@ public partial class MainWindow : Window
         InitializeTreeColumns();
         Activated += Window_Activated;
         UpdateTreeSortHeaders();
-        InitializeOpportunityBrowser();
         SetScanTarget(Path.GetPathRoot(Environment.SystemDirectory)!);
         UpdateFastScanButton(false);
     }
@@ -75,17 +75,11 @@ public partial class MainWindow : Window
         _staleScopes.Clear();
         _explorerRecheckPath = null;
         _explorerReturnPending = false;
-        foreach (var row in _rows) row.PropertyChanged -= Row_Changed;
         _rows.Clear();
         ResetOpportunityBrowser();
-        DetailPanel.Visibility = Visibility.Collapsed;
-        DetailHint.Visibility = Visibility.Visible;
-        EmptyState.Visibility = Visibility.Visible;
-        EmptyCaption.Text = "Scan a drive to start.";
         ScannedSizeText.Text = CandidateText.Text = "—";
         ScannedSizeLabel.Text = "Scanned";
         ScannedSizeCaption.Text = "On disk";
-        OpportunityHeading.Text = "Opportunities";
         OpportunitiesTab.Content = "Opportunities";
         CandidateCaption.Text = "Estimate";
         DetailsButton.Visibility = Visibility.Collapsed;
@@ -102,15 +96,7 @@ public partial class MainWindow : Window
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;
-        BuildKeepRecentDaysBox.IsEnabled = !busy;
-        RecycleBinRow.IsEnabled = !busy;
-        EmptyRecycleBinButton.IsEnabled = !busy && _recycleBin?.Items > 0;
-        OpportunityGrid.IsEnabled = !busy;
-        GroupBrowserControls.IsEnabled = !busy;
-        OpportunityFilters.IsEnabled = !busy;
-        OpportunityToolbar.IsEnabled = !busy;
-        CleanupGroupCards.IsEnabled = !busy;
-        WorktreeCleanupControls.IsEnabled = !busy;
+        OpportunityBrowser?.SetBusy(busy);
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
@@ -146,36 +132,16 @@ public partial class MainWindow : Window
         }
         catch (Win32Exception ex) { StatusText.Text = $"Could not open the log: {ex.Message}"; }
     }
-    private void Row_Changed(object? sender, PropertyChangedEventArgs e)
-    { if (e.PropertyName == nameof(OpportunityRow.Selected) && !_changingOpportunitySelection) UpdateSelection(); }
     private void UpdateSelection()
     {
         PublishExtensionContext();
-        UpdateOpportunitySelection();
+        var choices = _rows.Where(row => row.Selected).Select(row => row.Item).ToArray();
+        _ = SelectedCheckedWorktrees(choices);
+        foreach (string path in _worktreesRequiringCheck.Keys.Where(path => !choices.Any(choice => GitWorktreeGuard.Covers(choice.Path, path))).ToArray())
+            _worktreesRequiringCheck.Remove(path);
+        OpportunityBrowser?.UpdateContext(_currentPath, _scanStale);
     }
 
-    private void Opportunity_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        bool hasSelection = OpportunityGrid.SelectedItem is OpportunityRow;
-        DetailPanel.DataContext = (OpportunityGrid.SelectedItem as OpportunityRow)?.Item;
-        DetailPanel.Visibility = hasSelection ? Visibility.Visible : Visibility.Collapsed;
-        DetailHint.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
-        UpdateBuildFolderContents(OpportunityGrid.SelectedItem as OpportunityRow);
-        var assessment = OpportunityGrid.SelectedItem is OpportunityRow row ? _worktreeAssessments.GetValueOrDefault(row.Path) : null;
-        WorktreeDetailText.Visibility = assessment is null ? Visibility.Collapsed : Visibility.Visible;
-        WorktreeDetailText.Text = assessment is null ? "" : assessment.Status + ": " + assessment.Reason
-            + (assessment.Branch is null ? "" : "\nBranch: " + assessment.Branch)
-            + (assessment.IntegrationTarget is null ? "" : "\nCompared with cached ref: " + assessment.IntegrationTarget)
-            + (assessment.LastActivityUtc is { } activity ? "\nLast observed activity: " + activity.ToLocalTime().ToString("g") : "\nLast observed activity: unavailable")
-            + (assessment.VerifiedClean ? "\nLocal tracked/untracked changes: none" : "")
-            + (assessment.Integrated ? "\nCommits already in upstream: yes" : "");
-    }
-
-    private void OpenFolder_Click(object sender, RoutedEventArgs e)
-    {
-        if (OpportunityGrid.SelectedItem is not OpportunityRow row) return;
-        OpenFolderInExplorer(row.Path);
-    }
     private void OpenFolderInExplorer(string path)
     {
         try
@@ -193,7 +159,7 @@ public partial class MainWindow : Window
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
         var scanHelper = _scanHelper;
         SaveColumnLayout();
-        _closing = true; _opportunitySearchTimer.Stop(); _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _updateTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        _closing = true; _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _updateTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
         bool workersStopped = true;
         try

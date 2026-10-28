@@ -33,6 +33,7 @@ flowchart TD
 | Existing `SpaceMaid.App` | Fluent shell, extension loading, inventory adapter, bounded job runner, tool process ownership, diagnostics, navigation and review presentation. |
 | New `SpaceMaid.Extensions.Contracts` | Small versioned shared API targeting .NET 10 Windows/WPF. No scanner internals or Photos schema. |
 | New `SpaceMaid.Extensions.Photos` | Photo views, local catalog/schema, relationships, analysis algorithms, thumbnails and durable job checkpoints. References Contracts, not App or Core. |
+| `SpaceMaid.Extensions.Opportunities` | Opportunities browser and interaction state through optional host services; no direct App reference. |
 | `SpaceMaid.Extensions.Developer` | Metadata-only development detection, project/tool/language breakdowns and cleanup groups through the optional Opportunities capability. No separate tab. |
 | New `SpaceMaid.ScanHelper` | Privileged NTFS metadata acquisition using the existing backend. References Core only; loads no extensions or media tools. |
 

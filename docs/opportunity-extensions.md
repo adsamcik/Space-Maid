@@ -1,6 +1,8 @@
 # Opportunities extensions
 
-`SpaceMaid.Extensions.Developer` is the bundled example: all development detectors, cleanup descriptions, icons and project/language/tool grouping live there. The scanner and host do not reference its implementation assembly. An extension may supply a separate WPF view, Opportunities groups, or both. Returning `null` from `CreateView()` contributes groups without adding another workflow window.
+`SpaceMaid.Extensions.Opportunities` owns the bundled browser, filters, selection controls and drill-downs. It uses the optional `IOpportunityBrowserServices` / `IOpportunityBrowserHost` capability; scan ownership, retention settings, Git checks, cleanup review, confirmation and file operations stay in the host. Its manifest is loaded and enabled through the same extension manager as Photos and Apps. Disabling Opportunities takes effect after restart and shows an Extensions link in its tab; it does not disable provider analysis, Explore or automatic optimization.
+
+`SpaceMaid.Extensions.Developer` is the bundled provider example: all development detectors, cleanup descriptions, icons and project/language/tool grouping live there. The scanner and host do not reference its implementation assembly. An extension may supply a separate WPF view, Opportunities groups, or both. Returning `null` from `CreateView()` contributes groups without adding another workflow window.
 
 ## Package
 
@@ -19,7 +21,7 @@ Ship `extension.json`, the entry DLL, its `.deps.json` and private dependencies.
 }
 ```
 
-Add the built directory through **Extensions → Add extension**, then restart. Enabling/disabling takes effect after restart. Bundled Developer, Photos and Apps use the same loader. Packages run trusted local code with the user's permissions; dependency isolation is not a security sandbox. The elevated scan helper loads no plugins.
+Add the built directory through **Extensions → Add extension**, then restart. Enabling/disabling takes effect after restart. Bundled Opportunities, Developer, Photos and Apps use the same loader. Packages run trusted local code with the user's permissions; dependency isolation is not a security sandbox. The elevated scan helper loads no plugins.
 
 ## Metadata analysis
 
@@ -66,7 +68,7 @@ Build retention defaults to three days and is configurable from 1–365 days in 
 
 Native recycling success requires the confirmed folder identity at Windows' exact same-volume Recycle Bin destination and an absent original path. Progress or a successful Shell return code alone does not establish completion. Permanent-delete fallback remains blocked, with native error codes and callback evidence in the action log.
 
-Register custom providers in catalog tests, then use the real manifest loader to verify packaging. Existing `OpportunityExtensionTests` exercises viewless Developer loading, restart disablement, independent provider keys/membership, failure isolation and fail-closed review/execution. `DesktopTests` covers the actual shared checklist, selection, breakdowns, refresh and confirmed recycling with owned fixtures.
+Register custom providers in catalog tests, then use the real manifest loader to verify packaging. Existing `OpportunityExtensionTests` exercises viewless Developer loading, restart disablement, independent provider keys/membership, failure isolation and fail-closed review/execution. `DesktopTests` covers the actual extension browser checklist, selection, breakdowns, refresh and confirmed recycling with owned fixtures.
 
 Bundled extensions are listed once as `BundledExtension` items in `src/SpaceMaid.App/SpaceMaid.App.csproj`, with their project path and `ExtensionId`. The shared packaging target copies each extension's dependencies and native assets into `Extensions/<id>`, excluding host-shared Core and Contracts assemblies. ScanHelper and the assistant's self-contained Worker retain separate packaging rules.
 

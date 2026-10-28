@@ -53,7 +53,7 @@ public partial class MainWindow
         IReadOnlyList<Opportunity>? findings = null)
     {
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
-        string? detailPath = (OpportunityGrid.SelectedItem as OpportunityRow)?.Path;
+        string? detailPath = OpportunityBrowser?.Detail?.Path;
         StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();

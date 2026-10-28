@@ -35,7 +35,7 @@ public sealed partial class DesktopTests
         PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
         var scan = scanTask.GetAwaiter().GetResult();
         Publish(scan);
-        var list = (ListBox)window.FindName("OpportunityGrid");
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         Assert.Equal(2, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
         File.WriteAllText(window.CleanupSettingsPath, "{invalid");
@@ -44,10 +44,10 @@ public sealed partial class DesktopTests
         Assert.True(blockedReview.IsCompletedSuccessfully);
         Assert.DoesNotContain(app.Windows.OfType<ReviewWindow>(), review => review.IsVisible);
         Assert.Equal("{invalid", File.ReadAllText(window.CleanupSettingsPath));
-        ((TextBox)window.FindName("BuildKeepRecentDaysBox")).Text = "3";
+        ((TextBox)OpportunityControl(window, "BuildKeepRecentDaysBox")).Text = "3";
         Assert.True(window.SaveBuildRetention());
-        ((ToggleButton)window.FindName("ViewOptionsToggle")).IsChecked = false;
-        var search = (TextBox)window.FindName("OpportunitySearch");
+        ((ToggleButton)OpportunityControl(window, "ViewOptionsToggle")).IsChecked = false;
+        var search = (TextBox)OpportunityControl(window, "OpportunitySearch");
         search.Text = "bin";
         PumpUntil(() => list.Items.Count == 1, TimeSpan.FromSeconds(3));
         File.WriteAllBytes(output, new byte[16384]);
@@ -55,16 +55,16 @@ public sealed partial class DesktopTests
         File.WriteAllBytes(Path.Join(other, "old.dat"), new byte[20000]);
         BuildActivityFixture.AgeProject(fixture.Path);
         window.MarkScanStale("Unrelated fixture data is out of date.", [new(other)]);
-        Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
-        Assert.True(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
+        Assert.True(((Button)OpportunityControl(window, "SelectListedButton")).IsEnabled);
         ReviewAndAssert(16384, "1 location was excluded", "review-validated-stale.png", logical: false);
         Assert.Equal("bin", search.Text);
-        Assert.Equal("1 location selected", ((TextBlock)window.FindName("SelectionText")).Text);
+        Assert.Equal("1 location selected", ((TextBlock)OpportunityControl(window, "SelectionText")).Text);
         Assert.Equal("16 KiB", Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>())).Size);
         var refreshed = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan;
         Assert.Null(refreshed.FindEntry(obj));
         Assert.Equal(512, refreshed.Entry(refreshed.FindEntry(other)!.Value).LogicalBytes);
-        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("CleanupFreshnessText")).Visibility);
+        Assert.Equal(Visibility.Visible, ((TextBlock)OpportunityControl(window, "CleanupFreshnessText")).Visibility);
         Assert.Contains("review-validation-complete", File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip)));
 
         // Logical-only scans also get fresh review estimates, without replacing
@@ -82,7 +82,7 @@ public sealed partial class DesktopTests
         window.MarkScanStale("Logical-only fixture data is out of date.");
         ReviewAndAssert(32768, "Other folders retain", "review-validated-logical.png", logical: true);
         Assert.Same(basic, Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan);
-        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("CleanupFreshnessText")).Visibility);
+        Assert.Equal(Visibility.Visible, ((TextBlock)OpportunityControl(window, "CleanupFreshnessText")).Visibility);
         Assert.Equal(32768, new FileInfo(output).Length);
         Assert.True(File.Exists(Path.Join(fixture.Path, "sample.csproj")));
 
@@ -169,7 +169,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10)); review.GetAwaiter().GetResult();
                 if (failure is not null) throw failure;
                 Assert.True(reviewed, ((TextBlock)window.FindName("StatusText")).Text);
-                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
             }
             finally { closeReview.Stop(); }
         }
@@ -198,7 +198,7 @@ public sealed partial class DesktopTests
         typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, [scan, findings, OpportunityGrouping.Build(scan, findings), null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
-        var list = (ListBox)window.FindName("OpportunityGrid");
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
         Exception? failure = null; CleanupBatchResult? result = null;
         bool kept = false, confirmed = false;

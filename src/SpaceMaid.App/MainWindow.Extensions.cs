@@ -28,11 +28,22 @@ public partial class MainWindow
         {
             _extensions = new ExtensionRuntime(() => _snapshot, () => _scanStale, RevealExtensionLocation,
                 dataRoot: ExtensionDataRoot, logDirectory: Path.Join(LogDirectory, "Extensions"), evidenceReview: ReviewAssistantEvidenceAsync,
-                operations: Operations, navigation: new WorkspaceNavigation(this));
+                operations: Operations, opportunityBrowser: new OpportunityBrowserHost(this), navigation: new WorkspaceNavigation(this));
             _extensions.JobsChanged += ExtensionJobsChanged;
             _extensions.SetDiscoveryBusy(_work is not null);
             await _extensions.InitializeAsync(_extensionLifetime.Token);
             if (_closing) return;
+            var opportunities = _extensions.Entries.FirstOrDefault(entry => entry.Id == "space-maid.opportunities");
+            if (opportunities?.View is IOpportunityBrowserView browser)
+            {
+                OpportunitiesContent.Content = opportunities.View; OpportunitiesPlaceholder.Visibility = Visibility.Collapsed;
+                browser.SetBuildRetention(CurrentBuildPolicy.KeepRecentDays.ToString(System.Globalization.CultureInfo.InvariantCulture), _cleanupSettingsUnavailable);
+                browser.SetBusy(_work is not null);
+                if (_recycleBinPresentation is { } bin) browser.UpdateRecycleBin(bin);
+            }
+            else OpportunitiesStatusText.Text = Elevation.IsAdministrator
+                ? "Reopen Space Maid without administrator access to use Opportunities and extensions."
+                : opportunities is null ? "Opportunities unavailable · Check Extensions" : $"Opportunities · {opportunities.Status}\n{opportunities.Error}";
             var photos = _extensions.Entries.FirstOrDefault(entry => entry.Id == "space-maid.photos");
             if (photos?.View is { } view)
             { PhotosContent.Content = view; PhotosPlaceholder.Visibility = Visibility.Collapsed; }
@@ -58,7 +69,7 @@ public partial class MainWindow
             if (!_closing)
             {
                 string message = $"Extensions could not start. Reopen Space Maid to retry. {error.Message}";
-                AppsStatusText.Text = ExtensionsStatusText.Text = message;
+                OpportunitiesStatusText.Text = AppsStatusText.Text = ExtensionsStatusText.Text = message;
                 if (_extensions is not null)
                 {
                     _extensionManager ??= new ExtensionsView(_extensions, entry => OpenExtension(entry.Id));

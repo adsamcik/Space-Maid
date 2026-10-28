@@ -23,7 +23,7 @@ public partial class MainWindow
         _currentPath = path;
         PublishExtensionContext();
         UpdateDriveLocation();
-        OpportunityScopeText.Visibility = OpportunityScopeText.Text == path ? Visibility.Collapsed : Visibility.Visible;
+        OpportunityBrowser?.UpdateContext(path, _scanStale);
         if (!_editingPath) PathEditor.Text = path;
         foreach (var button in Breadcrumbs.Children.OfType<Button>())
             if (button.ContextMenu is { } previousMenu) previousMenu.IsOpen = false;

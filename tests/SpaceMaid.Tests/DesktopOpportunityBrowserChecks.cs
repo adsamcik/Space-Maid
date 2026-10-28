@@ -19,6 +19,53 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckOpportunityExtensionLifecycle(MainWindow window)
+    {
+        using var fixture = new TestDirectory();
+        var runtime = Assert.IsType<SpaceMaid.App.Extensions.ExtensionRuntime>(typeof(MainWindow)
+            .GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+        var entry = Assert.Single(runtime.Entries, item => item.Id == "space-maid.opportunities");
+        Assert.Equal("Loaded", entry.Status);
+        Assert.IsAssignableFrom<IOpportunityBrowserView>(entry.View);
+        Assert.Same(entry.View, ((ContentControl)window.FindName("OpportunitiesContent")).Content);
+        Assert.Equal(Visibility.Collapsed, ((FrameworkElement)window.FindName("OpportunitiesPlaceholder")).Visibility);
+        Assert.DoesNotContain(entry.View!.GetType().Assembly.GetReferencedAssemblies(), assembly => assembly.Name == "SpaceMaid.App");
+        string bundles = Directory.CreateDirectory(Path.Join(fixture.Path, "bundles")).FullName;
+        string dataRoot = Path.Join(fixture.Path, "settings");
+        runtime.SetEnabled(entry, false);
+        Assert.Same(entry.View, ((ContentControl)window.FindName("OpportunitiesContent")).Content); // Restart applies the change.
+        try
+        {
+            var restarted = new SpaceMaid.App.Extensions.ExtensionRuntime(() => null, () => false, _ => { },
+                dataRoot, bundles, Path.Join(fixture.Path, "disabled-logs"), administrator: false);
+            try
+            {
+                restarted.AddTrustedDirectory(entry.Directory);
+                restarted.AddTrustedDirectory(runtime.Entries.Single(item => item.Id == "space-maid.developer").Directory);
+                restarted.SetEnabled(entry, false);
+                var load = restarted.InitializeAsync(); PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+                var disabled = Assert.Single(restarted.Entries, item => item.Id == entry.Id);
+                Assert.StartsWith("Disabled", disabled.Status); Assert.Null(disabled.View);
+                Assert.Equal("Loaded", restarted.Entries.Single(item => item.Id == "space-maid.developer").Status);
+                restarted.SetEnabled(disabled, true);
+            }
+            finally { var stop = restarted.DisposeAsync().AsTask(); PumpUntil(() => stop.IsCompleted, TimeSpan.FromSeconds(5)); stop.GetAwaiter().GetResult(); }
+            // A host missing this optional capability reports a failure for the browser alone.
+            var unavailable = new SpaceMaid.App.Extensions.ExtensionRuntime(() => null, () => false, _ => { },
+                dataRoot, bundles, Path.Join(fixture.Path, "unavailable-logs"), administrator: false);
+            try
+            {
+                var load = unavailable.InitializeAsync(); PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+                var failed = Assert.Single(unavailable.Entries, item => item.Id == entry.Id);
+                Assert.Equal("Failed to load", failed.Status); Assert.Null(failed.View);
+                Assert.Contains("does not provide", failed.Error);
+                Assert.Equal("Loaded", unavailable.Entries.Single(item => item.Id == "space-maid.developer").Status);
+            }
+            finally { var stop = unavailable.DisposeAsync().AsTask(); PumpUntil(() => stop.IsCompleted, TimeSpan.FromSeconds(5)); stop.GetAwaiter().GetResult(); }
+        }
+        finally { runtime.SetEnabled(entry, true); }
+    }
+
     private static void CheckOverlappingOpportunityExtensions(MainWindow window, Application app, string artifactRoot)
     {
         using var fixture = new TestDirectory();
@@ -36,17 +83,17 @@ public sealed partial class DesktopTests
         var analysis = runtime.Opportunities.Analyze(scan, CancellationToken.None);
         Assert.Equal(2, analysis.Findings.Count);
         Assert.Single(analysis.Findings.Select(item => item.Path).Distinct());
-        ((TextBox)window.FindName("OpportunitySearch")).Text = "";
-        ((ComboBox)window.FindName("OpportunityTypeFilter")).SelectedIndex = 0;
+        ((TextBox)OpportunityControl(window, "OpportunitySearch")).Text = "";
+        ((ComboBox)OpportunityControl(window, "OpportunityTypeFilter")).SelectedIndex = 0;
         var load = window.InitializeExplorerAsync(scan, analysis.Findings, default);
         PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
         typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, [scan, analysis.Findings, analysis.Groups, null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
-        var grouping = (ComboBox)window.FindName("OpportunityGroupingPicker");
+        var grouping = (ComboBox)OpportunityControl(window, "OpportunityGroupingPicker");
         grouping.SelectedIndex = 0;
-        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
-        var list = (ListBox)window.FindName("OpportunityGrid");
+        var cards = (ItemsControl)OpportunityControl(window, "CleanupGroupCards");
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         var groups = cards.Items.Cast<OpportunityGroupRow>().ToArray();
         Assert.Equal(3, groups.Length);
         var developer = Assert.Single(groups, group => group.Group.ProviderId == DeveloperOpportunityFixture.ProviderId);
@@ -74,10 +121,10 @@ public sealed partial class DesktopTests
         Descendants(previewContainer).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, previewGroups[0]))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal("test.previews", Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>())).Item.ProviderId);
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         grouping.SelectedIndex = 1;
-        var navigation = (ListBox)window.FindName("OpportunityGroupList");
+        var navigation = (ListBox)OpportunityControl(window, "OpportunityGroupList");
         Assert.Equal(3, navigation.Items.Count); // One developer project plus two overlapping extension project groups.
         foreach (var group in navigation.Items.Cast<OpportunityGroupRow>().ToArray())
         {
@@ -90,7 +137,7 @@ public sealed partial class DesktopTests
         grouping.SelectedIndex = 0;
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-extension-overlap.png"), 1220, 910);
         grouping.SelectedIndex = 1;
-        ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(2, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
         provider.Enabled = false; // Only this provider's rule disappears during fresh review.
@@ -121,11 +168,22 @@ public sealed partial class DesktopTests
             Assert.Equal(5000, new FileInfo(file).Length);
         }
         finally { closeReview.Stop(); }
+        provider.Enabled = true; provider.FailRegrouping = true;
+        grouping.SelectedIndex = 0;
+        var regroupFailure = window.RecheckFolderAsync(bin);
+        PumpUntil(() => regroupFailure.IsCompleted, TimeSpan.FromSeconds(5)); regroupFailure.GetAwaiter().GetResult();
+        Assert.Contains("1 cleanup extension unavailable", ((TextBlock)OpportunityControl(window, "CleanupOverviewNote")).Text);
+        Assert.Single(cards.Items.Cast<OpportunityGroupRow>()); // Other providers remain visible.
+        provider.FailRegrouping = false;
     }
 
     private sealed class OverlappingOpportunityProvider(string rootPath) : IOpportunityExtension
     {
         internal bool Enabled { get; set; } = true;
+        internal bool FailRegrouping { get; set; }
+        public IReadOnlyList<OpportunityGroup> BuildCleanupGroups(IOpportunityInventory inventory, OpportunityAnalysis analysis,
+            OpportunityGroupContext context, CancellationToken token)
+            => FailRegrouping ? throw new InvalidOperationException("Fixture regrouping failure") : analysis.Groups.Cleanup ?? [];
         public OpportunityAnalysis Analyze(IOpportunityInventory inventory, CancellationToken token)
         {
             if (!Enabled || inventory.RootPath != rootPath) return new([], new([], []));
@@ -176,15 +234,15 @@ public sealed partial class DesktopTests
         var publish = typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!;
         publish.Invoke(window, [scan, locations, groups, null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
-        var list = (ListBox)window.FindName("OpportunityGrid");
-        var navigation = (ListBox)window.FindName("OpportunityGroupList");
-        var search = (TextBox)window.FindName("OpportunitySearch");
-        var grouping = (ComboBox)window.FindName("OpportunityGroupingPicker");
-        var filter = (ComboBox)window.FindName("OpportunityTypeFilter");
-        var selection = (TextBlock)window.FindName("SelectionText");
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
+        var navigation = (ListBox)OpportunityControl(window, "OpportunityGroupList");
+        var search = (TextBox)OpportunityControl(window, "OpportunitySearch");
+        var grouping = (ComboBox)OpportunityControl(window, "OpportunityGroupingPicker");
+        var filter = (ComboBox)OpportunityControl(window, "OpportunityTypeFilter");
+        var selection = (TextBlock)OpportunityControl(window, "SelectionText");
         grouping.SelectedIndex = 0;
-        Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
-        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
+        Assert.Equal(Visibility.Visible, ((Border)OpportunityControl(window, "CleanupOverview")).Visibility);
+        var cards = (ItemsControl)OpportunityControl(window, "CleanupGroupCards");
         Assert.Equal(4, cards.Items.Count); Assert.Empty(list.Items);
         Assert.Equal(100, cards.Items.Cast<OpportunityGroupRow>().Max(group => group.RelativeSize));
         Assert.All(cards.Items.Cast<OpportunityGroupRow>(), group => Assert.InRange(group.RelativeSize, 0, 100));
@@ -195,18 +253,18 @@ public sealed partial class DesktopTests
         var groupCheck = Descendants(firstCard).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, cards.Items[0]));
         groupCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal("1 group selected · 1,000 folders", selection.Text);
-        Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+        Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
         Descendants(firstCard).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, cards.Items[0])).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(1000, list.Items.Count); Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
         Assert.IsType<OpportunityRow>(list.Items[0]).Selected = false;
-        Assert.Equal(Visibility.Visible, ((Button)window.FindName("BackToCleanupButton")).Visibility);
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(Visibility.Visible, ((Button)OpportunityControl(window, "BackToCleanupButton")).Visibility);
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Empty(list.Items); Assert.Equal("1 group selected · 999 folders", selection.Text);
         Assert.Null(cards.Items.Cast<OpportunityGroupRow>().First().Checked);
         window.UpdateLayout();
         Descendants(cards.ItemContainerGenerator.ContainerFromIndex(0)).OfType<CheckBox>().Single(check => ReferenceEquals(check.DataContext, cards.Items[0])).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal("1 group selected · 1,000 folders", selection.Text);
-        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
         ((TextBlock)window.FindName("ScannedSizeCaption")).Text = "On disk";
         ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(CleanupPlanner.Create(scan, locations).EstimatedBytes);
@@ -226,26 +284,26 @@ public sealed partial class DesktopTests
         grouping.SelectedIndex = 1;
         navigation.SelectedIndex = 0;
         Assert.Equal(200, navigation.Items.Count); Assert.Equal(20, list.Items.Count);
-        Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+        Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
         Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.DoesNotContain(@"G:\", row.DisplayPath));
-        ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal("20 locations selected", selection.Text);
         search.Text = "good-shit";
         PumpUntil(() => list.Items.Count == 20 && ((OpportunityRow)list.Items[0]).GroupName == "good-shit", TimeSpan.FromSeconds(3));
         Assert.Single(navigation.Items.Cast<object>()); Assert.Contains("20 outside this view", selection.Text);
         navigation.SelectedIndex = 0;
-        ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         grouping.SelectedIndex = 2; filter.SelectedItem = "Build output"; navigation.SelectedIndex = 0;
         Assert.Equal(5, list.Items.Count); Assert.Contains("35 outside this view", selection.Text);
         var selected = locations.Where(location => location.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || location.Path.Contains("good-shit", StringComparison.Ordinal))
             .Select(location => (location.ProviderId, location.Path, location.RuleId)).ToHashSet();
         publish.Invoke(window, [scan, locations, groups, selected, ((OpportunityRow)list.SelectedItem).Path, true]);
-        Assert.Equal("Build output", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+        Assert.Equal("Build output", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
         Assert.Equal("good-shit", search.Text); Assert.Equal("Build output", filter.SelectedItem);
         Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.True(row.Selected));
         search.Text = "no-such-location";
         PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3));
-        Assert.Equal(Visibility.Visible, ((StackPanel)window.FindName("EmptyState")).Visibility);
+        Assert.Equal(Visibility.Visible, ((StackPanel)OpportunityControl(window, "EmptyState")).Visibility);
         Assert.Contains("40 outside this view", selection.Text);
         // This inventory is illustrative and must never be rechecked on disk.
         var preview = new ReviewWindow(CleanupPlanner.Create(scan, locations.Where(location => selected.Contains((location.ProviderId, location.Path, location.RuleId)))));
@@ -254,7 +312,7 @@ public sealed partial class DesktopTests
         Assert.False(Descendants(preview.Content as DependencyObject).OfType<Button>().Single(button => Equals(button.Content, "Move to Recycle Bin")).IsEnabled);
         preview.Close();
         search.Text = ""; filter.SelectedIndex = 0; grouping.SelectedIndex = 1;
-        ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(4000, list.Items.Count);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-all.png"), 1220, 910);
         Assert.InRange(Descendants(list).OfType<ListBoxItem>().Count(), 1, 80);
@@ -273,10 +331,10 @@ public sealed partial class DesktopTests
         }
 #pragma warning restore WPF0001
         window.MarkScanStale("Illustrative out-of-date results; recheck or rescan.");
-        Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("CleanupFreshnessText")).Visibility);
-        Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
-        Assert.True(((Button)window.FindName("SelectListedButton")).IsEnabled);
+        Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
+        Assert.Equal(Visibility.Visible, ((TextBlock)OpportunityControl(window, "CleanupFreshnessText")).Visibility);
+        Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
+        Assert.True(((Button)OpportunityControl(window, "SelectListedButton")).IsEnabled);
         window.UpdateLayout();
         double listHeight = list.ActualHeight;
         string fullWarning = "Could not recycle the folder: The recheck was incomplete. "
@@ -294,7 +352,7 @@ public sealed partial class DesktopTests
         diagnosticsToggle.IsChecked = false; window.UpdateLayout();
         Assert.Equal(listHeight, list.ActualHeight, 2);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "opportunity-groups-stale-dark.png"), 1220, 910);
-        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.DoesNotContain("selected", selection.Text);
 
         void CheckBuildClassification()
@@ -312,10 +370,10 @@ public sealed partial class DesktopTests
             Assert.True(csharp.Checked); Assert.Null(build.Checked);
             Assert.Equal("1 group selected · 400 folders", selection.Text);
             Descendants(container).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, csharp)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)OpportunityControl(window, "CleanupScopeText")).Text);
             Assert.Equal(200, navigation.Items.Count); Assert.Equal(2, list.Items.Count);
-            Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-            ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
+            ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal(400, list.Items.Count);
             Assert.All(list.Items.Cast<OpportunityRow>(), row => Assert.Equal(".NET build output", row.Title));
             navigation.SelectedItem = navigation.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Chatty-NPC");
@@ -324,14 +382,14 @@ public sealed partial class DesktopTests
             // Retain language/project scope and existing selections through refreshed metadata publication.
             var chosen = csharp.Matches.Select(row => row.SelectionIdentity).ToHashSet();
             publish.Invoke(window, [scan, locations, groups, chosen, ((OpportunityRow)list.SelectedItem).Path, true]);
-            Assert.Equal(2, list.Items.Count); Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
+            Assert.Equal(2, list.Items.Count); Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)OpportunityControl(window, "CleanupScopeText")).Text);
             var withoutProject = locations.Where(item => !item.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || !chosen.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
             publish.Invoke(window, [scan, withoutProject, OpportunityGrouping.Build(scan, withoutProject), chosen, null, true]);
             Assert.Empty(list.Items); Assert.Equal(199, navigation.Items.Count);
-            Assert.Equal("Chatty-NPC", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-            Assert.Contains("No matching folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);
-            Assert.False(((Button)window.FindName("SelectListedButton")).IsEnabled);
+            Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
+            Assert.Contains("No matching folders remain", ((TextBlock)OpportunityControl(window, "OpportunityResultSummary")).Text);
+            Assert.False(((Button)OpportunityControl(window, "SelectListedButton")).IsEnabled);
             publish.Invoke(window, [scan, locations, groups, chosen, null, true]);
             Assert.Equal(2, list.Items.Count); // Restoring the project keeps the same scope.
             search.Text = "good-shit";
@@ -349,20 +407,20 @@ public sealed partial class DesktopTests
 #pragma warning restore WPF0001
             search.Text = "node_modules";
             PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3)); // Never escape the selected build-language scope.
-            ((Button)window.FindName("SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)OpportunityControl(window, "SelectListedButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Contains("400 outside this view", selection.Text);
             var remaining = locations.Where(item => !chosen.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
             publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), chosen, null, true]);
             Assert.Empty(navigation.Items); Assert.Empty(list.Items);
-            Assert.Equal("Build files › C# / .NET", ((TextBlock)window.FindName("CleanupScopeText")).Text);
-            ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("Build files › C# / .NET", ((TextBlock)OpportunityControl(window, "CleanupScopeText")).Text);
+            ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Empty(list.Items); // A disappeared classification does not expose unrelated findings.
             publish.Invoke(window, [scan, locations, groups, chosen, null, true]);
-            ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("CleanupScopeText")).Visibility);
+            ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Collapsed, ((TextBlock)OpportunityControl(window, "CleanupScopeText")).Visibility);
             build = cards.Items.Cast<OpportunityGroupRow>().Single(row => row.Name == "Build files");
             Assert.Null(build.Checked); Assert.True(build.Children.Single(row => row.Name == "C# / .NET").Checked);
-            ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.All(build.Children, child => Assert.False(child.Checked));
         }
 
@@ -375,22 +433,20 @@ public sealed partial class DesktopTests
             var now = DateTime.UtcNow;
             AddFact(0, 75, integrated: true); AddFact(1, 45, integrated: false);
             AddFact(2, 10, integrated: true); AddFact(3, 100, integrated: true, clean: false);
-            var rebuild = typeof(MainWindow).GetMethod("RebuildWorktreeGroups", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            rebuild.Invoke(window, null);
-            typeof(MainWindow).GetMethod("ApplyOpportunityFilters", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [null]);
-            var worktreeOptions = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("WorktreeOptionsToggle");
-            var viewOptions = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ViewOptionsToggle");
+            Assert.IsAssignableFrom<IOpportunityBrowserView>(((ContentControl)window.FindName("OpportunitiesContent")).Content).RefreshGroups();
+            var worktreeOptions = (System.Windows.Controls.Primitives.ToggleButton)OpportunityControl(window, "WorktreeOptionsToggle");
+            var viewOptions = (System.Windows.Controls.Primitives.ToggleButton)OpportunityControl(window, "ViewOptionsToggle");
             Assert.True(worktreeOptions.IsVisible);
             viewOptions.IsChecked = true; viewOptions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             worktreeOptions.IsChecked = true; worktreeOptions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
-            Assert.Equal(Visibility.Visible, ((Border)window.FindName("WorktreeCleanupControls")).Visibility);
+            Assert.Equal(Visibility.Visible, ((Border)OpportunityControl(window, "WorktreeCleanupControls")).Visibility);
             Assert.False(viewOptions.IsChecked);
-            Assert.Equal(Visibility.Collapsed, ((Border)window.FindName("ViewOptionsPanel")).Visibility);
-            var rule = (ComboBox)window.FindName("WorktreeRulePicker");
-            var slider = (Slider)window.FindName("WorktreeAgeSlider");
-            var threshold = (TextBlock)window.FindName("WorktreeAgeText");
-            var summary = (TextBlock)window.FindName("WorktreeCheckSummary");
-            var selectMatches = (Button)window.FindName("SelectWorktreeMatchesButton");
+            Assert.Equal(Visibility.Collapsed, ((Border)OpportunityControl(window, "ViewOptionsPanel")).Visibility);
+            var rule = (ComboBox)OpportunityControl(window, "WorktreeRulePicker");
+            var slider = (Slider)OpportunityControl(window, "WorktreeAgeSlider");
+            var threshold = (TextBlock)OpportunityControl(window, "WorktreeAgeText");
+            var summary = (TextBlock)OpportunityControl(window, "WorktreeCheckSummary");
+            var selectMatches = (Button)OpportunityControl(window, "SelectWorktreeMatchesButton");
             Assert.Contains("1 worktree matches", summary.Text);
             Assert.Single(MatchingGroup().Matches);
             Assert.True(selectMatches.IsEnabled);
@@ -433,7 +489,7 @@ public sealed partial class DesktopTests
             selectMatches.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal("1 group selected · 2 folders", selection.Text);
             worktreeOptions.IsChecked = false;
-            Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+            Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
             ((TextBlock)window.FindName("StatusText")).Text = "Illustrative worktree checks · No Git commands or cleanup run";
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
@@ -444,7 +500,7 @@ public sealed partial class DesktopTests
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"worktree-cleanup-compact-{theme}.png"), 1020, 790);
             }
 #pragma warning restore WPF0001
-            ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             rule.SelectedIndex = 0; slider.Value = 30;
             publish.Invoke(window, [scan, locations, groups, null, null, false]);
             Assert.Equal(4, cards.Items.Count);
@@ -491,13 +547,13 @@ public sealed partial class DesktopTests
         var load = window.InitializeExplorerAsync(scan, locations, default);
         PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
         var publish = typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 0;
         publish.Invoke(window, [scan, locations, groups, null, null, false]);
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
-        var list = (ListBox)window.FindName("OpportunityGrid");
-        var navigation = (ListBox)window.FindName("OpportunityGroupList");
-        var scope = (TextBlock)window.FindName("CleanupScopeText");
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var cards = (ItemsControl)OpportunityControl(window, "CleanupGroupCards");
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
+        var navigation = (ListBox)OpportunityControl(window, "OpportunityGroupList");
+        var scope = (TextBlock)OpportunityControl(window, "CleanupScopeText");
         Assert.Equal(6, cards.Items.Count); Assert.Empty(list.Items);
         Assert.Contains(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "Downloaded tooling");
         Assert.Contains(cards.Items.Cast<OpportunityGroupRow>(), row => row.Name == "Editor workspace data");
@@ -544,16 +600,16 @@ public sealed partial class DesktopTests
             var remaining = locations.Where(item => !selected.Contains((item.ProviderId, item.Path, item.RuleId)) || !item.Path.StartsWith(projectPath + "\\", StringComparison.Ordinal)).ToArray();
             publish.Invoke(window, [scan, remaining, OpportunityGrouping.Build(scan, remaining), selected, null, true]);
             Assert.Empty(list.Items); Assert.Single(navigation.Items.Cast<object>());
-            Assert.Contains("No matching folders remain", ((TextBlock)window.FindName("OpportunityResultSummary")).Text);
+            Assert.Contains("No matching folders remain", ((TextBlock)OpportunityControl(window, "OpportunityResultSummary")).Text);
             publish.Invoke(window, [scan, locations, groups, selected, null, true]);
             Assert.Equal(perProject, list.Items.Count);
-            ((Button)window.FindName("AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal(perProject * 2, list.Items.Count);
             if (tool == "Playwright") Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-test-projects-dark.png"), 1220, 910);
-            ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }
-        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 1;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 1;
 
         int Folder(ulong id, ulong parent, string name)
         { int file = builder.AddFile(new(new(id), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(file, new(parent), name); return file; }

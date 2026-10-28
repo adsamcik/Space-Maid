@@ -105,8 +105,10 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                SetStage("loading and independently disabling the Opportunities browser extension");
+                CheckOpportunityExtensionLifecycle(window);
                 SetStage("keeping the build retention preference bounded and persistent");
-                var buildRetention = (TextBox)window.FindName("BuildKeepRecentDaysBox");
+                var buildRetention = (TextBox)OpportunityControl(window, "BuildKeepRecentDaysBox");
                 Assert.Equal("3", buildRetention.Text);
                 File.WriteAllText(window.CleanupSettingsPath, "{invalid");
                 window.LoadBuildCleanupSettings();
@@ -120,7 +122,7 @@ public sealed partial class DesktopTests
                 Assert.False(window.SaveBuildRetention()); Assert.Equal(7, window.CurrentBuildPolicy.KeepRecentDays);
                 buildRetention.Text = "3";
                 Assert.True(window.SaveBuildRetention()); Assert.Equal(3, window.CurrentBuildPolicy.KeepRecentDays);
-                ((ToggleButton)window.FindName("ViewOptionsToggle")).IsChecked = false;
+                ((ToggleButton)OpportunityControl(window, "ViewOptionsToggle")).IsChecked = false;
                 SetStage("choosing a drive without starting a scan");
                 var drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
@@ -251,8 +253,8 @@ public sealed partial class DesktopTests
                 PumpUntil(() => chooseDrive.IsCompleted, TimeSpan.FromSeconds(3)); chooseDrive.GetAwaiter().GetResult();
                 Assert.Equal(fixture.Path, window.CurrentPath);
                 SetStage("opening a drive recommendation from the matching inventory");
-                ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 1;
-                ((TextBox)window.FindName("OpportunitySearch")).Text = "no matches";
+                ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 1;
+                ((TextBox)OpportunityControl(window, "OpportunitySearch")).Text = "no matches";
                 drivesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => drivePopup.IsOpen && drivesList.ActualWidth > 0, TimeSpan.FromSeconds(3));
                 var recommendationButton = Descendants(drivesList).OfType<Button>().Single(button => button.DataContext is DriveRecommendationLink);
@@ -261,10 +263,10 @@ public sealed partial class DesktopTests
                 PumpUntil(() => ((Border)window.FindName("PathBar")).IsEnabled && ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked == true, TimeSpan.FromSeconds(3));
                 Assert.False(drivePopup.IsOpen);
                 Assert.Equal(scanLogCount, Directory.GetFiles(window.LogDirectory, "*.jsonl").Length);
-                Assert.Equal("Build files", ((TextBlock)window.FindName("OpportunityHeading")).Text);
-                Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
-                Assert.Equal("", ((TextBox)window.FindName("OpportunitySearch")).Text);
-                Assert.False(Assert.IsType<OpportunityRow>(((ListBox)window.FindName("OpportunityGrid")).Items[0]).Selected);
+                Assert.Equal("Build files", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
+                Assert.Equal(0, ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex);
+                Assert.Equal("", ((TextBox)OpportunityControl(window, "OpportunitySearch")).Text);
+                Assert.False(Assert.IsType<OpportunityRow>(((ListBox)OpportunityControl(window, "OpportunityGrid")).Items[0]).Selected);
                 var recommended = fixtureChoice.Recommendations[0];
                 var renamed = window.OpenRecommendationAsync(recommended with { Recommendation = new("Old caption", 8192, "cleanup:build") });
                 PumpUntil(() => renamed.IsCompleted, TimeSpan.FromSeconds(3)); Assert.True(renamed.GetAwaiter().GetResult());
@@ -272,7 +274,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => legacy.IsCompleted, TimeSpan.FromSeconds(3)); Assert.True(legacy.GetAwaiter().GetResult());
                 var gone = window.OpenRecommendationAsync(recommended with { Recommendation = new("Old caches", 8192, "cleanup:cache") });
                 PumpUntil(() => gone.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(gone.GetAwaiter().GetResult());
-                Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
+                Assert.Equal(Visibility.Visible, ((Border)OpportunityControl(window, "CleanupOverview")).Visibility);
                 Assert.Contains("no longer found", ((TextBlock)window.FindName("StatusText")).Text);
                 SetStage("scanning before opening a recommendation when inventory is absent");
                 // A drive fixture is deliberately bounded to this temporary
@@ -282,7 +284,7 @@ public sealed partial class DesktopTests
                 var discoverRecommendation = window.OpenRecommendationAsync(bounded);
                 PumpUntil(() => discoverRecommendation.IsCompleted, TimeSpan.FromSeconds(5)); Assert.True(discoverRecommendation.GetAwaiter().GetResult());
                 Assert.Equal(scanLogCount + 1, Directory.GetFiles(window.LogDirectory, "*.jsonl").Length);
-                Assert.Equal("Build files", ((TextBlock)window.FindName("OpportunityHeading")).Text);
+                Assert.Equal("Build files", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
                 window.SetScanTarget(Path.Join(fixture.Path, "missing-drive"));
                 var failedRecommendation = window.OpenRecommendationAsync(bounded with { Drive = bounded.Drive with { RootPath = Path.Join(fixture.Path, "missing-drive") } });
                 PumpUntil(() => failedRecommendation.IsCompleted, TimeSpan.FromSeconds(3)); Assert.False(failedRecommendation.GetAwaiter().GetResult());
@@ -290,19 +292,19 @@ public sealed partial class DesktopTests
                 Assert.Contains("Scan could not finish", ((TextBlock)window.FindName("StatusText")).Text);
                 discoverRecommendation = window.OpenRecommendationAsync(bounded);
                 PumpUntil(() => discoverRecommendation.IsCompleted, TimeSpan.FromSeconds(5)); Assert.True(discoverRecommendation.GetAwaiter().GetResult());
-                ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                var grid = (ListBox)window.FindName("OpportunityGrid");
-                Assert.Equal(0, ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex);
-                Assert.Equal(Visibility.Visible, ((Border)window.FindName("CleanupOverview")).Visibility);
+                ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var grid = (ListBox)OpportunityControl(window, "OpportunityGrid");
+                Assert.Equal(0, ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex);
+                Assert.Equal(Visibility.Visible, ((Border)OpportunityControl(window, "CleanupOverview")).Visibility);
                 ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
-                var viewOptions = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ViewOptionsToggle");
-                var viewPanel = (Border)window.FindName("ViewOptionsPanel");
+                var viewOptions = (System.Windows.Controls.Primitives.ToggleButton)OpportunityControl(window, "ViewOptionsToggle");
+                var viewPanel = (Border)OpportunityControl(window, "ViewOptionsPanel");
                 Assert.Equal(Visibility.Collapsed, viewPanel.Visibility);
                 viewOptions.IsChecked = true; viewOptions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
                 Assert.Equal(Visibility.Visible, viewPanel.Visibility);
-                Assert.True(((ComboBox)window.FindName("OpportunitySortPicker")).IsVisible);
+                Assert.True(((ComboBox)OpportunityControl(window, "OpportunitySortPicker")).IsVisible);
                 viewOptions.IsChecked = false;
-                var initialCards = (ItemsControl)window.FindName("CleanupGroupCards");
+                var initialCards = (ItemsControl)OpportunityControl(window, "CleanupGroupCards");
                 var initialGroup = Assert.IsType<OpportunityGroupRow>(Assert.Single(initialCards.Items.Cast<object>()));
                 Assert.Equal("Build files", initialGroup.Name);
                 ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
@@ -312,9 +314,9 @@ public sealed partial class DesktopTests
                 Assert.Equal(bin, row.Path);
                 Assert.Equal("8 KiB", row.Size);
                 row.Selected = true;
-                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
-                Assert.Equal("1 location selected", ((TextBlock)window.FindName("SelectionText")).Text);
-                Assert.Equal(row.Item, ((StackPanel)window.FindName("DetailPanel")).DataContext);
+                Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
+                Assert.Equal("1 location selected", ((TextBlock)OpportunityControl(window, "SelectionText")).Text);
+                Assert.Equal(row.Item, ((StackPanel)OpportunityControl(window, "DetailPanel")).DataContext);
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
 
                 SetStage("navigating the real folder tree and treemap");
@@ -502,14 +504,14 @@ public sealed partial class DesktopTests
                 PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
                 confirmationTimer.Stop();
                 if (confirmationFailure is not null) throw confirmationFailure;
-                Assert.True(deleteKey.Handled);
+                Assert.True(deleteKey.Handled, $"Explore: {((RadioButton)window.FindName("ExploreTab")).IsChecked}; modifiers: {Keyboard.Modifiers}; repeat: {deleteKey.IsRepeat}; source: {deleteKey.OriginalSource?.GetType().Name}");
                 Assert.True(confirmed);
                 Assert.True(Directory.Exists(bin));
                 Assert.Equal(16384, new FileInfo(Path.Join(bin, "sample.dll")).Length);
                 Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
                 File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[8192]);
                 BuildActivityFixture.AgeProject(project);
-                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
                 // Delete while the exact path text field is focused must not
                 // invoke folder recycling.
                 var pathField = (TextBox)window.FindName("PathEditor");
@@ -534,7 +536,7 @@ public sealed partial class DesktopTests
                     Assert.Contains("Updated", ((TextBlock)window.FindName("StatusText")).Text);
                     Assert.Contains("Partial refresh", ((TextBlock)window.FindName("TreeNote")).Text);
                     Assert.Equal("0 B", ((TextBlock)window.FindName("CandidateText")).Text);
-                    Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                    Assert.False(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
                     var updatedRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                     Assert.Null(updatedRows.Scan.FindEntry(bin));
                     Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
@@ -570,7 +572,7 @@ public sealed partial class DesktopTests
                 tree.Height = double.NaN; window.UpdateLayout();
                 window.SetBusy(false);
                 Assert.IsType<OpportunityRow>(Assert.Single(grid.Items.Cast<object>())).Selected = true;
-                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
 
                 SetStage("preserving a collapsed root and prior out-of-date scopes during rechecks");
                 var goRoot = window.NavigateToEntryAsync(-1);
@@ -585,7 +587,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => otherRecheck.IsCompleted, TimeSpan.FromSeconds(10)); otherRecheck.GetAwaiter().GetResult();
                 Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
                 Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
-                Assert.True(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.True(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
                 var recovery = window.RecheckFolderAsync(project);
                 PumpUntil(() => recovery.IsCompleted, TimeSpan.FromSeconds(10)); recovery.GetAwaiter().GetResult();
                 Assert.Contains("Partial refresh", ((TextBlock)window.FindName("TreeNote")).Text);
@@ -737,7 +739,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(100, preliminaryFiles.Items.Count);
                 Assert.True(preliminaryFiles.IsEnabled);
                 Assert.False(((Border)window.FindName("PathBar")).IsEnabled);
-                Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.False(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
                 Assert.Equal(Visibility.Visible, ((Button)window.FindName("CancelButton")).Visibility);
                 Assert.Equal("Path pending…", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).PathText);
                 Assert.Contains("Inferred type:", Assert.IsType<PreliminaryRow>(preliminaryFiles.Items[0]).EntryTooltip);
@@ -767,7 +769,7 @@ public sealed partial class DesktopTests
                 Assert.Equal(100, preliminaryFiles.Items.Count);
                 Assert.Empty(tree.Items.Cast<object>());
                 Assert.Empty(grid.Items.Cast<object>());
-                Assert.False(((Button)window.FindName("ReviewButton")).IsEnabled);
+                Assert.False(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
                 Assert.Contains("cancelled", ((TextBlock)window.FindName("PreliminaryCaption")).Text);
                 Assert.Equal("—", ((TextBlock)window.FindName("CandidateText")).Text);
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", "preliminary-cancelled-compact.png"), 1020, 790);
@@ -981,6 +983,7 @@ public sealed partial class DesktopTests
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
                 PumpUntil(() => !app.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(10));
                 Assert.True(appHelper.Exit.IsCompletedSuccessfully); Assert.False(appHelper.IsAvailable);
+                Directory.CreateDirectory(Path.Join(artifactRoot, "artifacts", "extensions"));
                 File.Copy(extensionLog, Path.Join(artifactRoot, "artifacts", "extensions", "extension-smoke.jsonl"), true);
             }
             catch (Exception ex) { failure = new InvalidOperationException($"WPF smoke failed while {stage}.", ex); }

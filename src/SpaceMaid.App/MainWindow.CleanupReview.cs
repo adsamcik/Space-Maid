@@ -19,7 +19,7 @@ public partial class MainWindow
         if (selected.Length == 0) return;
         if (_cleanupSettingsUnavailable)
         {
-            ViewOptionsToggle.IsChecked = true;
+            OpportunityBrowser?.ShowOptions();
             StatusText.Text = "Set build retention in View options before reviewing.";
             return;
         }

@@ -31,6 +31,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     private readonly List<LoadedExtension> _entries = [];
     private readonly bool _administrator;
     private readonly Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? _evidenceReview;
+    private readonly IOpportunityBrowserHost? _opportunityBrowser;
     private readonly IExtensionNavigation? _navigation;
     private readonly Dictionary<string, bool> _initialEnabled = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _addedIds = new(StringComparer.OrdinalIgnoreCase);
@@ -50,9 +51,9 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
     internal ExtensionRuntime(Func<ScanSnapshot?> currentScan, Func<bool> isScanStale, Action<string> reveal,
         string? dataRoot = null, string? bundleRoot = null, string? logDirectory = null, bool? administrator = null,
         Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? evidenceReview = null,
-        FileOperations? operations = null, IExtensionNavigation? navigation = null)
+        FileOperations? operations = null, IOpportunityBrowserHost? opportunityBrowser = null, IExtensionNavigation? navigation = null)
     {
-        _evidenceReview = evidenceReview;
+        _evidenceReview = evidenceReview; _opportunityBrowser = opportunityBrowser;
         _navigation = navigation;
         _administrator = administrator ?? Elevation.IsAdministrator;
         _dataRoot = dataRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid", "Extensions");
@@ -116,7 +117,7 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
                     throw new InvalidDataException("The extension descriptor differs from its manifest.");
                 string dataDirectory = Path.Combine(_dataRoot, id), cacheDirectory = Path.Combine(dataDirectory, "Cache");
                 System.IO.Directory.CreateDirectory(dataDirectory); System.IO.Directory.CreateDirectory(cacheDirectory);
-                var host = new Host(dataDirectory, cacheDirectory, _navigation, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
+                var host = new Host(dataDirectory, cacheDirectory, _opportunityBrowser, _navigation, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
@@ -254,10 +255,10 @@ internal sealed class ExtensionRuntime : IAsyncDisposable
         _loaded.Clear(); _diagnostics.Dispose(); _lifetime.Dispose();
         // Contexts intentionally remain loaded until process exit; settings apply on restart.
     }
-    private sealed record Host(string DataDirectory, string CacheDirectory, IExtensionNavigation? Navigation, IInventoryReader Inventory,
+    private sealed record Host(string DataDirectory, string CacheDirectory, IOpportunityBrowserHost? OpportunityBrowser, IExtensionNavigation? Navigation, IInventoryReader Inventory,
         IExtensionJobs Jobs, IToolBroker Tools, Action<string> Reveal,
         Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>> EvidenceReview,
-        Action<string, object> Diagnostics) : IExtensionHost, IExtensionEvidenceReview, IExtensionNavigationHost
+        Action<string, object> Diagnostics) : IExtensionHost, IExtensionEvidenceReview, IOpportunityBrowserServices, IExtensionNavigationHost
     {
         public void RevealLocation(string path) => Reveal(path);
         public void Log(string eventName, object data) => Diagnostics(eventName, data);

@@ -28,15 +28,15 @@ public sealed partial class DesktopTests
         { roots.Add(path); emptyCalls++; bytes = 0; items = 0; return 0; }));
         window.Operations = operations;
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
-        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 0;
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var refreshed = window.RefreshRecycleBinAsync();
         PumpUntil(() => refreshed.IsCompleted, TimeSpan.FromSeconds(3)); refreshed.GetAwaiter().GetResult();
-        var empty = (Button)window.FindName("EmptyRecycleBinButton");
+        var empty = (Button)OpportunityControl(window, "EmptyRecycleBinButton");
         Assert.True(empty.IsEnabled);
-        Assert.Contains(root, ((TextBlock)window.FindName("RecycleBinTitle")).Text);
-        Assert.Equal("3 items", ((TextBlock)window.FindName("RecycleBinCount")).Text);
-        Assert.Equal("6 GiB", ((TextBlock)window.FindName("RecycleBinSize")).Text);
+        Assert.Contains(root, ((TextBlock)OpportunityControl(window, "RecycleBinTitle")).Text);
+        Assert.Equal("3 items", ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text);
+        Assert.Equal("6 GiB", ((TextBlock)OpportunityControl(window, "RecycleBinSize")).Text);
 #pragma warning disable WPF0001
         foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
         {
@@ -51,7 +51,7 @@ public sealed partial class DesktopTests
         Assert.Equal(0, emptyCalls); Assert.Equal(3, items);
         window.DriveSpaceProvider = _ => (GiB(500), GiB(24));
         RunConfirmation(accept: true);
-        PumpUntil(() => ((TextBlock)window.FindName("RecycleBinCount")).Text == "Empty", TimeSpan.FromSeconds(3));
+        PumpUntil(() => ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text == "Empty", TimeSpan.FromSeconds(3));
         Assert.False(empty.IsEnabled); Assert.Equal(1, emptyCalls); Assert.Equal(root, Assert.Single(roots));
         Assert.Contains("empty", ((TextBlock)window.FindName("StatusText")).Text, StringComparison.OrdinalIgnoreCase);
         PumpUntil(() => ((TextBlock)window.FindName("FreeSpaceText")).Text == "24 GiB", TimeSpan.FromSeconds(3));
@@ -60,8 +60,8 @@ public sealed partial class DesktopTests
             (_, _) => throw new InvalidOperationException("Unavailable empty must not run.")));
         var unavailable = window.RefreshRecycleBinAsync();
         PumpUntil(() => unavailable.IsCompleted, TimeSpan.FromSeconds(3)); unavailable.GetAwaiter().GetResult();
-        Assert.Equal("Unavailable", ((TextBlock)window.FindName("RecycleBinCount")).Text);
-        Assert.Equal("—", ((TextBlock)window.FindName("RecycleBinSize")).Text); Assert.False(empty.IsEnabled);
+        Assert.Equal("Unavailable", ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text);
+        Assert.Equal("—", ((TextBlock)OpportunityControl(window, "RecycleBinSize")).Text); Assert.False(empty.IsEnabled);
 
         // Synthetic drive metadata and a fake Shell callback keep every real bin untouched.
         string previousRoot = root;

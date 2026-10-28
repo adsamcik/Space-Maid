@@ -17,6 +17,7 @@
     </AssemblyAttribute>
     <BundledExtension Include="../SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" ExtensionId="space-maid.photos" />
     <BundledExtension Include="../SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" ExtensionId="space-maid.apps" />
+    <BundledExtension Include="../SpaceMaid.Extensions.Opportunities/SpaceMaid.Extensions.Opportunities.csproj" ExtensionId="space-maid.opportunities" />
     <BundledExtension Include="../SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" ExtensionId="space-maid.developer" />
     <BundledExtension Include="../SpaceMaid.Extensions.Containers/SpaceMaid.Extensions.Containers.csproj" ExtensionId="space-maid.containers" />
     <BundledExtension Include="../SpaceMaid.Extensions.Models/SpaceMaid.Extensions.Models.csproj" ExtensionId="space-maid.models" />

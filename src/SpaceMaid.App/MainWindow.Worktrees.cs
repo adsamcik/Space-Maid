@@ -12,8 +12,7 @@ public partial class MainWindow
 {
     private Task? _worktreeCheckTask;
     private readonly Dictionary<string, WorktreeCleanupPolicy> _worktreesRequiringCheck = new(StringComparer.Ordinal);
-    private WorktreeCleanupPolicy CurrentWorktreePolicy => new((WorktreeCleanupMode)WorktreeRulePicker.SelectedIndex,
-        (int)Math.Round(WorktreeAgeSlider.Value));
+    private WorktreeCleanupPolicy CurrentWorktreePolicy => OpportunityBrowser?.WorktreePolicy ?? WorktreeCleanupPolicy.Default;
 
     private static string DescribeWorktreePolicy(WorktreeCleanupPolicy policy) => policy.Mode switch
     {
@@ -21,78 +20,6 @@ public partial class MainWindow
         WorktreeCleanupMode.Integrated => "clean and already in a local integration branch, any age",
         _ => $"clean, already in a local integration branch and no observed activity for at least {policy.InactiveDays} days"
     };
-
-    private void WorktreeRule_Changed(object sender, SelectionChangedEventArgs e) => WorktreeOptionsChanged();
-    private void WorktreeAge_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) => WorktreeOptionsChanged();
-
-    private void SelectWorktreeMatches_Click(object sender, RoutedEventArgs e)
-    {
-        if (_work is not null) return;
-        var members = _cleanupGroups.Where(group => group.Role == OpportunityGroupRole.MatchedWorktrees).SelectMany(group => group.Locations)
-            .Select(item => (item.ProviderId, item.DirectoryIndex, item.RuleId)).ToHashSet();
-        if (members.Count == 0) return;
-        _changingOpportunitySelection = true;
-        try { foreach (var row in _rows) if (members.Contains(row.Identity)) row.Selected = true; }
-        finally { _changingOpportunitySelection = false; }
-        UpdateSelection();
-    }
-
-    private void WorktreeOptionsChanged()
-    {
-        if (!_opportunityBrowserReady || _syncOpportunityBrowser || _work is not null) return;
-        var policy = CurrentWorktreePolicy;
-        // Changing filters never adds a target. Checked worktrees outside the
-        // new rule are unchecked; retained targets adopt the displayed rule.
-        _changingOpportunitySelection = true;
-        try
-        {
-            foreach (var row in _rows.Where(row => row.Selected && row.Item.IsWorktree))
-            {
-                if (!_worktreeAssessments.TryGetValue(row.Path, out var assessment) || !policy.Matches(assessment, DateTime.UtcNow))
-                    row.Selected = false;
-            }
-            foreach (string path in _worktreesRequiringCheck.Keys.ToArray()) _worktreesRequiringCheck[path] = policy;
-        }
-        finally { _changingOpportunitySelection = false; }
-        RebuildWorktreeGroups(); ApplyOpportunityFilters();
-    }
-
-    private void RebuildWorktreeGroups()
-    {
-        var policy = CurrentWorktreePolicy;
-        var matching = _worktreeAssessments.Values.Where(item => policy.Matches(item, DateTime.UtcNow))
-            .Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
-        _cleanupGroups = _snapshot is { } scan && _extensions is not null ? OpportunityExtensions.BuildCleanupGroups(scan,
-            _rows.Select(row => row.Item).ToArray(), _opportunityGroups, new OpportunityGroupContext(matching, policy)) : [];
-        int total = _rows.Count(row => row.Item.IsWorktree);
-        WorktreeOptionsToggle.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
-        WorktreeOptionsToggle.Content = $"Worktrees · {total:N0}";
-        if (total == 0) WorktreeOptionsToggle.IsChecked = false;
-        bool ageApplies = policy.Mode != WorktreeCleanupMode.Integrated;
-        WorktreeAgeSlider.IsEnabled = WorktreeAgeLabel.IsEnabled = ageApplies;
-        WorktreeAgeText.Text = ageApplies ? $"{policy.InactiveDays} {(policy.InactiveDays == 1 ? "day" : "days")}" : "Any age";
-        WorktreeRuleHint.ToolTip = policy.Mode switch
-        {
-            WorktreeCleanupMode.Old => "Age uses file changes and Git activity, not access. Unmerged commits stay in their branches. Detached commits must be integrated. Stop agents and builds; review ignored files.",
-            WorktreeCleanupMode.Integrated => "Age is ignored. Uses a single cached remote default, or main/master for detached checkouts; no fetch. Feature upstream retention is a separate fact. Changed and ignored local files are protected.",
-            _ => "Age uses creation, file changes and Git activity, not actual use. Uses a single cached remote default, or main/master for detached checkouts. Changed and ignored local files are protected."
-        };
-        WorktreeRuleHint.Text = policy.Mode == WorktreeCleanupMode.Old
-            ? "Unmerged branches kept"
-            : "Local refs · Changed worktrees kept";
-        var matchedGroups = _cleanupGroups.Where(item => item.Role == OpportunityGroupRole.MatchedWorktrees).ToArray();
-        SelectWorktreeMatchesButton.IsEnabled = matchedGroups.Any(group => group.Locations.Count > 0);
-        WorktreeCheckSummary.Text = _worktreeAssessments.Count == 0
-            ? $"{total:N0} worktrees · Not checked"
-            : $"{matching.Count:N0} {(matching.Count == 1 ? "worktree matches" : "worktrees match")} · {SizeText.Format(matchedGroups.Sum(group => group.ObservedBytes))} observed · {_worktreeAssessments.Count:N0} of {total:N0} checked";
-    }
-
-    private async void CheckWorktrees_Click(object sender, RoutedEventArgs e)
-    {
-        var task = CheckWorktreesAsync(); _worktreeCheckTask = task;
-        try { await task; }
-        finally { _worktreeCheckTask = null; UpdateUpdateButton(); }
-    }
 
     internal async Task CheckWorktreesAsync()
     {
@@ -133,8 +60,7 @@ public partial class MainWindow
             _work = null;
             if (!_closing && ReferenceEquals(_snapshot, scan))
             {
-                RebuildWorktreeGroups();
-                ApplyOpportunityFilters(); ShowActionLogError(log); SetBusy(false);
+                OpportunityBrowser?.RefreshGroups(); ShowActionLogError(log); SetBusy(false);
             }
         }
     }

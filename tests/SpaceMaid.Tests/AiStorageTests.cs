@@ -1,3 +1,4 @@
+using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;

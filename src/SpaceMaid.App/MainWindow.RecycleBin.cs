@@ -1,3 +1,4 @@
+using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using System.Security.Principal;
 using System.Windows;
@@ -10,6 +11,12 @@ public partial class MainWindow
 {
     private RecycleBinSnapshot? _recycleBin;
     private int _recycleBinVersion;
+    private OpportunityRecycleBinState? _recycleBinPresentation;
+    private void ShowRecycleBin(string root, string size, string count, bool canEmpty, string hint = "Your Recycle Bin on this drive. Emptying permanently deletes its current contents.")
+    {
+        _recycleBinPresentation = new("Recycle Bin · " + root, size, count, hint, canEmpty);
+        OpportunityBrowser?.UpdateRecycleBin(_recycleBinPresentation);
+    }
 
     internal async Task RefreshRecycleBinAsync()
     {
@@ -19,31 +26,23 @@ public partial class MainWindow
         if (_recycleBin?.RootPath.Equals(root, StringComparison.OrdinalIgnoreCase) != true)
         {
             _recycleBin = null;
-            RecycleBinSize.Text = "—"; RecycleBinCount.Text = "Checking…";
-            EmptyRecycleBinButton.IsEnabled = false;
+            ShowRecycleBin(root, "—", "Checking…", false);
         }
-        RecycleBinTitle.Text = "Recycle Bin · " + root;
         try
         {
             var bin = await Operations.QueryRecycleBinAsync(root);
             if (_closing || version != _recycleBinVersion) return;
             _recycleBin = bin;
-            RecycleBinSize.Text = SizeText.Format(bin.Bytes);
-            RecycleBinCount.Text = bin.Items == 0 ? "Empty" : $"{bin.Items:N0} {(bin.Items == 1 ? "item" : "items")}";
-            RecycleBinRow.ToolTip = "Your Recycle Bin on this drive. Emptying permanently deletes its current contents.";
-            EmptyRecycleBinButton.IsEnabled = bin.Items > 0 && _work is null && !_browsing && !_openingPath;
+            ShowRecycleBin(root, SizeText.Format(bin.Bytes), bin.Items == 0 ? "Empty" : $"{bin.Items:N0} {(bin.Items == 1 ? "item" : "items")}",
+                bin.Items > 0 && _work is null && !_browsing && !_openingPath);
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {
             if (_closing || version != _recycleBinVersion) return;
             _recycleBin = null;
-            RecycleBinSize.Text = "—"; RecycleBinCount.Text = "Unavailable";
-            RecycleBinRow.ToolTip = error.Message; EmptyRecycleBinButton.IsEnabled = false;
+            ShowRecycleBin(root, "—", "Unavailable", false, error.Message);
         }
     }
-
-    private async void EmptyRecycleBin_Click(object sender, RoutedEventArgs e) => await EmptySelectedRecycleBinAsync();
-    private async void RefreshRecycleBin_Click(object sender, RoutedEventArgs e) => await RefreshRecycleBinAsync();
 
     internal Task EmptySelectedRecycleBinAsync() => EmptyRecycleBinAsync(Path.GetPathRoot(_currentPath) ?? "");
 
@@ -62,7 +61,7 @@ public partial class MainWindow
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("empty-recycle-bin", root);
         _work = work; ++_recycleBinVersion;
-        SetBusy(true); RecycleBinRow.IsEnabled = false;
+        SetBusy(true);
         bool started = false;
         string message = "Recycle Bin unchanged.";
         try

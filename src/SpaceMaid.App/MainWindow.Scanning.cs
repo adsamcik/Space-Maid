@@ -42,7 +42,7 @@ public partial class MainWindow
             Build = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
             Runtime = Environment.Version.ToString(), OperatingSystem = Environment.OSVersion.ToString(), ProcessId = Environment.ProcessId });
         SetBusy(true);
-        EmptyCaption.Text = "Scanning…";
+        OpportunityBrowser?.SetEmptyMessage("Scanning…");
         CandidateCaption.Text = "Scanning…";
         bool acquiring = true;
         var progress = new ScanUiProgress(p =>
@@ -145,7 +145,7 @@ public partial class MainWindow
                 if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
                 RetainCancelledPreliminary();
                 StatusText.Text = _preliminary is null ? "Scan cancelled." : "Scan cancelled · Preliminary results retained.";
-                EmptyCaption.Text = "Start another scan to calculate cleanup estimates.";
+                OpportunityBrowser?.SetEmptyMessage("Start another scan to calculate cleanup estimates.");
                 TreeHint.Text = "Scan cancelled. Start another scan when you're ready.";
             }
             return false;
@@ -153,7 +153,7 @@ public partial class MainWindow
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
             log.Record("scan-failed", new { Target = target, Error = ex.ToString(), Win32Error = (ex as Win32Exception)?.NativeErrorCode });
-            if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; EmptyCaption.Text = "Check that the drive is connected and accessible, then try again."; }
+            if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; OpportunityBrowser?.SetEmptyMessage("Check that the drive is connected and accessible, then try again."); }
             return false;
         }
         finally

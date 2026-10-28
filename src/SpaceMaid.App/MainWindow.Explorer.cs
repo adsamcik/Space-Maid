@@ -361,10 +361,4 @@ public partial class MainWindow
         AppsPanel.Visibility = AppsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         UpdateExtensionWorkspace();
     }
-    private async void ShowInTree_Click(object sender, RoutedEventArgs e)
-    {
-        if (_snapshot is null || OpportunityGrid.SelectedItem is not OpportunityRow row) return;
-        ExploreTab.IsChecked = true;
-        await NavigateToEntryAsync(_snapshot.PrimaryLink(row.Item.DirectoryIndex));
-    }
 }

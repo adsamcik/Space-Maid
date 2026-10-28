@@ -1,3 +1,4 @@
+using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using System.Reflection;
 using System.Windows;
@@ -46,7 +47,7 @@ public sealed partial class DesktopTests
         var groups = OpportunityGrouping.Build(scan, locations);
         var load = window.InitializeExplorerAsync(scan, locations, default);
         PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(10)); load.GetAwaiter().GetResult();
-        ((ComboBox)window.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 0;
         typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, [scan, locations, groups, null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
@@ -54,7 +55,7 @@ public sealed partial class DesktopTests
         ((TextBlock)window.FindName("ScannedSizeText")).Text = SizeText.Format(scan.AllocatedBytes);
         ((TextBlock)window.FindName("CandidateText")).Text = SizeText.Format(scan.AllocatedBytes);
         ((TextBlock)window.FindName("CandidateCaption")).Text = "Estimate · Build files";
-        var cards = (ItemsControl)window.FindName("CleanupGroupCards");
+        var cards = (ItemsControl)OpportunityControl(window, "CleanupGroupCards");
         var root = Assert.Single(cards.Items.Cast<OpportunityGroupRow>());
         Assert.Equal(9, root.Children.Count);
         Assert.All(root.Children, row => Assert.True(row.HasContentGroups));
@@ -81,29 +82,29 @@ public sealed partial class DesktopTests
         Assert.Contains(Descendants(Container()).OfType<TextBlock>(), block => block.Inlines.OfType<System.Windows.Documents.Run>()
             .Any(run => run.Text.Contains("incremental compilation")));
         Assert.Contains(Descendants(Container()).OfType<TextBlock>(), block => block.Text.Contains("Cargo rebuilds"));
-        var scroll = (ScrollViewer)window.FindName("CleanupOverviewScroll");
+        var scroll = (ScrollViewer)OpportunityControl(window, "CleanupOverviewScroll");
         scroll.ScrollToVerticalOffset(80); window.UpdateLayout();
         double offset = scroll.VerticalOffset;
         cargo.Matches[0].Selected = true;
         Descendants(Container()).OfType<Button>().Single(button => ReferenceEquals(button.DataContext, cargo))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        var contents = (ItemsControl)window.FindName("BuildFolderContentsList");
-        var preview = contents.Items.Cast<MainWindow.BuildFolderContentRow>().ToArray();
+        var contents = (ItemsControl)OpportunityControl(window, "BuildFolderContentsList");
+        var preview = contents.Items.Cast<OpportunityFolderContent>().ToArray();
         Assert.Equal(8, preview.Length);
         Assert.Equal("debug/", preview[0].Name); Assert.Equal("72 GiB", preview[0].Size);
         Assert.Equal("release/", preview[1].Name); Assert.Equal("16 GiB", preview[1].Size);
-        Assert.Contains("Largest 8 of 13 entries", ((TextBlock)window.FindName("BuildFolderContentsNote")).Text);
-        Assert.True(Assert.IsType<OpportunityRow>(((ListBox)window.FindName("OpportunityGrid")).SelectedItem).Selected);
-        Assert.Equal(Visibility.Visible, ((StackPanel)window.FindName("BuildFolderContentsPanel")).Visibility);
+        Assert.Contains("Largest 8 of 13 entries", ((TextBlock)OpportunityControl(window, "BuildFolderContentsNote")).Text);
+        Assert.True(Assert.IsType<OpportunityRow>(((ListBox)OpportunityControl(window, "OpportunityGrid")).SelectedItem).Selected);
+        Assert.Equal(Visibility.Visible, ((StackPanel)OpportunityControl(window, "BuildFolderContentsPanel")).Visibility);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "build-folder-contents-dark.png"), 1220, 910);
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "build-folder-contents-compact-dark.png"), 1020, 790);
-        ((Button)window.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         PumpUntil(() => Math.Abs(scroll.VerticalOffset - offset) < 1, TimeSpan.FromSeconds(3));
         var restored = Assert.Single(cards.Items.Cast<OpportunityGroupRow>());
         Assert.True(restored.Expanded);
         Assert.True(restored.Children.Single(row => row.Name == "Rust / Cargo").ContentsExpanded);
         Assert.True(restored.Children.Single(row => row.Name == "Rust / Cargo").Checked);
-        ((Button)window.FindName("ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
         ulong Project(string name, string manifest)
         { ulong project = Folder(1, name); Folder(project, ".git"); File(project, manifest, 0); return project; }

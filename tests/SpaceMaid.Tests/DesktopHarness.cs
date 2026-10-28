@@ -19,6 +19,9 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static object OpportunityControl(MainWindow window, string name)
+        => Assert.IsAssignableFrom<FrameworkElement>(((ContentControl)window.FindName("OpportunitiesContent")).Content).FindName(name);
+
     [ThreadStatic] private static CancellationToken _desktopCancellation;
 
     private static long GiB(double value) => (long)(value * 1024 * 1024 * 1024);
