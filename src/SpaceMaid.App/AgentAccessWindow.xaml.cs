@@ -13,7 +13,7 @@ public partial class AgentAccessWindow : Window
     private readonly CancellationTokenSource _lifetime = new();
     private AgentAggregateSession? _session;
     private AgentConnection? _connection;
-    private bool _busy, _closing;
+    private bool _busy, _closing, _shutdownComplete;
 
     internal AgentAccessWindow(string root,
         Func<string, IReadOnlyList<string>, AgentAccessLevel, CancellationToken, Task<AgentAggregateSession>> create,
@@ -121,9 +121,10 @@ public partial class AgentAccessWindow : Window
     }
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (_closing) return;
+        if (_closing) { e.Cancel = !_shutdownComplete; return; }
         e.Cancel = true; _closing = true; _lifetime.Cancel();
         await StopSharingAsync();
-        _lifetime.Dispose(); Close();
+        _lifetime.Dispose(); _shutdownComplete = true;
+        _ = Dispatcher.BeginInvoke(new Action(Close));
     }
 }

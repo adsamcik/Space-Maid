@@ -19,6 +19,7 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    // Add desktop workflows here so they share one Application and STA dispatcher.
     [Fact]
     public void FluentDesktopLoadsScansPreviewsAndConfirmedFolderRecycling()
     {
@@ -978,6 +979,8 @@ public sealed partial class DesktopTests
                 }
                 BeginWorkflow("Extension workspaces");
                 CheckExtensionWorkspace(window, app, FindRepository());
+                BeginWorkflow("Agent access sharing and human review");
+                CheckAgentAccess(app);
                 SetStage("closing windows");
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
