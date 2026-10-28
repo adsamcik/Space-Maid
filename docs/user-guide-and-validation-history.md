@@ -164,7 +164,7 @@ Findings are evidence for review, not proof that every file is disposable. Linke
 
 ## Scanner and accounting
 
-Eligible whole local NTFS volumes use Windows' documented [`FSCTL_QUERY_FILE_LAYOUT`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/fsctl-query-file-layout) with names, data streams (including streams without clusters), and extra metadata. Acquisition is serial, with a reusable pooled buffer and bounds-checked relative-offset parsing. Unsupported access or layout data falls back to buffered directory enumeration.
+Eligible whole local NTFS volumes use Windows' documented [`FSCTL_QUERY_FILE_LAYOUT`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/fsctl-query-file-layout) with names, data streams (including streams without clusters), and extra metadata. Native queries remain serial; bounded read-ahead overlaps acquisition with consumption using two pooled buffers and at most one queued batch. Bounds-checked relative-offset parsing and the standard directory fallback remain in place. See the [NTFS performance notes](ntfs-scan-performance.md) for buffer sizing, benchmarks and remaining bottlenecks.
 
 The standard backend uses `FileIdExtdDirectoryInfo`, retaining 128-bit identities, logical sizes, and reported allocation. Providers that do not expose usable identities fall back to basic enumeration, with logical-size-only and hard-link limitations disclosed. Standard scanning does not fully enumerate alternate data streams. Junction/symbolic-link targets are not followed; inaccessible locations produce coverage warnings. No content is read to hash duplicates or hydrate cloud files. A provider can still do its own work in response to metadata queries.
 

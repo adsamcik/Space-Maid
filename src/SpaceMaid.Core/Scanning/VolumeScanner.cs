@@ -505,10 +505,9 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         public void Event(string eventName, string message, ScanBuilder? builder = null, int? error = null)
         {
             if (diagnostic is null) return;
-            using var process = Process.GetCurrentProcess();
             diagnostic(new(eventName, _backend, message, timer.ElapsedMilliseconds, builder?.Count ?? 0,
                 builder?.NameCount ?? 0, builder?.WarningCount ?? 0, _queries, _batches, _returnedBytes, _queryMs, _parseMs,
-                process.WorkingSet64, GC.GetTotalMemory(false), GC.GetTotalAllocatedBytes(false) - allocatedBefore, error));
+                Environment.WorkingSet, GC.GetTotalMemory(false), GC.GetTotalAllocatedBytes(false) - allocatedBefore, error));
         }
         public void Report(string phase, ScanBuilder builder, bool force = false)
         {

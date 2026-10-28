@@ -3,6 +3,15 @@ using System.Text.Json;
 using SpaceMaid.Core.Scanning;
 using SpaceMaid.Core.Analysis;
 
+if (args.Length > 0 && args[0] == "--ntfs-native")
+    return NativeNtfsBench.Run(args[1..]);
+
+if (args.Length == 1 && args[0] == "--ntfs-replay")
+{
+    NtfsReplayBench.Run();
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--classify")
 {
     long heapBefore = GC.GetTotalMemory(true), preparationBefore = GC.GetAllocatedBytesForCurrentThread();
@@ -30,7 +39,7 @@ if (args.Length == 1 && args[0] == "--classify")
 
 if (args.Length == 0)
 {
-    Console.WriteLine("Usage: SpaceMaid.Bench <drive-or-folder> [--standard] [--recheck] [--log-directory <path>] | --classify");
+    Console.WriteLine("Usage: SpaceMaid.Bench <drive-or-folder> [--standard] [--recheck] [--log-directory <path>] | --classify | --ntfs-replay | --ntfs-native <drive-root> [--passes 1..10] [--buffer-mib 1|4|8 --read-ahead on|off] [--probe] [--output <path>]");
     return 1;
 }
 using var cancellation = new CancellationTokenSource();

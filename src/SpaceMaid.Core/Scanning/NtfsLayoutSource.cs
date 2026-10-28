@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -21,6 +20,19 @@ public interface INtfsLayoutSource
 
 public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
 {
+    public int InitialBufferBytes { get; }
+    public bool ReadAhead { get; }
+
+    public NativeNtfsLayoutSource() : this(8 * 1024 * 1024, true) { }
+
+    public NativeNtfsLayoutSource(int initialBufferBytes, bool readAhead = true)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(initialBufferBytes, 64 * 1024);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(initialBufferBytes, NtfsLayoutAcquisition.MaximumBufferBytes);
+        InitialBufferBytes = initialBufferBytes;
+        ReadAhead = readAhead;
+    }
+
     public static string ValidateVolume(string volume)
     {
         if (volume.Length != 3 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':' || volume[2] != '\\')
@@ -36,7 +48,7 @@ public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
     {
         byte[] input = new byte[32];
         BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), 0x37);
-        Acquire(volume, input, consume, token);
+        Acquire(volume, input, InitialBufferBytes, ReadAhead, consume, token);
     }
 
     public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
@@ -44,7 +56,9 @@ public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
         token.ThrowIfCancellationRequested();
         ValidateFiles(files);
         var captured = files.ToArray();
-        Acquire(volume, CreateFilesInput(captured), consume, token);
+        // A request contains at most 1024 IDs. Avoid a worker and a second large
+        // buffer for these short refreshes; retain growth for unusually big records.
+        Acquire(volume, CreateFilesInput(captured), 1024 * 1024, false, consume, token);
     }
 
     public static void ValidateFiles(IReadOnlyList<FileIdentity> files)
@@ -75,45 +89,31 @@ public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
         return input;
     }
 
-    private static unsafe void Acquire(string volume, byte[] input, Action<NtfsLayoutBlock> consume, CancellationToken token)
+    private static unsafe void Acquire(string volume, byte[] input, int initialBufferBytes, bool readAhead,
+        Action<NtfsLayoutBlock> consume, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         ValidateVolume(volume);
         using var handle = NativeMethods.CreateFile(@"\\.\" + volume[..2], 0x80000000, 7, 0, 3, 0, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        int size = 1024 * 1024;
-        byte[] output = ArrayPool<byte>.Shared.Rent(size);
-        try
+        NtfsLayoutAcquisition.Acquire(Query, initialBufferBytes, readAhead, consume, token);
+
+        NtfsLayoutQueryResult Query(byte[] output, int size)
         {
-            while (true)
+            long started = Stopwatch.GetTimestamp();
+            bool success; int bytes;
+            fixed (byte* from = input)
+            fixed (byte* to = output)
+                success = NativeMethods.DeviceIoControl(handle, NativeMethods.QueryFileLayout,
+                    from, input.Length, to, size, out bytes, 0);
+            int error = success ? 0 : Marshal.GetLastPInvokeError();
+            double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (success)
             {
-                token.ThrowIfCancellationRequested();
-                long started = Stopwatch.GetTimestamp();
-                bool success; int bytes;
-                fixed (byte* from = input)
-                fixed (byte* to = output)
-                    success = NativeMethods.DeviceIoControl(handle, NativeMethods.QueryFileLayout,
-                        from, input.Length, to, size, out bytes, 0);
-                int error = success ? 0 : Marshal.GetLastPInvokeError();
-                double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-                if (!success)
-                {
-                    consume(new(ReadOnlyMemory<byte>.Empty, elapsed));
-                    if (error == NativeMethods.HandleEof) return;
-                    if (error is 122 or 234 && size < 64 * 1024 * 1024)
-                    {
-                        ArrayPool<byte>.Shared.Return(output);
-                        size *= 2; output = ArrayPool<byte>.Shared.Rent(size);
-                        continue;
-                    }
-                    throw new Win32Exception(error);
-                }
-                if (bytes < 16 || bytes > size) throw new InvalidDataException("Invalid NTFS metadata response length.");
-                consume(new(output.AsMemory(0, bytes), elapsed));
                 uint flags = BinaryPrimitives.ReadUInt32LittleEndian(input.AsSpan(4));
                 BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), flags & ~1u);
             }
+            return new(bytes, error, elapsed);
         }
-        finally { ArrayPool<byte>.Shared.Return(output); }
     }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace SpaceMaid.Core.Scanning;
 
@@ -7,7 +8,9 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
     private readonly List<FileRecord> _files = [];
     private readonly List<NameLink> _links = [];
     private readonly Dictionary<FileIdentity, int> _ids = [];
-    private char[] _names = new char[64 * 1024];
+    // Scoped file-ID queries have no names. Do not allocate a large-object-heap
+    // arena for every temporary batch parser; create it on the first name.
+    private char[] _names = [];
     private int _nameCount;
     private int _omissions;
     private readonly List<string> _warnings = [];
@@ -32,9 +35,10 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
 
     public int AddFile(FileRecord file)
     {
-        if (_ids.TryGetValue(file.Identity, out int existing)) return existing;
+        ref int entry = ref CollectionsMarshal.GetValueRefOrAddDefault(_ids, file.Identity, out bool exists);
+        if (exists) return entry;
         int index = _files.Count;
-        _ids.Add(file.Identity, index);
+        entry = index; // Finish using the borrowed reference before any further dictionary mutation.
         _files.Add(file);
         if (_firstNames is not null)
         {
@@ -50,6 +54,17 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
             }
         }
         return index;
+    }
+
+    internal void ReserveFiles(int count)
+    {
+        // The validated layout header gives the first batch's exact upper bound.
+        // Reserve once: growing a dictionary to each subsequent batch's exact
+        // size would repeatedly rehash an entire whole-volume inventory.
+        if (_files.Count != 0) return;
+        _files.EnsureCapacity(count);
+        _ids.EnsureCapacity(count);
+        _firstNames?.EnsureCapacity(count);
     }
 
     internal void ReplaceMetadata(FileRecord file)
@@ -113,7 +128,7 @@ internal sealed class ScanBuilder(bool trackPreliminary = false)
             throw new InvalidDataException("A metadata record contains an invalid basename.");
         int needed = checked(_nameCount + name.Length);
         if (needed > _names.Length)
-            Array.Resize(ref _names, Math.Max(needed, checked(_names.Length * 2)));
+            Array.Resize(ref _names, Math.Max(needed, Math.Max(64 * 1024, checked(_names.Length * 2))));
         name.CopyTo(_names.AsSpan(_nameCount));
         if (_firstNames is not null && _firstNames[file] < 0) _firstNames[file] = _links.Count;
         _links.Add(new(file, parent, _nameCount, name.Length));

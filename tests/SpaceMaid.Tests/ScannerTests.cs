@@ -133,6 +133,57 @@ public sealed class ScannerTests
     }
 
     [Fact]
+    public void DuplicateIdentitiesKeepTheirMetadataAndGenerationWhileAliasesCountOnce()
+    {
+        var builder = new ScanBuilder(trackPreliminary: true);
+        builder.RootIndex = builder.AddFile(new(new(5), FileAttributes.Directory, 0, 0, 0));
+        var identity = new FileIdentity(0x1000000000010);
+        int file = builder.AddFile(new(identity, FileAttributes.Normal, 8192, 4096, 0));
+        builder.AddLink(file, new(5), "first.dat");
+        int duplicate = builder.AddFile(new(identity, FileAttributes.Normal, 99999, 99999, 0));
+        builder.AddLink(duplicate, new(5), "alias.dat");
+        int generation = builder.AddFile(new(new(0x2000000000010), FileAttributes.Normal, 1024, 4096, 0));
+        builder.AddLink(generation, new(5), "new-generation.dat");
+        int high = builder.AddFile(new(new(identity.Low, 1), FileAttributes.Normal, 512, 4096, 0));
+        builder.AddLink(high, new(5), "high-identity.dat");
+
+        var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, 0, default);
+        Assert.Equal(file, duplicate); Assert.NotEqual(file, generation); Assert.NotEqual(file, high);
+        Assert.Equal(4, scan.FileCount); Assert.Equal(4, scan.NameCount);
+        Assert.Equal(9728, scan.LogicalBytes); Assert.Equal(12288, scan.AllocatedBytes);
+        Assert.Equal(scan.LogicalBytes, builder.Preliminary(@"C:\").LogicalBytes);
+        Assert.Equal(3, builder.Preliminary(@"C:\").LargestFiles.Count);
+        Assert.Equal(8192, scan.Entry(scan.FindEntry(@"C:\alias.dat")!.Value).LogicalBytes);
+        Assert.Empty(scan.Warnings);
+    }
+
+    [Fact]
+    public void NamesCanArriveAfterMetadataAndGrowWithoutLosingEarlierNames()
+    {
+        var builder = new ScanBuilder(trackPreliminary: true);
+        byte[] batch = LayoutFixture.File(42, 5, "ignored", 1, 8192, 4096);
+        LayoutFixture.Put32(batch, 40, 0); // File-ID query returns metadata without names.
+        LayoutParser.Parse(batch, builder);
+        Assert.Equal(0, builder.NameCount);
+        builder.RootIndex = builder.AddFile(new(new(5), FileAttributes.Directory, 0, 0, 0));
+        int file = builder.AddFile(new(new(42), FileAttributes.Normal, 8192, 4096, 0));
+        builder.AddLink(file, new(5), "first.dat");
+        string last = "";
+        for (int i = 0; i < 1000; i++)
+        {
+            last = $"{i:D4}-{new string('名', 100)}.dat";
+            builder.AddLink(file, new(5), last);
+        }
+        var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, 0, default);
+        Assert.Equal(1001, scan.NameCount); Assert.Equal(2, scan.FileCount);
+        Assert.Equal(8192, scan.LogicalBytes); Assert.Equal(4096, scan.AllocatedBytes);
+        Assert.Equal("first.dat", scan.Entry(scan.FindEntry(@"C:\first.dat")!.Value).Name);
+        Assert.Equal(last, scan.Entry(scan.FindEntry(Path.Join(@"C:\", last))!.Value).Name);
+        Assert.Equal(@"C:\first.dat", Assert.Single(builder.Preliminary(@"C:\").LargestFiles).Path);
+        Assert.Empty(scan.Warnings);
+    }
+
+    [Fact]
     public void IdentityGenerationIsNotDiscardedAndHardLinksAreCountedOnce()
     {
         var builder = new ScanBuilder();

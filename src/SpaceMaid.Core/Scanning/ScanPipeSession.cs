@@ -4,7 +4,7 @@ using System.Text;
 
 namespace SpaceMaid.Core.Scanning;
 
-// One authenticated connection, at most one acquisition and one buffered batch.
+// One authenticated connection, at most one acquisition and one queued native batch.
 // The command reader stays active during acquisition so cancellation/disconnect
 // also works while the native worker is waiting for the host to consume a batch.
 internal static class ScanPipeSession

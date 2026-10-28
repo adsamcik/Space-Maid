@@ -13,6 +13,7 @@ internal static class LayoutParser
         uint count = U32(data, 0);
         int file = Offset(data, 0, U32(data, 4), 16, allowZero: count == 0);
         if (count > (uint)(data.Length / 40)) throw Bad();
+        builder.ReserveFiles((int)count);
         for (uint i = 0; i < count; i++)
         {
             Require(data, file, 40);
