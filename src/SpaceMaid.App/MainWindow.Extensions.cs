@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
@@ -116,8 +117,8 @@ public partial class MainWindow
 
     private void RevealExtensionLocation(string path)
     {
-        if (Directory.Exists(path)) { OpenFolderInExplorer(path); return; }
-        if (!File.Exists(path)) { StatusText.Text = "This location is no longer available. Refresh its view."; return; }
+        if (DiskAccess.Default.DirectoryExists(path)) { OpenFolderInExplorer(path); return; }
+        if (!DiskAccess.Default.FileExists(path)) { StatusText.Text = "This location is no longer available. Refresh its view."; return; }
         try
         {
             _explorerRecheckPath = Operations.OpenInExplorer(path);

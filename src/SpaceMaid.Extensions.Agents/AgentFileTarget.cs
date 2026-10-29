@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.IO;
@@ -30,7 +31,7 @@ internal static class AgentFileTarget
     {
         for (string? current = includeSelf ? path : System.IO.Path.GetDirectoryName(path); current is not null; current = System.IO.Path.GetDirectoryName(current))
         {
-            var attributes = File.GetAttributes(current);
+            var attributes = DiskAccess.Default.GetAttributes(current);
             if ((attributes & FileAttributes.ReparsePoint) != 0 || !attributes.HasFlag(FileAttributes.Directory))
                 throw new IOException("Linked, redirected or unavailable agent paths are kept.");
         }
@@ -73,14 +74,14 @@ internal static class AgentFileTarget
         ValidateAncestors(path);
         using var handle = Open(path, 7, directory: false);
         if (Read(handle) != item.Identity) throw new IOException("Windows did not recycle the confirmed file. Inspect its current state before retrying.");
-        try { File.GetAttributes(item.Path); }
+        try { DiskAccess.Default.GetAttributes(item.Path); }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return; }
         throw new IOException("The original file is still present. Inspect its current state before retrying.");
     }
 
     private static SafeFileHandle Open(string path, uint share, bool directory, bool lockData = false)
     {
-        var handle = CreateFileW(path, 0x80, share, 0, 3, 0x00300000 | (directory ? 0x02000000u : 0u), 0);
+        var handle = DiskAccess.Default.OpenHandle(path, 0x80, share, 0, 3, 0x00300000 | (directory ? 0x02000000u : 0u), 0);
         if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "The history file is unavailable or in use. Close all agent clients before cleanup."); }
         try
         {
@@ -91,7 +92,7 @@ internal static class AgentFileTarget
             // FILE_READ_ATTRIBUTES alone does not enforce data-write sharing.
             // Ask for read/list access after the no-recall provider check, but
             // do not read a single byte of transcript content.
-            var stable = CreateFileW(path, directory ? 0x81u : 0x80000080u, share, 0, 3,
+            var stable = DiskAccess.Default.OpenHandle(path, directory ? 0x81u : 0x80000080u, share, 0, 3,
                 0x00300000 | (directory ? 0x02000000u : 0u), 0);
             if (stable.IsInvalid) { stable.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "The history file is in use. Close all agent clients before cleanup."); }
             try
@@ -130,7 +131,7 @@ internal static class AgentFileTarget
         var data = Metadata(handle);
         if (directory is { } expectedDirectory) ValidateMetadata(data, expectedDirectory);
         byte[] identity = new byte[24];
-        if (!GetFileInformationByHandleEx(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
         ulong low = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(8)), high = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(16));
         if (low == 0 && high == 0) throw new IOException("Windows did not provide a usable file identity.");
         return new(BinaryPrimitives.ReadUInt64LittleEndian(identity), low, high,
@@ -143,9 +144,7 @@ internal static class AgentFileTarget
         internal uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh, Volume,
             SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, nint security, uint creation, uint flags, nint template);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileMetadata metadata);
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int kind, byte[] data, uint size);
     [DllImport("cldapi.dll")] private static extern int CfGetPlaceholderInfo(SafeFileHandle file, int info, byte[] data, uint size, out uint returned);
     [DllImport("cldapi.dll")] private static extern int CfGetSyncRootInfoByHandle(SafeFileHandle file, int info, byte[] data, uint size, out uint returned);
 }

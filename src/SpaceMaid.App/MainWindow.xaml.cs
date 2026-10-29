@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -146,7 +147,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!Directory.Exists(path)) { StatusText.Text = "This location is no longer available. Rescan to refresh the results."; return; }
+            if (!DiskAccess.Default.DirectoryExists(path)) { StatusText.Text = "This location is no longer available. Rescan to refresh the results."; return; }
             _explorerRecheckPath = Operations.OpenInExplorer(path);
         }
         catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)

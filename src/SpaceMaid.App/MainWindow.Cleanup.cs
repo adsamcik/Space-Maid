@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Windows.Interop;
 using SpaceMaid.Core.Analysis;
@@ -36,7 +37,7 @@ public partial class MainWindow
             {
                 string path = item.Location.Path;
                 changedScopes.Add(new(Path.GetDirectoryName(path)!, false));
-                if (Directory.Exists(path)) changedScopes.Add(new(path));
+                if (DiskAccess.Default.DirectoryExists(path)) changedScopes.Add(new(path));
                 string root = Path.GetPathRoot(path)!, recycleRoot = Path.Combine(root, "$Recycle.Bin");
                 if (displayed.FindEntry(recycleRoot) is not null || displayed.FindEntry(root) is not null)
                 {
@@ -50,7 +51,7 @@ public partial class MainWindow
             }
             // Deleted paths must not be recursively enumerated. Their live
             // parent check removes the old subtree from the inventory instead.
-            changedScopes.RemoveAll(request => !Directory.Exists(request.Path));
+            changedScopes.RemoveAll(request => !DiskAccess.Default.DirectoryExists(request.Path));
             requests.AddRange(changedScopes);
             work.Token.ThrowIfCancellationRequested();
             if (validation.CanMergeInventory)

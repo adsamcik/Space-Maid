@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -63,7 +64,7 @@ internal sealed class NativeMediaFile : IDisposable
                 {
                     var observed = Inspect(data);
                     if (observed.Key != revision.Key || !observed.ContentAvailable) throw new IOException("The file changed before it could be read.");
-                    lease.Stream = new FileStream(data, FileAccess.Read, 64 * 1024, false);
+                    lease.Stream = DiskAccess.Default.Open(data, FileAccess.Read, 64 * 1024, false);
                 }
                 catch { data.Dispose(); throw; }
             }
@@ -223,11 +224,11 @@ internal sealed class NativeMediaFile : IDisposable
     }
     private static void ReadInfo(SafeFileHandle handle, int kind, byte[] bytes)
     {
-        if (!GetFileInformationByHandleEx(handle, kind, bytes, bytes.Length)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!DiskAccess.Default.ReadHandleInformation(handle, kind, bytes, bytes.Length)) throw new Win32Exception(Marshal.GetLastWin32Error());
     }
     private static SafeFileHandle OpenHandle(string path, uint access, uint share, uint flags)
     {
-        var handle = CreateFileW(path, access, share, 0, 3, flags, 0);
+        var handle = DiskAccess.Default.OpenHandle(path, access, share, 0, 3, flags, 0);
         if (!handle.IsInvalid) return handle;
         var error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(error);
     }
@@ -236,11 +237,6 @@ internal sealed class NativeMediaFile : IDisposable
         Stream?.Dispose();
         foreach (var guard in _guards) guard.Dispose();
     }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, nint security, uint creation, uint flags, nint template);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int information, [Out] byte[] bytes, int length);
     [DllImport("cldapi.dll")]
     private static extern int CfGetPlaceholderInfo(SafeFileHandle file, int information, [Out] byte[] bytes, uint length, out uint returned);
 }

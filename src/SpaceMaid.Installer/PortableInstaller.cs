@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.IO.Compression;
 
@@ -21,7 +22,7 @@ internal static class PortableInstaller
         string parent = Path.GetDirectoryName(target)!;
         string staging = Path.Join(parent, "." + Path.GetFileName(target) + ".SpaceMaid-" + Guid.NewGuid().ToString("N"));
         SafeDirectories.EnsureNoReparseAncestors(staging);
-        Directory.CreateDirectory(staging);
+        DiskAccess.Default.CreateDirectory(staging);
         try
         {
             long total = entries.Sum(item => item.Entry.Length);
@@ -32,10 +33,10 @@ internal static class PortableInstaller
                 cancellationToken.ThrowIfCancellationRequested();
                 string path = Path.Join(staging, item.Path);
                 SafeDirectories.EnsureNoReparseAncestors(path);
-                if (item.IsDirectory) { Directory.CreateDirectory(path); continue; }
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                if (item.IsDirectory) { DiskAccess.Default.CreateDirectory(path); continue; }
+                DiskAccess.Default.CreateDirectory(Path.GetDirectoryName(path)!);
                 using Stream source = item.Entry.Open();
-                await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length, true))
+                await using (var output = DiskAccess.Default.Open(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length, true))
                 {
                     long entryCopied = 0;
                     int count;
@@ -49,13 +50,13 @@ internal static class PortableInstaller
                     }
                     if (entryCopied != item.Entry.Length) throw InvalidArchive();
                 }
-                File.SetLastWriteTimeUtc(path, item.Entry.LastWriteTime.UtcDateTime);
+                DiskAccess.Default.SetLastWriteTimeUtc(path, item.Entry.LastWriteTime.UtcDateTime);
             }
             cancellationToken.ThrowIfCancellationRequested();
             // Recheck just before committing; an existing folder is never overwritten.
             ValidateDestination(target);
-            if (Directory.Exists(target)) Directory.Delete(target, recursive: false);
-            Directory.Move(staging, target);
+            if (DiskAccess.Default.DirectoryExists(target)) DiskAccess.Default.DeleteDirectory(target, recursive: false);
+            DiskAccess.Default.MoveDirectory(staging, target);
             progress?.Report(1);
             return target;
         }
@@ -71,11 +72,11 @@ internal static class PortableInstaller
         if (string.Equals(target, Path.TrimEndingDirectorySeparator(root ?? ""), StringComparison.OrdinalIgnoreCase))
             throw new IOException("Choose a folder inside the drive.");
         SafeDirectories.EnsureNoReparseAncestors(target);
-        if (File.Exists(target)) throw new IOException("Choose a folder, not a file.");
-        if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
+        if (DiskAccess.Default.FileExists(target)) throw new IOException("Choose a folder, not a file.");
+        if (DiskAccess.Default.DirectoryExists(target) && DiskAccess.Default.EnumerateFileSystemEntries(target).Any())
             throw new IOException("This folder is not empty. Choose an empty folder.");
         string? parent = Path.GetDirectoryName(target);
-        if (parent is null || !Directory.Exists(parent)) throw new IOException("The parent folder does not exist. Choose another location.");
+        if (parent is null || !DiskAccess.Default.DirectoryExists(parent)) throw new IOException("The parent folder does not exist. Choose another location.");
         return target;
     }
 
@@ -135,7 +136,7 @@ internal static class SafeDirectories
         {
             try
             {
-                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                if ((DiskAccess.Default.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("Choose a regular folder rather than a link or synced placeholder.");
             }
             catch (FileNotFoundException) { }
@@ -148,18 +149,18 @@ internal static class SafeDirectories
     {
         try
         {
-            if (!Directory.Exists(directory) || (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) return;
-            foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
+            if (!DiskAccess.Default.DirectoryExists(directory) || (DiskAccess.Default.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) return;
+            foreach (string entry in DiskAccess.Default.EnumerateFileSystemEntries(directory))
             {
-                FileAttributes attributes = File.GetAttributes(entry);
+                FileAttributes attributes = DiskAccess.Default.GetAttributes(entry);
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
-                    if ((attributes & FileAttributes.ReparsePoint) != 0) Directory.Delete(entry, recursive: false);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) DiskAccess.Default.DeleteDirectory(entry, recursive: false);
                     else TryDeleteOwnedDirectory(entry);
                 }
-                else File.Delete(entry);
+                else DiskAccess.Default.DeleteFile(entry);
             }
-            Directory.Delete(directory, recursive: false);
+            DiskAccess.Default.DeleteDirectory(directory, recursive: false);
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }

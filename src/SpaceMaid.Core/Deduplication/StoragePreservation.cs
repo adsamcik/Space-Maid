@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -147,7 +148,7 @@ public static partial class StoragePreservation
         while (offset < length)
         {
             token.ThrowIfCancellationRequested(); int count = (int)Math.Min(buffer.Length, length - offset);
-            int read = RandomAccess.Read(file.Handle, buffer.AsSpan(0, count), offset);
+            int read = DiskAccess.Default.Read(file.Handle, buffer.AsSpan(0, count), offset);
             if (read != count) throw new IOException("File length changed during verification.");
             hash.AppendData(buffer, 0, count); offset += count;
         }

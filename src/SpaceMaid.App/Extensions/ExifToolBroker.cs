@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -34,7 +35,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         ThrowIfUnavailable();
         using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdown.Token);
         token = requestCancellation.Token;
-        if (!File.Exists(_executable)) return null;
+        if (!DiskAccess.Default.FileExists(_executable)) return null;
         await _checkpoint(token).ConfigureAwait(false);
         await _requests.WaitAsync(token).ConfigureAwait(false);
         try { await EnsureStartedAsync(token).ConfigureAwait(false); return _version; }
@@ -49,7 +50,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         if (paths.Count > 32) throw new ArgumentException("ExifTool requests contain at most 32 selected files.", nameof(paths));
         foreach (string path in paths) ValidateInput(path);
         if (paths.Count == 0) return [];
-        if (!File.Exists(_executable)) return paths.Select(path => new MediaToolMetadata(path, null, null, null, null, null, "unavailable", "ExifTool is not installed at the approved local location.")).ToArray();
+        if (!DiskAccess.Default.FileExists(_executable)) return paths.Select(path => new MediaToolMetadata(path, null, null, null, null, null, "unavailable", "ExifTool is not installed at the approved local location.")).ToArray();
         await _checkpoint(token).ConfigureAwait(false);
         await _requests.WaitAsync(token).ConfigureAwait(false);
         var timer = Stopwatch.StartNew();
@@ -100,7 +101,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
     {
         if (_process is { HasExited: false } && _version is not null) return;
         await StopOwnedProcessAsync().ConfigureAwait(false);
-        if ((File.GetAttributes(_executable) & FileAttributes.ReparsePoint) != 0) throw new IOException("The approved ExifTool executable is a reparse file.");
+        if ((DiskAccess.Default.GetAttributes(_executable) & FileAttributes.ReparsePoint) != 0) throw new IOException("The approved ExifTool executable is a reparse file.");
         var start = new ProcessStartInfo(_executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
         start.ArgumentList.Add("-stay_open"); start.ArgumentList.Add("True"); start.ArgumentList.Add("-@"); start.ArgumentList.Add("-");
@@ -193,7 +194,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         string? parent = Path.GetDirectoryName(path);
         if (parent is null) throw new IOException("The file has no local parent folder.");
         FileOperations.ValidateLocalAncestors(parent);
-        var attributes = File.GetAttributes(path);
+        var attributes = DiskAccess.Default.GetAttributes(path);
         const FileAttributes cloudUnavailable = (FileAttributes)(0x1000 | 0x40000 | 0x400000);
         if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory | cloudUnavailable)) != 0)
             throw new IOException("Cloud-only, reparse and unavailable files remain metadata-only; ExifTool was not started for this file.");

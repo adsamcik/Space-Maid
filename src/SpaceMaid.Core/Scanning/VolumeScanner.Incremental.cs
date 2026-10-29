@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -198,11 +199,11 @@ public sealed partial class VolumeScanner
 
     private static unsafe FileIdentity ReadFolderIdentity(string path)
     {
-        using var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x80, 7, 0, 3,
+        using var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 7, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         byte* buffer = stackalloc byte[24];
-        if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, buffer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, buffer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         return new(LayoutParser.U64(new ReadOnlySpan<byte>(buffer, 24), 8), LayoutParser.U64(new ReadOnlySpan<byte>(buffer, 24), 16));
     }
 

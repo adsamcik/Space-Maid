@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -62,17 +63,17 @@ internal static class ToolCacheProjectResources
             string root;
             try { root = ToolCachePaths.Root(Path.IsPathFullyQualified(candidate) ? candidate : Path.GetFullPath(candidate, project)); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException) { return; }
-            bool marker = File.Exists(Path.Join(root, ".rustc_info.json"));
+            bool marker = DiskAccess.Default.FileExists(Path.Join(root, ".rustc_info.json"));
             int examined = 0;
-            foreach (string directory in Directory.EnumerateDirectories(root).Take(64))
+            foreach (string directory in DiskAccess.Default.EnumerateDirectories(root).Take(64))
             {
                 if (++examined > 64) break;
                 try
                 {
                     ToolCachePaths.Root(directory);
-                    if (Directory.Exists(Path.Join(directory, ".fingerprint"))) Add(directory);
-                    else foreach (string child in Directory.EnumerateDirectories(directory).Take(32))
-                        if (Directory.Exists(Path.Join(child, ".fingerprint"))) { ToolCachePaths.Root(child); Add(child); }
+                    if (DiskAccess.Default.DirectoryExists(Path.Join(directory, ".fingerprint"))) Add(directory);
+                    else foreach (string child in DiskAccess.Default.EnumerateDirectories(directory).Take(32))
+                        if (DiskAccess.Default.DirectoryExists(Path.Join(child, ".fingerprint"))) { ToolCachePaths.Root(child); Add(child); }
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException) { }
             }
@@ -91,8 +92,8 @@ internal static class ToolCacheProjectResources
         if (home is not null)
         {
             string caches = Path.Join(home, "caches");
-            if (Directory.Exists(caches))
-                foreach (string directory in Directory.EnumerateDirectories(caches).Take(64))
+            if (DiskAccess.Default.DirectoryExists(caches))
+                foreach (string directory in DiskAccess.Default.EnumerateDirectories(caches).Take(64))
                 {
                     string name = Path.GetFileName(directory);
                     if (!Regex.IsMatch(name, @"^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[A-Za-z0-9.-]+)?$", RegexOptions.CultureInvariant)) continue;
@@ -106,15 +107,15 @@ internal static class ToolCacheProjectResources
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException) { }
                 }
         }
-        if (scope is not null && Directory.Exists(scope)
-            && new[] { "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts" }.Any(name => File.Exists(Path.Join(scope, name))))
+        if (scope is not null && DiskAccess.Default.DirectoryExists(scope)
+            && new[] { "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts" }.Any(name => DiskAccess.Default.FileExists(Path.Join(scope, name))))
         {
             try
             {
                 string root = ToolCachePaths.Root(scope);
                 foreach (string name in new[] { ".gradle", "build" })
                 {
-                    string path = Path.Join(root, name); if (!Directory.Exists(path)) continue;
+                    string path = Path.Join(root, name); if (!DiskAccess.Default.DirectoryExists(path)) continue;
                     ToolCachePaths.Root(path);
                     result.Add(new("Gradle project " + name, path,
                         "Project marker and directory observed. Build scripts can relocate or customize outputs; no project evaluation or inferred deletion authority.",
@@ -129,14 +130,14 @@ internal static class ToolCacheProjectResources
     private static bool ProjectRoot(string? scope, string marker, out string root)
     {
         root = "";
-        if (scope is null || !File.Exists(Path.Join(scope, marker))) return false;
+        if (scope is null || !DiskAccess.Default.FileExists(Path.Join(scope, marker))) return false;
         try { root = ToolCachePaths.Root(scope); return true; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException) { return false; }
     }
     private static string ReadSmall(string path)
     {
         ToolCachePaths.ValidateFile(path);
-        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+        using var input = DiskAccess.Default.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
         if (input.Length > 64 * 1024) throw new InvalidDataException("Configuration exceeds the passive inspection limit.");
         using var reader = new StreamReader(input); return reader.ReadToEnd();
     }

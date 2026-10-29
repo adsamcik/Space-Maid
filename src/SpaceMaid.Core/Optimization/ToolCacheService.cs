@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -20,7 +21,7 @@ public sealed class ToolCacheService
         Func<string, string?>? environment = null, string? userProfile = null)
     {
         _workingDirectory = OptimizationPolicy.NormalizePath(workingDirectory);
-        Directory.CreateDirectory(_workingDirectory);
+        DiskAccess.Default.CreateDirectory(_workingDirectory);
         _resolve = resolve ?? ToolCacheCommandRunner.Resolve; _run = run ?? ToolCacheCommandRunner.RunAsync;
         _environment = environment ?? Environment.GetEnvironmentVariable;
         _userProfile = userProfile ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -124,7 +125,7 @@ public sealed class ToolCacheService
             {
                 string root = ToolCachePaths.Root(ParsePath((await QueryAsync(launcher, ["--global", "config", "get", "cache", "--json"], token).ConfigureAwait(false)).Output));
                 CheckSeparateScope(root);
-                bool marker = Directory.Exists(Path.Join(root, "_cacache"));
+                bool marker = DiskAccess.Default.DirectoryExists(Path.Join(root, "_cacache"));
                 observed = new(kind, name, version, root, marker ? ToolCacheDisposition.Review : ToolCacheDisposition.ManagedByTool,
                     marker ? "Native verification available" : "No npm cache marker",
                     "Configured root reported by npm. Verification uses npm's own cache integrity and garbage collection rules. It does not run dependency dedupe or install packages.",
@@ -146,7 +147,7 @@ public sealed class ToolCacheService
                     throw new InvalidOperationException("The pnpm store and metadata cache overlap; native pruning requires separate locations.");
                 bool versioned = Regex.IsMatch(Path.GetFileName(root), @"^v[0-9]+$", RegexOptions.CultureInvariant);
                 string? storeBase = versioned ? Path.GetDirectoryName(root) : null;
-                bool marker = versioned && Directory.Exists(Path.Join(root, "files"));
+                bool marker = versioned && DiskAccess.Default.DirectoryExists(Path.Join(root, "files"));
                 if (marker)
                 {
                     string bound = ToolCachePaths.Root(ParsePath((await QueryAsync(launcher,
@@ -200,7 +201,7 @@ public sealed class ToolCacheService
             root is null ? ToolCacheDisposition.Unavailable : ToolCacheDisposition.ManagedByTool,
             root is null ? "No observed Gradle home" : "Native retention policy",
             "Environment/default home only: a per-invocation Gradle option can override it. Gradle maintains generated and downloaded caches with separate retention and locks. Custom init scripts are not evaluated, changed or executed. "
-            + (root is not null && Directory.Exists(Path.Join(root, "init.d")) ? "Init scripts are present; effective policy remains owner-controlled." : "No background Gradle command is started."),
+            + (root is not null && DiskAccess.Default.DirectoryExists(Path.Join(root, "init.d")) ? "Init scripts are present; effective policy remains owner-controlled." : "No background Gradle command is started."),
             "Generated data costs rebuild time; downloaded resources can require network and credentials. Existing native policy remains in control.", resources, false);
     }
 
@@ -226,7 +227,7 @@ public sealed class ToolCacheService
         // and project-pinned auto-download behavior out of discovery.
         using var workingLease = ToolCachePaths.Lease(_workingDirectory);
         if (new[] { "package.json", ".npmrc", "pnpm-workspace.yaml", ".pnpmfile.cjs", ".pnpmfile.mjs" }
-            .Any(file => File.Exists(Path.Join(_workingDirectory, file))))
+            .Any(file => DiskAccess.Default.FileExists(Path.Join(_workingDirectory, file))))
             throw new InvalidOperationException("The inspection working folder contains project configuration; choose a neutral host folder.");
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {

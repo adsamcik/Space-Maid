@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using SpaceMaid.Core.Scanning;
@@ -103,7 +104,7 @@ public sealed class FolderDeletionTarget
         var live = ReadIdentity(recycledPath);
         if (live.Identity != _identity || live.Volume != _volume)
             throw new IOException("Windows did not recycle the confirmed folder. Recheck this folder before trying again.");
-        try { File.GetAttributes(Path); }
+        try { DiskAccess.Default.GetAttributes(Path); }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
         throw new IOException("The original folder is still present. Recheck this folder before trying again.");
     }
@@ -134,17 +135,17 @@ public sealed class FolderDeletionTarget
         // confirmed location onto a different drive or protected namespace.
         for (string? part = path; part is not null; part = System.IO.Path.GetDirectoryName(part))
         {
-            var attributes = File.GetAttributes(part);
+            var attributes = DiskAccess.Default.GetAttributes(part);
             if ((attributes & FileAttributes.Directory) == 0)
                 throw new IOException("The selected folder is no longer a directory.");
             if ((attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException("A linked or reparse path cannot be recycled here.");
         }
-        using var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x80, 7, 0, 3,
+        using var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 7, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         byte* buffer = stackalloc byte[24];
-        if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, buffer, 24))
+        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, buffer, 24))
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Windows could not verify this folder's identity. Deletion was blocked.");
         var data = new ReadOnlySpan<byte>(buffer, 24);
         var identity = new FileIdentity(LayoutParser.U64(data, 8), LayoutParser.U64(data, 16));

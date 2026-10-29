@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -60,7 +61,7 @@ public partial class InstallerWindow : Window
     private void OnBrowse(object sender, RoutedEventArgs e)
     {
         var picker = new OpenFolderDialog { Title = "Choose an empty folder", Multiselect = false };
-        if (Directory.Exists(FolderPath.Text)) picker.InitialDirectory = FolderPath.Text;
+        if (DiskAccess.Default.DirectoryExists(FolderPath.Text)) picker.InitialDirectory = FolderPath.Text;
         if (picker.ShowDialog(this) == true) FolderPath.Text = picker.FolderName;
     }
 

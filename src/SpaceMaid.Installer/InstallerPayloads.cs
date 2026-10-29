@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -28,14 +29,14 @@ internal sealed class InstallerPayloads(Assembly assembly)
     {
         string directory = Path.Join(Path.GetTempPath(), "SpaceMaid-Setup-" + Guid.NewGuid().ToString("N"));
         SafeDirectories.EnsureNoReparseAncestors(directory);
-        Directory.CreateDirectory(directory);
+        DiskAccess.Default.CreateDirectory(directory);
         var prepared = new PreparedPayload(directory, fileName);
         try
         {
             using Stream source = assembly.GetManifestResourceStream(resource) ?? throw new InvalidDataException("Installation files are missing. Download Setup again.");
-            await using (var destination = new FileStream(prepared.Path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, true))
+            await using (var destination = DiskAccess.Default.Open(prepared.Path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, true))
                 await source.CopyToAsync(destination, cancellationToken);
-            await using (var payload = new FileStream(prepared.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, true))
+            await using (var payload = DiskAccess.Default.Open(prepared.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, true))
                 await PayloadIntegrity.VerifyAsync(payload, Metadata(hashKey), cancellationToken);
             return prepared;
         }

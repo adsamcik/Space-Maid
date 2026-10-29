@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
@@ -109,7 +110,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (_settingsLoaded) return;
         try
         {
-            var roots = await Task.Run(() => File.Exists(SettingsPath)
+            var roots = await Task.Run(() => DiskAccess.Default.FileExists(SettingsPath)
                 ? JsonSerializer.Deserialize<CloudRoot[]>(CloudDiscovery.ReadSmallFile(SettingsPath)) ?? throw new JsonException("Invalid saved folders.") : [], token);
             if (roots.Length > 64 || roots.Any(root => root is null || root.Path is null || !CloudDiscovery.Providers.Contains(root.Provider)))
                 throw new JsonException("Invalid saved folders.");
@@ -124,10 +125,10 @@ public partial class CloudView : UserControl, IExtensionContextView
     private Task SaveAsync(IReadOnlyList<CloudRoot> roots, CancellationToken token) => Task.Run(() =>
     {
         token.ThrowIfCancellationRequested();
-        Directory.CreateDirectory(_host.DataDirectory);
+        DiskAccess.Default.CreateDirectory(_host.DataDirectory);
         string temporary = SettingsPath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(roots));
-        File.Move(temporary, SettingsPath, true);
+        DiskAccess.Default.WriteAllText(temporary, JsonSerializer.Serialize(roots));
+        DiskAccess.Default.MoveFile(temporary, SettingsPath, true);
     }, token);
 
     private void UpdateRoots(string? select = null)

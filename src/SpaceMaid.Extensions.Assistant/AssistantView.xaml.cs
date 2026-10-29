@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -38,10 +39,10 @@ public partial class AssistantView : UserControl
         InitializeComponent();
         try
         {
-            if (File.Exists(_settingsPath))
+            if (DiskAccess.Default.FileExists(_settingsPath))
             {
-                if (new FileInfo(_settingsPath).Length > 16384) throw new InvalidDataException("Settings exceed their limit.");
-                var saved = JsonSerializer.Deserialize<Settings>(File.ReadAllText(_settingsPath), new JsonSerializerOptions
+                if (DiskAccess.Default.FileLength(_settingsPath) > 16384) throw new InvalidDataException("Settings exceed their limit.");
+                var saved = JsonSerializer.Deserialize<Settings>(DiskAccess.Default.ReadAllText(_settingsPath), new JsonSerializerOptions
                 { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow }) ?? throw new InvalidDataException("Settings are missing.");
                 EnabledBox.IsChecked = saved.Enabled; ModelPathBox.Text = saved.ModelPath ?? "";
             }
@@ -67,10 +68,10 @@ public partial class AssistantView : UserControl
 
     private void SaveSettings()
     {
-        Directory.CreateDirectory(_host.DataDirectory);
+        DiskAccess.Default.CreateDirectory(_host.DataDirectory);
         string temporary = _settingsPath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(new Settings(EnabledBox.IsChecked == true, ModelPathBox.Text)));
-        File.Move(temporary, _settingsPath, true);
+        DiskAccess.Default.WriteAllText(temporary, JsonSerializer.Serialize(new Settings(EnabledBox.IsChecked == true, ModelPathBox.Text)));
+        DiskAccess.Default.MoveFile(temporary, _settingsPath, true);
     }
     private void Enabled_Changed(object sender, RoutedEventArgs e)
     {

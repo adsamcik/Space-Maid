@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -94,18 +95,18 @@ internal static partial class RegenerableFileDeleter
             if (file.Evidence?.Disposition != OptimizationDisposition.Eligible || file.ContentHash is null || file.Inputs.Count == 0)
                 throw new InvalidOperationException("Current producer evidence is required before deletion.");
             using var borrowed = new SafeFileHandle(handle.DangerousGetHandle(), ownsHandle: false);
-            using var stream = new FileStream(borrowed, FileAccess.Read, 65536, isAsync: false);
+            using var stream = DiskAccess.Default.Open(borrowed, FileAccess.Read, 65536, isAsync: false);
             using var proof = GeneratedResourceProof.Verify(file, stream, GeneratedReadLease.Inspect(handle, path), budget, token);
             token.ThrowIfCancellationRequested();
             byte delete = 1;
-            if (!SetFileInformationByHandle(handle, 4, &delete, 1)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.WriteHandleInformation(handle, 4, &delete, 1)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         }
         finally { for (int i = leases.Count - 1; i >= 0; i--) leases[i].Dispose(); }
     }
 
     private static SafeFileHandle Open(string path, uint access, uint sharing)
     {
-        var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), access, sharing, 0, 3,
+        var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), access, sharing, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint | 0x00100000, 0); // OPEN_NO_RECALL
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
@@ -118,7 +119,7 @@ internal static partial class RegenerableFileDeleter
         return (LayoutParser.I64(data, 0), LayoutParser.I64(data, 8), LayoutParser.I64(data, 16), (FileAttributes)LayoutParser.U32(data, 32));
     }
     private static unsafe void Read(SafeFileHandle handle, int kind, byte* buffer, uint length)
-    { if (!NativeMethods.GetFileInformationByHandleEx(handle, kind, buffer, length)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
+    { if (!DiskAccess.Default.ReadHandleInformation(handle, kind, buffer, length)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
 
     private static unsafe void CheckStreams(SafeFileHandle handle)
     {
@@ -131,7 +132,4 @@ internal static partial class RegenerableFileDeleter
             throw new InvalidOperationException("Files with additional data streams are kept.");
     }
 
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static unsafe partial bool SetFileInformationByHandle(SafeFileHandle file, int kind, byte* buffer, uint length);
 }

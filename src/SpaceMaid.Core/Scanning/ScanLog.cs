@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Text;
 using System.Text.Json;
 
@@ -19,13 +20,13 @@ public sealed class ScanLog : IDisposable
     {
         try
         {
-            Directory.CreateDirectory(directory);
+            DiskAccess.Default.CreateDirectory(directory);
             string file = Path.Combine(directory, $"scan-{DateTime.UtcNow:yyyyMMdd-HHmmss-fffffff}-{Guid.NewGuid():N}.jsonl");
-            _writer = new(new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
+            _writer = new(DiskAccess.Default.Open(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
             FilePath = file;
-            foreach (string old in Directory.EnumerateFiles(directory, "scan-*.jsonl").OrderDescending(StringComparer.Ordinal).Skip(10))
+            foreach (string old in DiskAccess.Default.EnumerateFiles(directory, "scan-*.jsonl").OrderDescending(StringComparer.Ordinal).Skip(10))
             {
-                try { File.Delete(old); }
+                try { DiskAccess.Default.DeleteFile(old); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* An active log may still be open. */ }
             }
         }

@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -34,7 +35,7 @@ internal sealed partial class ToolInputLease : IDisposable
     {
         string extended = path.StartsWith("\\\\?\\", StringComparison.Ordinal) ? path : "\\\\?\\" + path;
         const uint flags = 0x02000000 | 0x00200000 | 0x00100000; // backup semantics, open reparse point, no recall
-        var handle = CreateFile(extended, 0x80, 1, 0, 3, flags, 0);
+        var handle = DiskAccess.Default.OpenHandle(extended, 0x80, 1, 0, 3, flags, 0);
         if (handle.IsInvalid) { int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new IOException("A selected tool input could not be held stable.", new Win32Exception(error)); }
         _handles.Add(handle);
         byte[] basic = ReadInformation(handle, 0, 40);
@@ -46,7 +47,7 @@ internal sealed partial class ToolInputLease : IDisposable
         // After metadata eligibility, hold a data-read handle without reading
         // bytes. OPEN_REPARSE_POINT/NO_RECALL preserve the metadata-only cloud
         // boundary even if the path changed before this second open.
-        var data = CreateFile(extended, directory ? 0x81u : 0x80000080u, 1, 0, 3, flags, 0);
+        var data = DiskAccess.Default.OpenHandle(extended, directory ? 0x81u : 0x80000080u, 1, 0, 3, flags, 0);
         if (data.IsInvalid) { int error = Marshal.GetLastPInvokeError(); data.Dispose(); throw new IOException("A selected tool input could not be held for stable reading.", new Win32Exception(error)); }
         _handles.Add(data);
         byte[] heldBasic = ReadInformation(data, 0, 40);
@@ -84,16 +85,11 @@ internal sealed partial class ToolInputLease : IDisposable
     {
         byte[] result = new byte[length];
         fixed (byte* info = result)
-            if (!GetFileInformationByHandleEx(handle, infoClass, info, (uint)length))
+            if (!DiskAccess.Default.ReadHandleInformation(handle, infoClass, info, (uint)length))
                 throw new IOException("A selected tool input's metadata could not be validated.", new Win32Exception(Marshal.GetLastPInvokeError()));
         return result;
     }
     public void Dispose() { foreach (var handle in _handles) handle.Dispose(); _handles.Clear(); }
-    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    private static partial SafeFileHandle CreateFile(string name, uint access, uint share, nint security, uint creation, uint flags, nint template);
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static unsafe partial bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, void* info, uint size);
     [LibraryImport("cldapi.dll")]
     private static unsafe partial int CfGetPlaceholderInfo(SafeFileHandle handle, int information, byte* buffer, uint length, out uint returned);
 }

@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
@@ -66,7 +67,7 @@ internal static partial class AgentHistoryCleanup
             try
             {
                 string root = AgentFileTarget.ValidatePath(source.Path);
-                if (!Directory.Exists(root)) continue;
+                if (!DiskAccess.Default.DirectoryExists(root)) continue;
                 AgentFileTarget.ValidateAncestors(root, includeSelf: true);
                 var home = source with { Path = root };
                 string[] roots = home.Tool switch
@@ -79,7 +80,7 @@ internal static partial class AgentHistoryCleanup
                 foreach (string child in roots)
                 {
                     string basePath = System.IO.Path.Join(root, child);
-                    if (Directory.Exists(basePath)) Walk(basePath, home, 1);
+                    if (DiskAccess.Default.DirectoryExists(basePath)) Walk(basePath, home, 1);
                 }
             }
             catch (Exception error) when (Expected(error))
@@ -91,11 +92,11 @@ internal static partial class AgentHistoryCleanup
         {
             token.ThrowIfCancellationRequested();
             AgentFileTarget.ValidateAncestors(path, includeSelf: true);
-            foreach (string child in Directory.EnumerateFileSystemEntries(path))
+            foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(path))
             {
                 token.ThrowIfCancellationRequested();
                 if (++visited > MaximumEntries) throw new IOException($"Inspection reached its {MaximumEntries:N0}-entry limit. The list is partial; choose one agent home to narrow it.");
-                var attributes = File.GetAttributes(child);
+                var attributes = DiskAccess.Default.GetAttributes(child);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) { warnings.Add("Linked path kept: " + child); continue; }
                 if (attributes.HasFlag(FileAttributes.Directory))
                 {

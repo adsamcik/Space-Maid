@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Text.Json;
 
@@ -24,9 +25,9 @@ internal sealed class DriveHistoryStore(string filePath)
         {
             var entries = new Dictionary<string, DriveHistoryEntry>(StringComparer.OrdinalIgnoreCase);
             string? lastVolume = null;
-            if (File.Exists(filePath))
+            if (DiskAccess.Default.FileExists(filePath))
             {
-                await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                await using var stream = DiskAccess.Default.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
                     4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 var buffer = new byte[MaxJsonBytes + 1];
                 int count = 0, read;
@@ -136,17 +137,17 @@ internal sealed class DriveHistoryStore(string filePath)
                 entries = entries[..^1];
             }
             string destination = Path.GetFullPath(filePath), directory = Path.GetDirectoryName(destination)!;
-            Directory.CreateDirectory(directory);
+            DiskAccess.Default.CreateDirectory(directory);
             temporary = Path.Join(directory, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
-            await File.WriteAllBytesAsync(temporary, bytes);
-            File.Move(temporary, destination, overwrite: true);
+            await DiskAccess.Default.WriteAllBytesAsync(temporary, bytes);
+            DiskAccess.Default.MoveFile(temporary, destination, overwrite: true);
             lock (_sync) Error = null;
         }
         catch (Exception ex) when (IsHistoryError(ex))
         { lock (_sync) Error = "Drive history could not be saved: " + ex.Message; }
         finally
         {
-            if (temporary is not null) { try { File.Delete(temporary); } catch (Exception ex) when (IsHistoryError(ex)) { } }
+            if (temporary is not null) { try { DiskAccess.Default.DeleteFile(temporary); } catch (Exception ex) when (IsHistoryError(ex)) { } }
             _io.Release();
         }
     }

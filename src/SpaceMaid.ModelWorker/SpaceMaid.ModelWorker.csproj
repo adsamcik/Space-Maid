@@ -9,6 +9,7 @@
     <ShouldBeValidatedAsExecutableReference>false</ShouldBeValidatedAsExecutableReference>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <Compile Include="../SpaceMaid.LocalModel/ModelProtocol.cs" Link="ModelProtocol.cs" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.11.0" />
     <PackageReference Include="LLamaSharp" Version="0.30.0" />

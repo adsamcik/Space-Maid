@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -83,8 +84,8 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, _lifetime.Token);
         CancellationToken token = linked.Token;
         var directories = new List<(string Path, bool Enabled)>();
-        if (System.IO.Directory.Exists(_bundleRoot))
-            directories.AddRange(System.IO.Directory.EnumerateDirectories(_bundleRoot).Take(64).Select(path => (path, true)));
+        if (DiskAccess.Default.DirectoryExists(_bundleRoot))
+            directories.AddRange(DiskAccess.Default.EnumerateDirectories(_bundleRoot).Take(64).Select(path => (path, true)));
         directories.AddRange(_settings.Directories.Take(64).Select(value => (value.Directory, value.Enabled)));
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -119,7 +120,7 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                 if (instance.Descriptor != new ExtensionDescriptor(manifest.Id, manifest.Name, manifest.Version, manifest.ContractVersion))
                     throw new InvalidDataException("The extension descriptor differs from its manifest.");
                 string dataDirectory = Path.Combine(_dataRoot, id), cacheDirectory = Path.Combine(dataDirectory, "Cache");
-                System.IO.Directory.CreateDirectory(dataDirectory); System.IO.Directory.CreateDirectory(cacheDirectory);
+                DiskAccess.Default.CreateDirectory(dataDirectory); DiskAccess.Default.CreateDirectory(cacheDirectory);
                 var host = new Host(dataDirectory, cacheDirectory, _opportunityBrowser, _navigation, _cloudStorage, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
@@ -200,9 +201,9 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     {
         try
         {
-            if (!File.Exists(_settingsPath)) return new([], []);
-            if (new FileInfo(_settingsPath).Length > 64 * 1024) throw new InvalidDataException("The extension settings file is too large.");
-            var settings = JsonSerializer.Deserialize<ExtensionSettings>(File.ReadAllText(_settingsPath), Json) ?? throw new InvalidDataException("The extension settings are empty.");
+            if (!DiskAccess.Default.FileExists(_settingsPath)) return new([], []);
+            if (DiskAccess.Default.FileLength(_settingsPath) > 64 * 1024) throw new InvalidDataException("The extension settings file is too large.");
+            var settings = JsonSerializer.Deserialize<ExtensionSettings>(DiskAccess.Default.ReadAllText(_settingsPath), Json) ?? throw new InvalidDataException("The extension settings are empty.");
             if (settings.Directories is null || settings.DisabledIds is null || settings.Directories.Count > 64 || settings.DisabledIds.Count > 128)
                 throw new InvalidDataException("The extension settings have invalid limits.");
             if (settings.Directories.Any(value => value is null || string.IsNullOrWhiteSpace(value.Directory) || !Path.IsPathFullyQualified(value.Directory))
@@ -215,16 +216,16 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     }
     private void SaveSettings(ExtensionSettings settings)
     {
-        System.IO.Directory.CreateDirectory(_dataRoot);
+        DiskAccess.Default.CreateDirectory(_dataRoot);
         string temp = _settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { File.WriteAllText(temp, JsonSerializer.Serialize(settings, Json)); File.Move(temp, _settingsPath, true); _settings = settings; SettingsError = null; }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        try { DiskAccess.Default.WriteAllText(temp, JsonSerializer.Serialize(settings, Json)); DiskAccess.Default.MoveFile(temp, _settingsPath, true); _settings = settings; SettingsError = null; }
+        finally { if (DiskAccess.Default.FileExists(temp)) DiskAccess.Default.DeleteFile(temp); }
     }
     internal static ExtensionManifest ReadManifest(string directory)
     {
         string path = Path.Combine(directory, "extension.json");
-        if (!File.Exists(path) || new FileInfo(path).Length > 64 * 1024) throw new InvalidDataException("A supported extension.json manifest is required (maximum 64 KiB).");
-        var manifest = JsonSerializer.Deserialize<ExtensionManifest>(File.ReadAllText(path), Json) ?? throw new InvalidDataException("The extension manifest is empty.");
+        if (!DiskAccess.Default.FileExists(path) || DiskAccess.Default.FileLength(path) > 64 * 1024) throw new InvalidDataException("A supported extension.json manifest is required (maximum 64 KiB).");
+        var manifest = JsonSerializer.Deserialize<ExtensionManifest>(DiskAccess.Default.ReadAllText(path), Json) ?? throw new InvalidDataException("The extension manifest is empty.");
         if (string.IsNullOrEmpty(manifest.Id) || !Regex.IsMatch(manifest.Id, "^[a-z][a-z0-9.-]{2,63}$") || manifest.Id.Contains("..", StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(manifest.Name) || manifest.Name.Length > 100 || !Version.TryParse(manifest.Version, out _))
             throw new InvalidDataException("The extension ID, name or version is invalid.");
@@ -238,9 +239,9 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     private static void ValidateEntryPath(string directory, string assemblyPath)
     {
         FileOperations.ValidateLocalAncestors(directory);
-        if (!File.Exists(assemblyPath) || (File.GetAttributes(assemblyPath) & FileAttributes.ReparsePoint) != 0)
+        if (!DiskAccess.Default.FileExists(assemblyPath) || (DiskAccess.Default.GetAttributes(assemblyPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("The extension entry DLL is missing or is a reparse file.");
-        if (!File.Exists(Path.ChangeExtension(assemblyPath, ".deps.json")))
+        if (!DiskAccess.Default.FileExists(Path.ChangeExtension(assemblyPath, ".deps.json")))
             throw new InvalidDataException("The extension dependency manifest (.deps.json) is missing.");
     }
     public async ValueTask DisposeAsync()

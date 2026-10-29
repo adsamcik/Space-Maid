@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -47,8 +48,8 @@ internal static class WslDiskClient
     private static void ValidateHelper(string path)
     {
         for (string? part = path; part is not null; part = Path.GetDirectoryName(part))
-            if ((File.GetAttributes(part) & FileAttributes.ReparsePoint) != 0) throw new IOException("The disk helper's path must not contain links.");
-        if (!File.Exists(path) || !File.Exists(Path.ChangeExtension(path, ".runtimeconfig.json")))
+            if ((DiskAccess.Default.GetAttributes(part) & FileAttributes.ReparsePoint) != 0) throw new IOException("The disk helper's path must not contain links.");
+        if (!DiskAccess.Default.FileExists(path) || !DiskAccess.Default.FileExists(Path.ChangeExtension(path, ".runtimeconfig.json")))
             throw new IOException("The bundled disk helper is unavailable. Reinstall the complete app package.");
     }
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint process);

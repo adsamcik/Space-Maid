@@ -102,9 +102,6 @@ internal static class WindowsSandboxNative
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(nint handle);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    internal static extern SafeFileHandle CreateFileW(string name, uint access, uint share, nint attributes,
-        uint disposition, uint flags, nint template);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
     internal static extern SafeFileHandle CreateInheritableFile(string name, uint access, uint share,
         ref SecurityAttributes attributes, uint disposition, uint flags, nint template);

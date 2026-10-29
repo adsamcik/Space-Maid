@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using Microsoft.Win32;
 
@@ -24,7 +25,7 @@ internal static class DesktopRuntime
             try
             {
                 string shared = Path.Join(candidate, "shared", "Microsoft.WindowsDesktop.App");
-                if (Directory.Exists(shared) && Directory.EnumerateDirectories(shared).Any(directory =>
+                if (DiskAccess.Default.DirectoryExists(shared) && DiskAccess.Default.EnumerateDirectories(shared).Any(directory =>
                     Version.TryParse(Path.GetFileName(directory), out Version? version) && version.Major == 10)) return true;
             }
             catch (IOException) { }

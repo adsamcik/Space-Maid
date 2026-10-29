@@ -35,6 +35,7 @@ public sealed class ScopedScannerTests
     [Theory]
     [InlineData("unsupported")]
     [InlineData("access-denied")]
+    [InlineData("managed-access-denied")]
     [InlineData("missing")]
     [InlineData("unexpected")]
     [InlineData("duplicate")]
@@ -201,6 +202,7 @@ public sealed class ScopedScannerTests
             Requests.Add(files.ToArray()); BeforeQuery?.Invoke(); token.ThrowIfCancellationRequested();
             if (Defect == "unsupported") throw new NotSupportedException("No scoped lookup.");
             if (Defect == "access-denied") throw new Win32Exception(5);
+            if (Defect == "managed-access-denied") throw new UnauthorizedAccessException("No scoped access.");
             var records = files.Select(id => _records[id]).ToList();
             if (Defect == "missing") records.RemoveAt(records.Count - 1);
             if (Defect == "unexpected") records[0] = records[0] with { Identity = new(999999) };

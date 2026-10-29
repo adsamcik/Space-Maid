@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Text.Json;
 using SpaceMaid.Core.Optimization;
@@ -12,7 +13,7 @@ internal sealed record OptimizationSettings(OptimizationPolicy Policy, DateTime?
     {
         try
         {
-            using var input = File.OpenRead(path);
+            using var input = DiskAccess.Default.OpenRead(path);
             if (input.Length > 128 * 1024) throw new InvalidDataException("Optimization settings are too large.");
             var settings = JsonSerializer.Deserialize<OptimizationSettings>(input) ?? throw new InvalidDataException("Invalid optimization settings.");
             if (settings.Policy is null) throw new InvalidDataException("Optimization policy is missing.");
@@ -27,13 +28,13 @@ internal sealed record OptimizationSettings(OptimizationPolicy Policy, DateTime?
     internal void Save(string path)
     {
         var policy = Policy.Validate();
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        DiskAccess.Default.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(this with { Policy = policy }));
-            File.Move(temporary, path, overwrite: true);
+            DiskAccess.Default.WriteAllText(temporary, JsonSerializer.Serialize(this with { Policy = policy }));
+            DiskAccess.Default.MoveFile(temporary, path, overwrite: true);
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        finally { if (DiskAccess.Default.FileExists(temporary)) DiskAccess.Default.DeleteFile(temporary); }
     }
 }

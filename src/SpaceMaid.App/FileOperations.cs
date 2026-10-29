@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using System.IO;
 using SpaceMaid.Core.Analysis;
@@ -13,18 +14,13 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     private readonly RecycleBinService _recycleBins = recycleBins ?? new();
     private readonly Dictionary<string, WeakReference<ScanSnapshot>> _measurements = new(StringComparer.Ordinal);
     private readonly object _measurementGate = new();
-
-    private INtfsLayoutSource? MetadataSource() => ntfsSource?.Invoke()
-        ?? (Elevation.IsAdministrator ? new NativeNtfsLayoutSource() : null);
+    private static readonly INtfsLayoutSource NativeSource = new NativeNtfsLayoutSource();
+    private readonly DiskAccess _disk = new(() => ntfsSource?.Invoke() ?? NativeSource);
 
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, Action<ScanDiagnostic>? diagnostic = null,
         string? fastUnavailableReason = null)
-    {
-        var source = MetadataSource();
-        return new VolumeScanner(source).ScanAsync(path, progress, cancellationToken,
-            preferFast: source is not null, diagnostic: diagnostic, fastUnavailableReason: fastUnavailableReason);
-    }
+        => _disk.ScanAsync(path, progress, cancellationToken, diagnostic, fastUnavailableReason);
 
     public async Task<ScanSnapshot> MeasureFolderAsync(string path, CancellationToken token = default,
         Action<string, object>? diagnostic = null, ScanSnapshot? previous = null)
@@ -34,7 +30,7 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
             if (_measurements.TryGetValue(path, out var cached) && cached.TryGetTarget(out var snapshot)
                 && (previous is null || snapshot.ScannedAtUtc >= previous.ScannedAtUtc)) previous = snapshot;
         previous ??= inventory?.Invoke();
-        var measured = await new VolumeScanner(MetadataSource()).MeasureFolderAsync(path, token, diagnostic, previous).ConfigureAwait(false);
+        var measured = await _disk.MeasureFolderAsync(path, token, diagnostic, previous).ConfigureAwait(false);
         lock (_measurementGate)
         {
             // Do not retain a second large inventory for each extension/app.
@@ -46,12 +42,12 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
 
     public Task<ScanSnapshot> RecheckAsync(ScanSnapshot scan, IEnumerable<ScanRecheckRequest> requests,
         CancellationToken token = default, Action<string, object>? diagnostic = null)
-        => ScanRechecker.RefreshAsync(scan, requests, token, diagnostic, MetadataSource());
+        => _disk.RecheckAsync(scan, requests, token, diagnostic);
 
     public Task<OpportunityReviewValidation> ReviewCleanupAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
         CancellationToken token = default, Action<string, object>? diagnostic = null, OpportunityDiscovery? discover = null,
         IProgress<OpportunityValidationProgress>? progress = null)
-        => OpportunityReviewValidator.ValidateAsync(scan, selected, token, diagnostic, discover, progress, MetadataSource());
+        => _disk.ReviewCleanupAsync(scan, selected, token, diagnostic, discover, progress);
 
     public async Task<FolderDeletionTarget> PrepareRecycleAsync(ScanSnapshot scan, int link, CancellationToken token,
         Action<string, object>? diagnostic = null)
@@ -101,8 +97,8 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public string OpenInExplorer(string path)
     {
         path = Path.GetFullPath(path);
-        bool folder = Directory.Exists(path);
-        if (!folder && !File.Exists(path)) throw new FileNotFoundException("This location is no longer available.", path);
+        bool folder = DiskAccess.Default.DirectoryExists(path);
+        if (!folder && !DiskAccess.Default.FileExists(path)) throw new FileNotFoundException("This location is no longer available.", path);
         var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
         start.ArgumentList.Add(folder ? path : "/select," + path);
         using var process = Process.Start(start);

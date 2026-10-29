@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -102,7 +103,7 @@ internal static class WorkerIsolation
     {
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, access, FileShare.ReadWrite | FileShare.Delete);
+            using var stream = DiskAccess.Default.Open(path, FileMode.Open, access, FileShare.ReadWrite | FileShare.Delete);
             return true;
         }
         catch (UnauthorizedAccessException) { return false; }

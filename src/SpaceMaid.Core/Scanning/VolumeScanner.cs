@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.ComponentModel;
@@ -130,7 +131,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                 }
                 fastComplete = true;
             }
-            catch (Exception error) when (error is Win32Exception or IOException or InvalidDataException or NotSupportedException)
+            catch (Exception error) when (error is Win32Exception or IOException or InvalidDataException or NotSupportedException or UnauthorizedAccessException)
             {
                 builder.FallbackReason = "Fast NTFS metadata unavailable: " + error.Message;
                 diagnostic?.Invoke("scoped-fast-fallback", new { Path = path, Error = error.ToString(), Win32Error = (error as Win32Exception)?.NativeErrorCode });
@@ -183,7 +184,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         byte[] info = new byte[24];
         fixed (byte* pointer = info)
-            if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.ReadHandleInformation(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         if (new FileIdentity(LayoutParser.U64(info, 8), LayoutParser.U64(info, 16)) != expected)
             throw new IOException("A folder moved or was replaced during its metadata lookup.");
     }
@@ -192,19 +193,19 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
     // and sparse streams. Hold the identity while querying; never read content.
     private static unsafe FileRecord ReadStreamMetadata(string path, FileRecord record, ref byte[] buffer)
     {
-        using var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x80, 3, 0, 3,
+        using var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 3, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         byte[] identity = new byte[24];
         fixed (byte* info = identity)
-            if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, info, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.ReadHandleInformation(handle, 18, info, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         if (new FileIdentity(LayoutParser.U64(identity, 8), LayoutParser.U64(identity, 16)) != record.Identity)
             throw new IOException("A file changed during its metadata recheck. Recheck the folder again.");
         while (true)
         {
             bool success;
             fixed (byte* info = buffer)
-                success = NativeMethods.GetFileInformationByHandleEx(handle, 7, info, (uint)buffer.Length);
+                success = DiskAccess.Default.ReadHandleInformation(handle, 7, info, (uint)buffer.Length);
             int error = Marshal.GetLastPInvokeError();
             if (success) break;
             if (error == NativeMethods.HandleEof) return record with { LogicalBytes = 0, AllocatedBytes = 0 };
@@ -242,7 +243,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         CancellationToken token, bool preferFast, Action<ScanDiagnostic>? diagnostic, INtfsLayoutSource? layoutSource, string? fastUnavailableReason)
     {
         string target = Path.GetFullPath(path);
-        if (!Directory.Exists(target)) throw new DirectoryNotFoundException("The selected drive or folder is unavailable.");
+        if (!DiskAccess.Default.DirectoryExists(target)) throw new DirectoryNotFoundException("The selected drive or folder is unavailable.");
         target = Path.TrimEndingDirectorySeparator(target);
         string root = Path.GetPathRoot(target)!;
         var timer = Stopwatch.StartNew();
@@ -254,7 +255,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         try
         {
             if (preferFast && string.Equals(target, root, StringComparison.OrdinalIgnoreCase)
-                && root.Length == 3 && new DriveInfo(root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+                && DiskAccess.Default.CanUseNtfs(root))
             {
                 var fast = new ScanBuilder(progress is not null) { AllStreams = true, CompleteVolumeLinks = true };
                 active = fast;
@@ -265,7 +266,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                     AcquireLayout(root, fast, reporter, token, layoutSource ?? new NativeNtfsLayoutSource());
                     return Finish(fast, "Fast NTFS scan");
                 }
-                catch (Exception ex) when (ex is Win32Exception or InvalidDataException or IOException)
+                catch (Exception ex) when (ex is Win32Exception or IOException or NotSupportedException or UnauthorizedAccessException)
                 {
                     fallbackReason = ex is Win32Exception { NativeErrorCode: 5 }
                         ? "Fast NTFS access was unavailable. Standard scanning was used; administrator access can enable the fast scan."
@@ -340,14 +341,14 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         if (rootHandle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         byte[] idBuffer = new byte[24];
         fixed (byte* pointer = idBuffer)
-            if (!NativeMethods.GetFileInformationByHandleEx(rootHandle, 18, pointer, 24))
+            if (!DiskAccess.Default.ReadHandleInformation(rootHandle, 18, pointer, 24))
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
         var rootId = new FileIdentity(LayoutParser.U64(idBuffer, 8), LayoutParser.U64(idBuffer, 16));
         if (rootId == default) throw new Win32Exception(50);
         long rootWrite = 0, rootCreated = 0;
         byte[] basicInfo = new byte[40];
         fixed (byte* pointer = basicInfo)
-            if (NativeMethods.GetFileInformationByHandleEx(rootHandle, 0, pointer, 40))
+            if (DiskAccess.Default.ReadHandleInformation(rootHandle, 0, pointer, 40))
             { rootWrite = LayoutParser.I64(basicInfo, 16); rootCreated = LayoutParser.I64(basicInfo, 0); }
         builder.RootIndex = builder.AddFile(new(rootId, FileAttributes.Directory, 0, 0, rootWrite, rootCreated));
         var pending = new Queue<(string Path, FileIdentity Id)>();
@@ -369,7 +370,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                 if (validateIdentity)
                 {
                     fixed (byte* pointer = idBuffer)
-                        if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+                        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
                     if (new FileIdentity(LayoutParser.U64(idBuffer, 8), LayoutParser.U64(idBuffer, 16)) != directory.Id)
                         throw new IOException("A folder moved or was replaced during the recheck. Recheck its parents again.");
                 }
@@ -379,7 +380,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                     bool success;
                     long queryStarted = Stopwatch.GetTimestamp();
                     fixed (byte* pointer = buffer)
-                        success = NativeMethods.GetFileInformationByHandleEx(handle, 19, pointer, (uint)buffer.Length);
+                        success = DiskAccess.Default.ReadHandleInformation(handle, 19, pointer, (uint)buffer.Length);
                     int queryError = success ? 0 : Marshal.GetLastPInvokeError();
                     reporter.QueryCompleted(queryStarted, 0); // This API does not return a byte count.
                     if (!success)
@@ -435,7 +436,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
     }
 
     private static Microsoft.Win32.SafeHandles.SafeFileHandle OpenDirectory(string path) =>
-        NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x81, 7, 0, 3,
+        DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x81, 7, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
 
     private readonly record struct BasicEntry(string Name, FileAttributes Attributes, long Size, long WriteTime, long CreatedTime);

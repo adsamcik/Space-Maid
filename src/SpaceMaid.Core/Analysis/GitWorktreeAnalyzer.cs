@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -95,7 +96,7 @@ public static partial class GitWorktreeAnalyzer
             guard.File(Path.Join(gitDir, "index"));
             operation = OperationActive(gitDir, common);
             if (operation) return Result("Git operation in progress", "A merge, rebase, cherry-pick, bisect or Git lock is present. Finish it before retiring the checkout.");
-            if (File.Exists(Path.Join(common, "objects", "info", "alternates")))
+            if (DiskAccess.Default.FileExists(Path.Join(common, "objects", "info", "alternates")))
                 return Result("Needs review", "Alternate Git object storage cannot be verified by this bounded local check.");
             var git = new GitReader(path, budget.Token);
             var rootsTask = git.Run("rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir");
@@ -199,8 +200,8 @@ public static partial class GitWorktreeAnalyzer
             }
             string headLogPath = Path.Join(gitDir, "logs", "HEAD");
             string? branchLogPath = fullBranch is null ? null : Normalize(Path.Join(common, "logs", fullBranch));
-            if (File.Exists(headLogPath) && new FileInfo(headLogPath).Length != 0
-                && (detached || File.Exists(branchLogPath) && new FileInfo(branchLogPath!).Length != 0))
+            if (DiskAccess.Default.FileExists(headLogPath) && DiskAccess.Default.FileLength(headLogPath) != 0
+                && (detached || DiskAccess.Default.FileExists(branchLogPath) && DiskAccess.Default.FileLength(branchLogPath!) != 0))
             {
                 DateTime? headLogModified = guard.File(headLogPath);
                 var headLogTask = git.Run("reflog", "show", "-1", "--date=unix", "--format=%gD", "HEAD");
@@ -309,8 +310,8 @@ public static partial class GitWorktreeAnalyzer
     }
     private static string ReadSmall(string path)
     {
-        if (new FileInfo(path).Length > 65536) throw new IOException("Git metadata exceeds the bounded inspection size.");
-        using var reader = new StreamReader(path, Encoding.UTF8);
+        if (DiskAccess.Default.FileLength(path) > 65536) throw new IOException("Git metadata exceeds the bounded inspection size.");
+        using var reader = new StreamReader(DiskAccess.Default.OpenRead(path), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var buffer = new char[65537]; int count = reader.ReadBlock(buffer, 0, buffer.Length);
         if (count > 65536) throw new IOException("Git metadata exceeds the bounded inspection size.");
         return new string(buffer, 0, count);
@@ -350,8 +351,8 @@ public static partial class GitWorktreeAnalyzer
         && !value.EndsWith("/HEAD", StringComparison.Ordinal) && !value.Contains("..", StringComparison.Ordinal)
         && !value.Contains("@{", StringComparison.Ordinal) && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '/' or '-' or '_' or '.');
     private static bool OperationActive(string gitDir, string common) => new[] { "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
-        "BISECT_START", "rebase-merge", "rebase-apply", "sequencer", "index.lock", "HEAD.lock" }.Any(name => File.Exists(Path.Join(gitDir, name)) || Directory.Exists(Path.Join(gitDir, name)))
-        || File.Exists(Path.Join(common, "packed-refs.lock")) || File.Exists(Path.Join(common, "config.lock"));
+        "BISECT_START", "rebase-merge", "rebase-apply", "sequencer", "index.lock", "HEAD.lock" }.Any(name => DiskAccess.Default.FileExists(Path.Join(gitDir, name)) || DiskAccess.Default.DirectoryExists(Path.Join(gitDir, name)))
+        || DiskAccess.Default.FileExists(Path.Join(common, "packed-refs.lock")) || DiskAccess.Default.FileExists(Path.Join(common, "config.lock"));
     private static DateTime? Max(DateTime? a, DateTime? b) => a is null ? b : b is null || a >= b ? a : b;
     private static string Normalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     private static bool Contains(string root, string path) => path.Equals(root, StringComparison.OrdinalIgnoreCase)
@@ -367,7 +368,7 @@ public static partial class GitWorktreeAnalyzer
         public void Ancestors(string path)
         {
             string root = Path.GetPathRoot(path)!;
-            if (root.StartsWith('\\') || new DriveInfo(root).DriveType == DriveType.Network) throw new IOException("Network Git storage needs manual review; no network inspection was performed.");
+            if (root.StartsWith('\\') || DiskAccess.Default.GetDrive(root).DriveType == DriveType.Network) throw new IOException("Network Git storage needs manual review; no network inspection was performed.");
             var ancestors = new Stack<string>();
             for (string? current = path; current is not null; current = Path.GetDirectoryName(current)) ancestors.Push(current);
             while (ancestors.TryPop(out string? ancestor)) Inspect(ancestor);
@@ -381,7 +382,7 @@ public static partial class GitWorktreeAnalyzer
                 var metadata = Inspect(path); latest = Max(latest, metadata.Modified);
                 complete &= metadata.Modified is not null;
                 if (!metadata.Directory) continue;
-                foreach (string child in Directory.EnumerateFileSystemEntries(path))
+                foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(path))
                 {
                     token.ThrowIfCancellationRequested();
                     if (rejectNestedGit && !path.Equals(root, StringComparison.OrdinalIgnoreCase) && Path.GetFileName(child).Equals(".git", StringComparison.OrdinalIgnoreCase))
@@ -417,7 +418,7 @@ public static partial class GitWorktreeAnalyzer
         }
         private static SafeFileHandle Open(string path, uint access)
         {
-            var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), access, (access & 0x80000000u) != 0 ? 1u : 3u, 0, 3,
+            var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), access, (access & 0x80000000u) != 0 ? 1u : 3u, 0, 3,
                 NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint | 0x00100000, 0);
             if (!handle.IsInvalid) return handle;
             int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
@@ -425,17 +426,17 @@ public static partial class GitWorktreeAnalyzer
         private static unsafe HeldMetadata ReadMetadata(SafeFileHandle handle)
         {
             byte* info = stackalloc byte[40];
-            if (!NativeMethods.GetFileInformationByHandleEx(handle, 9, info, 8)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.ReadHandleInformation(handle, 9, info, 8)) throw new Win32Exception(Marshal.GetLastPInvokeError());
             uint attributes = LayoutParser.U32(new(info, 8), 0), tag = LayoutParser.U32(new(info, 8), 4);
             var cloud = new byte[4200];
             if ((attributes & (0x400u | 0x1000u | 0x40000u | 0x400000u)) != 0 || tag != 0
                 || RecognizesProvider(CfGetPlaceholderInfo(handle, 1, cloud, (uint)cloud.Length, out _))
                 || RecognizesProvider(CfGetSyncRootInfoByHandle(handle, 2, cloud, 1028, out _)))
                 throw new IOException("Provider-managed or reparse Git paths are not inspected; cloud content was not requested.");
-            if (!NativeMethods.GetFileInformationByHandleEx(handle, 0, info, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.ReadHandleInformation(handle, 0, info, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
             long modified = LayoutParser.I64(new(info, 40), 16);
             long created = LayoutParser.I64(new(info, 40), 0);
-            if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, info, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.ReadHandleInformation(handle, 18, info, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
             return new((attributes & (uint)FileAttributes.Directory) != 0, modified > 0 && created > 0 ? DateTime.FromFileTimeUtc(Math.Max(modified, created)) : null,
                 created, Convert.ToHexString(new ReadOnlySpan<byte>(info, 24)));
         }
@@ -480,7 +481,7 @@ public static partial class GitWorktreeAnalyzer
             {
                 if (!Path.IsPathFullyQualified(folder)) continue;
                 string candidate = Path.Join(folder, "git.exe");
-                if (!Contains(path, candidate) && !candidate.StartsWith('\\') && File.Exists(candidate)) return candidate;
+                if (!Contains(path, candidate) && !candidate.StartsWith('\\') && DiskAccess.Default.FileExists(candidate)) return candidate;
             }
             throw new IOException("Git is unavailable. Install Git or review this checkout manually.");
         }

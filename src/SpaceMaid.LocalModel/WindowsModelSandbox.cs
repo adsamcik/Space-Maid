@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -73,7 +74,7 @@ public sealed class WindowsModelSandbox : IDisposable, IAsyncDisposable
             try { scratch = Marshal.PtrToStringUni(folderPointer) ?? throw new IOException("No isolated scratch directory."); }
             finally { Marshal.FreeCoTaskMem(folderPointer); }
             owner.ScratchDirectory = scratch;
-            Directory.CreateDirectory(Path.Combine(scratch, "Temp"));
+            DiskAccess.Default.CreateDirectory(Path.Combine(scratch, "Temp"));
 
             owner._files = new WindowsSandboxFiles(sid);
             owner._files.GrantRuntime(runtime);
@@ -311,7 +312,7 @@ public sealed class WindowsModelSandbox : IDisposable, IAsyncDisposable
         internal FileStream TakeParent()
         {
             var handle = _parent ?? throw new InvalidOperationException("IPC parent already transferred.");
-            var stream = new FileStream(handle, _access, 4096, isAsync: true);
+            var stream = DiskAccess.Default.Open(handle, _access, 4096, isAsync: true);
             _parent = null;
             return stream;
         }

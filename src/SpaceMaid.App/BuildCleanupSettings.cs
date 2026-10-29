@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Text.Json;
 using SpaceMaid.Core.Analysis;
@@ -9,7 +10,7 @@ internal static class BuildCleanupSettings
     internal static BuildCleanupPolicy Load(string path)
     {
         FileStream stream;
-        try { stream = File.OpenRead(path); }
+        try { stream = DiskAccess.Default.OpenRead(path); }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return BuildCleanupPolicy.Default; }
         using var input = stream;
         if (stream.Length > 4096) throw new InvalidDataException("Cleanup settings are too large.");
@@ -21,13 +22,13 @@ internal static class BuildCleanupSettings
 
     internal static void Save(string path, BuildCleanupPolicy policy)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        DiskAccess.Default.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(new { keepRecentBuildDays = policy.KeepRecentDays }));
-            File.Move(temporary, path, overwrite: true);
+            DiskAccess.Default.WriteAllText(temporary, JsonSerializer.Serialize(new { keepRecentBuildDays = policy.KeepRecentDays }));
+            DiskAccess.Default.MoveFile(temporary, path, overwrite: true);
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        finally { if (DiskAccess.Default.FileExists(temporary)) DiskAccess.Default.DeleteFile(temporary); }
     }
 }

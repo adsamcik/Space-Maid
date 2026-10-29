@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Text.Json;
 using SpaceMaid.Core.Scanning;
@@ -18,8 +19,8 @@ internal sealed record TreeColumnLayout(bool FitName, TreeColumnState[] Columns)
 
     internal static TreeColumnLayout Load(string path)
     {
-        if (!File.Exists(path)) return Default;
-        using var stream = File.OpenRead(path);
+        if (!DiskAccess.Default.FileExists(path)) return Default;
+        using var stream = DiskAccess.Default.OpenRead(path);
         if (stream.Length > 16 * 1024) throw new InvalidDataException("Column preferences are too large.");
         var layout = JsonSerializer.Deserialize<TreeColumnLayout>(stream);
         if (layout?.Columns is not { Length: > 0 and <= 32 } columns)
@@ -40,9 +41,9 @@ internal sealed record TreeColumnLayout(bool FitName, TreeColumnState[] Columns)
 
     internal void Save(string path)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        DiskAccess.Default.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         string pending = path + ".tmp";
-        File.WriteAllText(pending, JsonSerializer.Serialize(this));
-        File.Move(pending, path, overwrite: true);
+        DiskAccess.Default.WriteAllText(pending, JsonSerializer.Serialize(this));
+        DiskAccess.Default.MoveFile(pending, path, overwrite: true);
     }
 }

@@ -2,6 +2,8 @@
 
 Keep changes focused. Include screenshots for interface changes and describe how you checked the affected behavior. Use disposable fixtures for cleanup tests; never test deletion on personal files.
 
+Use the shared [file access boundary](docs/file-access.md) for runtime disk operations. Keep backend selection and fallback there, and preserve specialized provider and cleanup guards.
+
 ## Build and test
 
 Use the .NET 10 SDK pinned in [global.json](global.json). On Windows:

@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -28,7 +29,7 @@ internal sealed class WindowsSandboxFiles : IDisposable
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         var root = Path.GetPathRoot(full)!;
         if (root.Length != 3 || full.AsSpan(2).Contains(':') ||
-            new DriveInfo(root).DriveType is not (DriveType.Fixed or DriveType.Removable or DriveType.Ram))
+            DiskAccess.Default.GetDrive(root).DriveType is not (DriveType.Fixed or DriveType.Removable or DriveType.Ram))
             throw new ArgumentException("The model worker and model must use a local drive.", nameof(path));
         return full;
     }
@@ -43,11 +44,11 @@ internal sealed class WindowsSandboxFiles : IDisposable
         {
             var handle = Pin(folder, directory: true, grant: true);
             Grant(handle, 0x1200a9); // Read, execute, synchronize; no inheritance or write rights.
-            foreach (var path in Directory.EnumerateFileSystemEntries(folder))
+            foreach (var path in DiskAccess.Default.EnumerateFileSystemEntries(folder))
             {
                 if (++count > 4096)
                     throw new IOException("The model worker must be a dedicated runtime package.");
-                var attributes = File.GetAttributes(path);
+                var attributes = DiskAccess.Default.GetAttributes(path);
                 if (((uint)attributes & UnsafeAttributes) != 0)
                     throw new IOException("The model runtime contains a redirected or unavailable entry.");
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(path);
@@ -95,7 +96,7 @@ internal sealed class WindowsSandboxFiles : IDisposable
         // any ancestor. The selected code/model additionally denies write sharing for its lifetime.
         var access = 0x80u | (grant ? 0x60001u : 0u);
         var share = grant ? 1u : 3u;
-        var handle = CreateFileW(path, access, share, 0, 3, 0x00200000 | 0x02000000, 0);
+        var handle = DiskAccess.Default.OpenHandle(path, access, share, 0, 3, 0x00200000 | 0x02000000, 0);
         if (handle.IsInvalid)
         {
             handle.Dispose();

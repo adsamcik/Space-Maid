@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -103,7 +104,7 @@ internal static class VirtualDiskCleanup
             for (string? part = path; part is not null; part = System.IO.Path.GetDirectoryName(part))
             {
                 bool file = part == path;
-                var handle = CreateFileW(part, 0x80, 3, 0, 3, 0x00200000 | (file ? 0u : 0x02000000u), 0);
+                var handle = DiskAccess.Default.OpenHandle(part, 0x80, 3, 0, 3, 0x00200000 | (file ? 0u : 0x02000000u), 0);
                 if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
                 handles.Add(handle);
                 if (!GetFileInformationByHandle(handle, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -123,7 +124,7 @@ internal static class VirtualDiskCleanup
     {
         if (!GetFileInformationByHandle(file, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
         byte[] identity = new byte[24];
-        if (!GetFileInformationByHandleEx(file, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!DiskAccess.Default.ReadHandleInformation(file, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
         return new(path, BinaryPrimitives.ReadUInt64LittleEndian(identity), BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(8)),
             BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(16)), ((long)metadata.SizeHigh << 32) | metadata.SizeLow,
             ((long)metadata.WriteHigh << 32) | metadata.WriteLow);
@@ -158,9 +159,7 @@ internal static class VirtualDiskCleanup
         internal uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh, Volume,
             SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, nint security, uint creation, uint flags, nint template);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileMetadata metadata);
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int kind, byte[] information, uint size);
     [DllImport("virtdisk.dll", CharSet = CharSet.Unicode)] private static extern uint OpenVirtualDisk(ref StorageType storage, string path, uint access, uint flags, ref OpenParameters parameters, out SafeFileHandle disk);
     [DllImport("virtdisk.dll")] private static extern uint GetVirtualDiskInformation(SafeFileHandle disk, ref uint size, byte[] information, nint used);
     [DllImport("virtdisk.dll")] private static extern uint CompactVirtualDisk(SafeFileHandle disk, uint flags, ref CompactParameters parameters, nint overlapped);

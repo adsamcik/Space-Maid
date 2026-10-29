@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.ComponentModel;
@@ -29,7 +30,7 @@ internal sealed partial class HelperLayoutSource : INtfsLayoutSource, IDisposabl
     internal static async Task<HelperLayoutSource> CreateAsync(bool elevate, CancellationToken token = default)
     {
         string path = Path.Join(AppContext.BaseDirectory, "ScanHelper", "SpaceMaid.ScanHelper.exe");
-        if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        if (!DiskAccess.Default.FileExists(path) || (DiskAccess.Default.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("The bundled scan helper is unavailable.");
         string name = "SpaceMaid-" + Guid.NewGuid().ToString("N");
         var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,

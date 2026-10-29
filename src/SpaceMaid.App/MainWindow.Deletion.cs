@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -68,7 +69,7 @@ public partial class MainWindow
             {
                 log.Record("recycle-result", result);
                 var requests = new List<ScanRecheckRequest> { new(Path.GetDirectoryName(target.Path)!, false) };
-                if (Directory.Exists(target.Path)) requests.Add(new(target.Path));
+                if (DiskAccess.Default.DirectoryExists(target.Path)) requests.Add(new(target.Path));
                 string recycleRoot = Path.Combine(Path.GetPathRoot(target.Path)!, "$Recycle.Bin");
                 if (scan.FindEntry(recycleRoot) is not null || scan.FindEntry(Path.GetPathRoot(target.Path)!) is not null)
                 {

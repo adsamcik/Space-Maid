@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Numerics;
@@ -164,7 +165,7 @@ internal sealed class GeneratedResourceProof : IDisposable
         string sourcePath = Path.GetFullPath(path.GetString() ?? "", projectRoot);
         if (!OptimizationPolicy.Covers(projectRoot, sourcePath)) throw new IOException("Mypy input is outside this project; review manually.");
         if (hash.GetString() is not { Length: > 0 })
-            throw new IOException(hash.GetString() == "" && Directory.Exists(sourcePath)
+            throw new IOException(hash.GetString() == "" && DiskAccess.Default.DirectoryExists(sourcePath)
                 ? "Mypy namespace-package directory inputs need manual review; kept."
                 : "Unrecognized mypy producer records; kept.");
         var source = Input(sourcePath);

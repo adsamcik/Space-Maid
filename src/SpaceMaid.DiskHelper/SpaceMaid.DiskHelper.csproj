@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>WinExe</OutputType></PropertyGroup>
-  <ItemGroup><Compile Include="../SpaceMaid.Extensions.Containers/VirtualDiskCleanup.cs" Link="VirtualDiskCleanup.cs" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
+    <Compile Include="../SpaceMaid.Extensions.Containers/VirtualDiskCleanup.cs" Link="VirtualDiskCleanup.cs" />
+  </ItemGroup>
 </Project>

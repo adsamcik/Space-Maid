@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
@@ -47,10 +48,10 @@ internal sealed class AppUpdates : IDisposable
         Status = Supported ? "Check for updates" : "Updates are available in release installations.";
         try
         {
-            if (System.IO.File.Exists(settingsPath))
+            if (DiskAccess.Default.FileExists(settingsPath))
             {
-                if (new FileInfo(settingsPath).Length > 4096) throw new InvalidDataException("Update settings exceed the size limit.");
-                var settings = JsonSerializer.Deserialize<UpdateSettings>(System.IO.File.ReadAllText(settingsPath))
+                if (DiskAccess.Default.FileLength(settingsPath) > 4096) throw new InvalidDataException("Update settings exceed the size limit.");
+                var settings = JsonSerializer.Deserialize<UpdateSettings>(DiskAccess.Default.ReadAllText(settingsPath))
                     ?? throw new InvalidDataException("Invalid update settings.");
                 AutomaticChecks = settings.AutomaticChecks;
                 AutomaticDownloads = settings.AutomaticDownloads;
@@ -214,14 +215,14 @@ internal sealed class AppUpdates : IDisposable
         string temp = _settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            System.IO.File.WriteAllText(temp, JsonSerializer.Serialize(new UpdateSettings(AutomaticChecks, _lastCheck, AutomaticDownloads)));
-            System.IO.File.Move(temp, _settingsPath, overwrite: true);
+            DiskAccess.Default.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
+            DiskAccess.Default.WriteAllText(temp, JsonSerializer.Serialize(new UpdateSettings(AutomaticChecks, _lastCheck, AutomaticDownloads)));
+            DiskAccess.Default.MoveFile(temp, _settingsPath, overwrite: true);
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { Error = error.Message; _log.Record("update-settings-error", new { error.Message }); return false; }
-        finally { try { System.IO.File.Delete(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+        finally { try { DiskAccess.Default.DeleteFile(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
     }
 
     private void Notify() { if (!_stopped) Changed?.Invoke(); }
@@ -242,7 +243,7 @@ internal sealed class VerifiedUpdateManager(IUpdateSource source, IVelopackLocat
         catch (ChecksumFailedException)
         {
             // Remove only this rejected update cache entry, so Retry can download it.
-            File.Delete(Path.Combine(Locator.PackagesDir!, updates.TargetFullRelease.FileName));
+            DiskAccess.Default.DeleteFile(Path.Combine(Locator.PackagesDir!, updates.TargetFullRelease.FileName));
             throw;
         }
     }

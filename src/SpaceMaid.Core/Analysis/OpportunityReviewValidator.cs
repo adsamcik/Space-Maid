@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using SpaceMaid.Core.Scanning;
 
@@ -54,8 +55,7 @@ public static class OpportunityReviewValidator
         var scopes = PlanScopes(requests.Select(value => new ScanRecheckRequest(value.Key, value.Value)), token);
         diagnostic?.Invoke("opportunity-validation-start", new { Selected = choices.Count, Scopes = scopes.Length,
             scan.HasAllocationData, MaximumConcurrentReads });
-        using var serializedSource = layoutSource is null ? null : new SerializedLayoutSource(layoutSource);
-        var reader = new VolumeScanner(serializedSource);
+        var reader = new VolumeScanner(DiskAccess.Serialize(layoutSource));
         var replacements = new ScanRechecker.Replacement[scopes.Length];
         var reportGate = new object();
         var progressTimer = Stopwatch.StartNew(); int completed = 0;
@@ -282,7 +282,7 @@ public static class OpportunityReviewValidator
     }
     private static bool IsLiveDirectory(string path)
     {
-        try { return (File.GetAttributes(path) & FileAttributes.Directory) != 0; }
+        try { return (DiskAccess.Default.GetAttributes(path) & FileAttributes.Directory) != 0; }
         catch (FileNotFoundException) { return false; }
         catch (DirectoryNotFoundException) { return false; }
     }
@@ -294,28 +294,6 @@ public static class OpportunityReviewValidator
     }
     private sealed record Choice(Opportunity Original, string Path, FileIdentity Identity, bool Available);
     private sealed record UncheckedDirectorySet(IReadOnlyList<ScanRecheckRequest> Scopes, IReadOnlyCollection<FileIdentity> Identities);
-
-    // Sources can own one pipe/request stream. Parallel folder enumeration
-    // must not interleave their borrowed buffers or request/response frames.
-    private sealed class SerializedLayoutSource(INtfsLayoutSource source) : INtfsLayoutSource, IDisposable
-    {
-        private readonly SemaphoreSlim _gate = new(1, 1);
-        public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
-            => throw new InvalidOperationException("Selection review must not acquire a whole volume.");
-        public void AcquireFiles(string volume, IReadOnlyList<FileIdentity> files, Action<NtfsLayoutBlock> consume, CancellationToken token)
-        {
-            _gate.Wait(token);
-            try { source.AcquireFiles(volume, files, consume, token); }
-            finally { _gate.Release(); }
-        }
-        public NtfsJournalChanges ReadJournal(string volume, NtfsJournalCheckpoint? since, CancellationToken token)
-        {
-            _gate.Wait(token);
-            try { return source.ReadJournal(volume, since, token); }
-            finally { _gate.Release(); }
-        }
-        public void Dispose() => _gate.Dispose();
-    }
 
     private static bool TryFindAncestor<T>(string path, IReadOnlyDictionary<string, T> index, CancellationToken token,
         out T value, bool includeSelf = true)

@@ -1,6 +1,5 @@
+using SpaceMaid.Core.IO;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 using SpaceMaid.Core.Analysis;
 
 namespace SpaceMaid.App;
@@ -15,14 +14,14 @@ internal static class DriveDiscovery
 {
     internal static (long Total, long Free) Space(string root)
     {
-        var drive = new DriveInfo(root);
+        var drive = DiskAccess.Default.GetDrive(root);
         return (drive.TotalSize, drive.AvailableFreeSpace);
     }
 
     internal static IReadOnlyList<DriveDescriptor> Read()
-        => DriveInfo.GetDrives().Select(ReadDrive).ToArray();
+        => DiskAccess.Default.GetDrives().Select(ReadDrive).ToArray();
 
-    private static DriveDescriptor ReadDrive(DriveInfo drive)
+    private static DriveDescriptor ReadDrive(DiskDrive drive)
     {
         try
         {
@@ -38,15 +37,7 @@ internal static class DriveDiscovery
 
     // A drive letter can be reused by a different device. Only a matching
     // Windows volume identity may inherit a scan's historical suggestions.
-    internal static string? VolumeId(string root)
-    {
-        var name = new StringBuilder(64);
-        return GetVolumeNameForVolumeMountPoint(root, name, name.Capacity) ? name.ToString() : null;
-    }
-
-    [DllImport("kernel32.dll", EntryPoint = "GetVolumeNameForVolumeMountPointW", CharSet = CharSet.Unicode)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, StringBuilder volumeName, int length);
+    internal static string? VolumeId(string root) => DiskAccess.Default.VolumeId(root);
 }
 
 internal sealed record DriveChoice(DriveDescriptor Drive, DriveHistoryEntry? History, bool Current)

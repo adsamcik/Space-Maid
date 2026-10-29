@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -15,13 +16,13 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
             || AgentHistoryCleanup.KnownFile(home, path) is not ("Session transcript" or "Task transcript" or "Task write leftover")) return null;
         string root = System.IO.Path.GetDirectoryName(path)!;
         if (AgentHistoryCleanup.LeftoverCanonical(System.IO.Path.GetFileName(path)) is { } canonical
-            && !File.Exists(System.IO.Path.Join(root, canonical)))
+            && !DiskAccess.Default.FileExists(System.IO.Path.Join(root, canonical)))
             throw new IOException("This leftover may be the only recovery copy. Its canonical transcript is missing, so the file is kept.");
         string owners = System.IO.Path.Join(home.Path, "locks", "hub", "owners");
-        if (home.Tool == AgentTool.Cline && Directory.Exists(owners))
+        if (home.Tool == AgentTool.Cline && DiskAccess.Default.DirectoryExists(owners))
         {
             AgentFileTarget.ValidateAncestors(owners, includeSelf: true);
-            if (Directory.EnumerateFileSystemEntries(owners).Any())
+            if (DiskAccess.Default.EnumerateFileSystemEntries(owners).Any())
                 throw new IOException("Cline background owner registrations are present. Stop its hub and agents before cleanup.");
         }
         if (home.Tool == AgentTool.RooCode) RequireCompletedStandaloneRoo(root);
@@ -30,13 +31,13 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
         {
             token.ThrowIfCancellationRequested();
             Add(current, true);
-            foreach (string child in Directory.EnumerateFileSystemEntries(current))
+            foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(current))
             {
                 token.ThrowIfCancellationRequested();
                 string name = System.IO.Path.GetFileName(child);
                 if (name.EndsWith(".lock", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".pid", StringComparison.OrdinalIgnoreCase))
                     throw new IOException("A session lock or process marker is present. Finish the task and stop its agents before cleanup.");
-                var attributes = File.GetAttributes(child);
+                var attributes = DiskAccess.Default.GetAttributes(child);
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
                     // Validate before following a directory, including cloud and
@@ -89,7 +90,7 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
         string path = System.IO.Path.Join(root, "history_item.json");
         var before = AgentFileTarget.Capture(path);
         if (before.Length > 65536) throw new IOException("Roo task status is too large to verify. Manage this task in Roo Code.");
-        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var file = DiskAccess.Default.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         byte[] bytes = new byte[checked((int)before.Length)]; file.ReadExactly(bytes);
         using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
         var metadata = json.RootElement;

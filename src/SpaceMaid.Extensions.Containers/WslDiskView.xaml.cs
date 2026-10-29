@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -63,7 +64,7 @@ public partial class WslDiskView : UserControl
         try
         {
             string path = VirtualDiskCleanup.ValidatePath(picker.FileName);
-            if (!_disks.Any(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) _disks.Add(new("Custom · verify owner", path, new FileInfo(path).Length));
+            if (!_disks.Any(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) _disks.Add(new("Custom · verify owner", path, DiskAccess.Default.FileLength(path)));
             Publish(); DiskList.SelectedItem = _disks.First(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception error) when (Expected(error)) { StatusText.Text = error.Message; }
@@ -125,7 +126,7 @@ public partial class WslDiskView : UserControl
             path = System.IO.Path.Join(path, "ext4.vhdx");
             try { path = VirtualDiskCleanup.ValidatePath(path); }
             catch (InvalidOperationException) { continue; }
-            if (File.Exists(path)) result.Add(new(distro.GetValue("DistributionName") as string ?? "WSL2", path, new FileInfo(path).Length));
+            if (DiskAccess.Default.FileExists(path)) result.Add(new(distro.GetValue("DistributionName") as string ?? "WSL2", path, DiskAccess.Default.FileLength(path)));
         }
         return result;
     }

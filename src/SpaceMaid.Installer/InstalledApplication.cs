@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using System.IO;
 using System.Security;
@@ -43,14 +44,15 @@ internal static class InstallationDiscovery
             string target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
             if (target.Equals(Path.TrimEndingDirectorySeparator(Path.GetPathRoot(target)!), StringComparison.OrdinalIgnoreCase)) return null;
             SafeDirectories.EnsureNoReparseAncestors(target);
-            if (File.Exists(Path.Join(target, ".portable"))) return null;
+            if (DiskAccess.Default.FileExists(Path.Join(target, ".portable"))) return null;
             foreach (string file in new[] { "Update.exe", Path.Join("current", "SpaceMaid.App.exe"), Path.Join("current", "sq.version") })
             {
                 string path = Path.Join(target, file);
                 SafeDirectories.EnsureNoReparseAncestors(path);
-                if (!File.Exists(path)) return null;
+                if (!DiskAccess.Default.FileExists(path)) return null;
             }
-            using var reader = XmlReader.Create(Path.Join(target, "current", "sq.version"), new XmlReaderSettings
+            using var metadataStream = DiskAccess.Default.OpenRead(Path.Join(target, "current", "sq.version"));
+            using var reader = XmlReader.Create(metadataStream, new XmlReaderSettings
             {
                 DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 1024 * 1024
             });

@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Security.Principal;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.IO;
 using Xunit;
 
 namespace SpaceMaid.Tests;
@@ -16,7 +17,7 @@ public sealed class ScannerTests
     {
         string root = Path.GetPathRoot(Environment.CurrentDirectory)!;
         Assert.Equal("NTFS", new DriveInfo(root).DriveFormat);
-        using var volume = NativeMethods.CreateFile(@"\\.\" + root[..2], 0x80000000, 7, 0, 3, 0, 0);
+        using var volume = DiskAccess.Default.OpenHandle(@"\\.\" + root[..2], 0x80000000, 7, 0, 3, 0, 0);
         Assert.False(volume.IsInvalid, $"Volume access error: {Marshal.GetLastWin32Error()}");
         byte[] input = new byte[32];
         LayoutFixture.Put32(input, 4, 0x37); // Same whole-volume request as production, limited to one batch.

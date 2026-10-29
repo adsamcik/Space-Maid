@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Windows;
 using System.Windows.Automation;
@@ -182,7 +183,7 @@ public partial class MainWindow
                     path = PathNavigation.Normalize(input, _currentPath);
                     link = await Task.Run(() =>
                     {
-                        if ((File.GetAttributes(path) & FileAttributes.Directory) == 0)
+                        if ((DiskAccess.Default.GetAttributes(path) & FileAttributes.Directory) == 0)
                             throw new IOException("Enter a folder path.");
                         token.ThrowIfCancellationRequested();
                         return scan?.FindEntry(path);

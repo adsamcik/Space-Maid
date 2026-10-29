@@ -1,4 +1,5 @@
 using System.IO;
+using SpaceMaid.Core.IO;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
@@ -62,10 +63,11 @@ public sealed class FileOperationsTests
         File.WriteAllBytes(file + ":extra", new byte[8192]);
         INtfsLayoutSource? available = null;
         var operations = new FileOperations(() => available);
-        // A null helper still permits the native backend in an elevated host.
-        bool nativeAvailable = Elevation.IsAdministrator;
+        // A null helper still permits native access when the actual token and
+        // volume support it. Administrator membership alone is not a probe.
         var standard = await operations.MeasureFolderAsync(fixture.Path);
-        Assert.Equal(nativeAvailable ? "Fast NTFS scoped metadata" : "Targeted Windows stream metadata", standard.Backend);
+        Assert.Contains(standard.Backend, new[] { "Fast NTFS scoped metadata", "Targeted Windows stream metadata" });
+        bool nativeAvailable = standard.Backend == "Fast NTFS scoped metadata";
         Assert.Equal(12288, standard.LogicalBytes);
 
         var fastSource = new ScopedScannerTests.MetadataSource(standard);
@@ -88,9 +90,9 @@ public sealed class FileOperationsTests
 
         available = null;
         var scan = await operations.ScanAsync(fixture.Path);
-        Assert.Equal(nativeAvailable ? "Fast NTFS folder scan" : "Standard Windows scan", scan.Backend);
-        Assert.Equal(nativeAvailable, scan.IncludesAllDataStreams);
-        Assert.Equal(nativeAvailable ? 12288 : 4096, scan.LogicalBytes);
+        Assert.Equal(nativeAvailable ? "Fast NTFS folder scan" : "Standard Windows stream scan", scan.Backend);
+        Assert.True(scan.IncludesAllDataStreams);
+        Assert.Equal(12288, scan.LogicalBytes);
         Assert.Equal(12288, (await operations.MeasureFolderAsync(fixture.Path)).LogicalBytes);
     }
 

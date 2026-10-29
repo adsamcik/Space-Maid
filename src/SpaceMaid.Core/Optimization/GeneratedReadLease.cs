@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
@@ -47,7 +48,7 @@ internal sealed partial class GeneratedReadLease : IDisposable
                 CheckLocal(handle, directory: false);
                 lease.Revision = Inspect(handle, path);
                 if (observed != lease.Revision) throw new IOException("File changed while acquiring readable content.");
-                lease.Stream = new FileStream(handle, FileAccess.Read, 65536, isAsync: false);
+                lease.Stream = DiskAccess.Default.Open(handle, FileAccess.Read, 65536, isAsync: false);
             }
             catch { handle.Dispose(); throw; }
             return lease;
@@ -59,7 +60,7 @@ internal sealed partial class GeneratedReadLease : IDisposable
 
     internal static SafeFileHandle OpenHandle(string path, uint access, uint share)
     {
-        var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), access, share, 0, 3,
+        var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), access, share, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint | 0x00100000, 0);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
@@ -108,7 +109,7 @@ internal sealed partial class GeneratedReadLease : IDisposable
     private static partial int CfGetSyncRootInfoByHandle(SafeFileHandle handle, int info, [Out, MarshalUsing(CountElementName = nameof(length))] byte[] buffer, uint length, out uint returned);
 
     private static unsafe void Read(SafeFileHandle handle, int kind, byte* buffer, uint size)
-    { if (!NativeMethods.GetFileInformationByHandleEx(handle, kind, buffer, size)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
+    { if (!DiskAccess.Default.ReadHandleInformation(handle, kind, buffer, size)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
 
     public void Dispose()
     {

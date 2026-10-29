@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Security;
 using Microsoft.Win32;
@@ -146,7 +147,7 @@ internal static class AppDiscovery
         }
         file = Environment.ExpandEnvironmentVariables(file.Trim());
         if (!file.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !System.IO.Path.IsPathFullyQualified(file)) return null;
-        try { return File.Exists(file) ? NormalizeFolder(System.IO.Path.GetDirectoryName(file)) : null; }
+        try { return DiskAccess.Default.FileExists(file) ? NormalizeFolder(System.IO.Path.GetDirectoryName(file)) : null; }
         catch (ArgumentException) { return null; }
     }
 
@@ -174,7 +175,7 @@ internal static class AppDiscovery
         try
         {
             if (!IsRegular(folder)) return false;
-            foreach (string file in Directory.EnumerateFiles(folder, "*.exe", Shallow))
+            foreach (string file in DiskAccess.Default.EnumerateFiles(folder, "*.exe", Shallow))
             {
                 token.ThrowIfCancellationRequested();
                 if (IsRegular(file)) return true;
@@ -185,11 +186,11 @@ internal static class AppDiscovery
     }
     private static IEnumerable<string> Directories(string root, List<string> warnings, CancellationToken token)
     {
-        if (!Directory.Exists(root)) yield break;
+        if (!DiskAccess.Default.DirectoryExists(root)) yield break;
         IEnumerator<string>? iterator = null;
         try
         {
-            if (IsRegular(root)) iterator = Directory.EnumerateDirectories(root, "*", Shallow).GetEnumerator();
+            if (IsRegular(root)) iterator = DiskAccess.Default.EnumerateDirectories(root, "*", Shallow).GetEnumerator();
         }
         catch (Exception error) when (IsAccessError(error)) { Warn(warnings, "Some app folders could not be inspected."); }
         if (iterator is null) yield break;
@@ -210,7 +211,7 @@ internal static class AppDiscovery
         // Check ancestors too: a normal child under a junction is still outside
         // the intended drive. Metadata-only access never opens executable bytes.
         for (string? current = path; current is not null; current = System.IO.Path.GetDirectoryName(System.IO.Path.TrimEndingDirectorySeparator(current)))
-            if ((File.GetAttributes(current) & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x40000 | 0x400000))) != 0) return false;
+            if ((DiskAccess.Default.GetAttributes(current) & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x40000 | 0x400000))) != 0) return false;
         return true;
     }
     private static bool IsAccessError(Exception error) => error is IOException or UnauthorizedAccessException or SecurityException;

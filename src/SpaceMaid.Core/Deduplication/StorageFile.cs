@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -109,24 +110,21 @@ internal sealed partial class StorageFile : IDisposable
         BinaryPrimitives.WriteInt64LittleEndian(data, original.Created);
         BinaryPrimitives.WriteInt64LittleEndian(data[8..], original.Accessed);
         BinaryPrimitives.WriteInt64LittleEndian(data[16..], original.Written);
-        if (!SetFileInformationByHandle(handle, 0, buffer, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        if (!DiskAccess.Default.WriteHandleInformation(handle, 0, buffer, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
     }
 
     private static SafeFileHandle OpenHandle(string path, uint access, uint sharing)
     {
-        var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), access, sharing, 0, 3, Flags, 0);
+        var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), access, sharing, 0, 3, Flags, 0);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
     }
     private static unsafe void Read(SafeFileHandle handle, int kind, byte* buffer, uint length)
-    { if (!NativeMethods.GetFileInformationByHandleEx(handle, kind, buffer, length)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
+    { if (!DiskAccess.Default.ReadHandleInformation(handle, kind, buffer, length)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
 
     public void Dispose()
     {
         Handle?.Dispose();
         for (int i = _guards.Count - 1; i >= 0; i--) _guards[i].Dispose();
     }
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static unsafe partial bool SetFileInformationByHandle(SafeFileHandle file, int kind, byte* buffer, uint length);
 }

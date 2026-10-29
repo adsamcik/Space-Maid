@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -37,9 +38,7 @@ public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
     {
         if (volume.Length != 3 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':' || volume[2] != '\\')
             throw new InvalidDataException("Only a local NTFS drive root is accepted.");
-        var drive = new DriveInfo(volume);
-        if (!drive.IsReady || drive.DriveType is not (DriveType.Fixed or DriveType.Removable)
-            || !drive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+        if (!DiskAccess.Default.CanUseNtfs(volume))
             throw new InvalidDataException("This is not an accessible local NTFS volume.");
         return volume;
     }
@@ -94,7 +93,7 @@ public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
     {
         token.ThrowIfCancellationRequested();
         ValidateVolume(volume);
-        using var handle = NativeMethods.CreateFile(@"\\.\" + volume[..2], 0x80000000, 7, 0, 3, 0, 0);
+        using var handle = DiskAccess.Default.OpenHandle(@"\\.\" + volume[..2], 0x80000000, 7, 0, 3, 0, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         NtfsLayoutAcquisition.Acquire(Query, initialBufferBytes, readAhead, consume, token);
 

@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -21,7 +22,7 @@ internal static class ToolCachePaths
                     || p == Environment.GetFolderPath(Environment.SpecialFolder.Windows) && OptimizationPolicy.Covers(p, path)))
             throw new InvalidOperationException("A drive, profile, Windows or program installation root cannot be a maintenance target.");
         ValidateAncestors(path, includeLeaf: true);
-        if (!Directory.Exists(path)) throw new DirectoryNotFoundException("The tool's configured cache folder is not present.");
+        if (!DiskAccess.Default.DirectoryExists(path)) throw new DirectoryNotFoundException("The tool's configured cache folder is not present.");
         return path;
     }
 
@@ -29,7 +30,7 @@ internal static class ToolCachePaths
     {
         path = OptimizationPolicy.NormalizePath(path);
         ValidateAncestors(path, includeLeaf: false);
-        var attributes = File.GetAttributes(path);
+        var attributes = DiskAccess.Default.GetAttributes(path);
         if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)0x440000)) != 0)
             throw new InvalidOperationException("Linked, offline or unavailable tool files cannot be launched.");
     }
@@ -38,7 +39,7 @@ internal static class ToolCachePaths
     {
         for (string? part = includeLeaf ? path : Path.GetDirectoryName(path); part is not null; part = Path.GetDirectoryName(part))
         {
-            var attributes = File.GetAttributes(part);
+            var attributes = DiskAccess.Default.GetAttributes(part);
             if ((attributes & FileAttributes.Directory) == 0
                 || (attributes & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)0x440000)) != 0)
                 throw new InvalidOperationException("Linked, offline or unavailable paths cannot be maintained here.");
@@ -61,16 +62,16 @@ internal static class ToolCachePaths
                 using var metadata = GeneratedReadLease.OpenHandle(path, 0x80, 7);
                 GeneratedReadLease.CheckLocal(metadata, directory: true);
                 var before = GeneratedReadLease.Inspect(metadata, path);
-                var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x81, 3, 0, 3, 0x02300000, 0);
+                var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x81, 3, 0, 3, 0x02300000, 0);
                 if (handle.IsInvalid) { int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error); }
                 handles.Add(handle);
                 GeneratedReadLease.CheckLocal(handle, directory: true);
-                if (!NativeMethods.GetFileInformationByHandleEx(handle, 0, basic, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+                if (!DiskAccess.Default.ReadHandleInformation(handle, 0, basic, 40)) throw new Win32Exception(Marshal.GetLastPInvokeError());
                 var attrs = (FileAttributes)LayoutParser.U32(new(basic, 40), 32);
                 if ((attrs & FileAttributes.Directory) == 0
                     || (attrs & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)0x440000)) != 0)
                     throw new InvalidOperationException("The cache path changed or became unavailable.");
-                if (!NativeMethods.GetFileInformationByHandleEx(handle, 18, id, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+                if (!DiskAccess.Default.ReadHandleInformation(handle, 18, id, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
                 volume = LayoutParser.U64(new(id, 24), 0);
                 identity = new(LayoutParser.U64(new(id, 24), 8), LayoutParser.U64(new(id, 24), 16));
                 if (before.Volume != volume || before.Identity != identity)

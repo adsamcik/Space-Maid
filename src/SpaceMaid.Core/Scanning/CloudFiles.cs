@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -76,7 +77,7 @@ public static partial class CloudFiles
                 { Skip("A local-only or unsupported location was skipped."); continue; }
                 if (state.IsDirectory)
                 {
-                    foreach (string child in Directory.EnumerateFileSystemEntries(current)) { token.ThrowIfCancellationRequested(); pending.Push(child); }
+                    foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(current)) { token.ThrowIfCancellationRequested(); pending.Push(child); }
                 }
                 else if (state.CanRequestOnlineOnly) targets.Add(new(current, state));
                 else Skip(state.LocalBytes == 0 ? "An already online-only file was skipped." : "An unsynced or excluded file was skipped.");
@@ -139,7 +140,7 @@ public static partial class CloudFiles
 
     private static SafeFileHandle Open(string path)
     {
-        var handle = NativeMethods.CreateFile(NativeMethods.ExtendedPath(path), 0x80, 3, 0, 3,
+        var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 3, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
@@ -149,7 +150,7 @@ public static partial class CloudFiles
     {
         var data = new byte[length];
         fixed (byte* buffer = data)
-            if (!NativeMethods.GetFileInformationByHandleEx(handle, info, buffer, (uint)length)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!DiskAccess.Default.ReadHandleInformation(handle, info, buffer, (uint)length)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         return data;
     }
 

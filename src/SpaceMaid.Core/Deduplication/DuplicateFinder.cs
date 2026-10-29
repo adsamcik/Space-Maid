@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -62,7 +63,7 @@ public static class DuplicateFinder
         while (offset < file.Revision.Length)
         {
             budget.Check(); int count = (int)Math.Min(buffer.Length, file.Revision.Length - offset); budget.Consume(count);
-            int read = RandomAccess.Read(file.Handle, buffer.AsSpan(0, count), offset);
+            int read = DiskAccess.Default.Read(file.Handle, buffer.AsSpan(0, count), offset);
             if (read != count) throw new IOException("The file ended before its captured length.");
             hash.AppendData(buffer, 0, read); offset += read;
         }
@@ -76,8 +77,8 @@ public static class DuplicateFinder
         while (offset < first.Revision.Length)
         {
             budget.Check(); int count = (int)Math.Min(left.Length, first.Revision.Length - offset); budget.Consume(count * 2L);
-            if (RandomAccess.Read(first.Handle, left.AsSpan(0, count), offset) != count
-                || RandomAccess.Read(second.Handle, right.AsSpan(0, count), offset) != count) throw new IOException("A comparison ended before its captured length.");
+            if (DiskAccess.Default.Read(first.Handle, left.AsSpan(0, count), offset) != count
+                || DiskAccess.Default.Read(second.Handle, right.AsSpan(0, count), offset) != count) throw new IOException("A comparison ended before its captured length.");
             if (!left.AsSpan(0, count).SequenceEqual(right.AsSpan(0, count))) return false;
             offset += count;
         }

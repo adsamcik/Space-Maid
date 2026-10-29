@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.IO;
@@ -56,10 +57,10 @@ internal static class CursorChatCleanup
             var identity = ReadPath(current, directory);
             members.Add(new(relative, directory, identity));
             if (!directory) return;
-            foreach (string child in Directory.EnumerateFileSystemEntries(current))
+            foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(current))
             {
                 token.ThrowIfCancellationRequested();
-                var attributes = File.GetAttributes(child);
+                var attributes = DiskAccess.Default.GetAttributes(child);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("Linked paths inside a Cursor chat are kept.");
                 string childRelative = relative.Length == 0 ? System.IO.Path.GetFileName(child) : System.IO.Path.Join(relative, System.IO.Path.GetFileName(child));
                 Walk(child, childRelative, attributes.HasFlag(FileAttributes.Directory));
@@ -151,7 +152,7 @@ internal static class CursorChatCleanup
     }
     private static SafeFileHandle Open(string path, bool directory, uint access, uint share)
     {
-        var handle = CreateFileW(path, access, share, 0, 3, 0x00300000 | (directory ? 0x02000000u : 0u), 0);
+        var handle = DiskAccess.Default.OpenHandle(path, access, share, 0, 3, 0x00300000 | (directory ? 0x02000000u : 0u), 0);
         if (!handle.IsInvalid) return handle;
         handle.Dispose();
         throw new Win32Exception(Marshal.GetLastWin32Error(), "A Cursor chat path is unavailable or in use. Stop Cursor and its background agents before cleanup.");
@@ -171,7 +172,7 @@ internal static class CursorChatCleanup
             || RecognizesProvider(CfGetSyncRootInfoByHandle(handle, 2, provider, 1028, out _)))
             throw new IOException("Provider-managed Cursor paths are kept; cloud contents were not requested.");
         byte[] identity = new byte[24];
-        if (!GetFileInformationByHandleEx(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
         ulong low = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(8)), high = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(16));
         if (low == 0 && high == 0) throw new IOException("Windows did not provide a usable Cursor path identity.");
         return new(BinaryPrimitives.ReadUInt64LittleEndian(identity), low, high,
@@ -185,9 +186,7 @@ internal static class CursorChatCleanup
         internal uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh, Volume,
             SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, nint security, uint creation, uint flags, nint template);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileMetadata metadata);
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int kind, byte[] data, uint size);
     [DllImport("cldapi.dll")] private static extern int CfGetPlaceholderInfo(SafeFileHandle file, int info, byte[] data, uint size, out uint returned);
     [DllImport("cldapi.dll")] private static extern int CfGetSyncRootInfoByHandle(SafeFileHandle file, int info, byte[] data, uint size, out uint returned);
 }

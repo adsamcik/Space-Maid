@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -51,9 +52,9 @@ public static partial class GeneratedFileOwnership
         {
             byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(receipt, JsonOptions);
             if (bytes.Length > MaximumReceiptBytes) throw new IOException("The ownership receipt exceeds its metadata budget.");
-            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+            using (var stream = DiskAccess.Default.Open(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
             { stream.Write(bytes); written = CaptureProduced(stream, temporary); }
-            File.Move(temporary, path, overwrite: false);
+            DiskAccess.Default.MoveFile(temporary, path, overwrite: false);
         }
         finally { if (written is not null) TryDeleteProduced(temporary, written); }
     }
@@ -110,7 +111,7 @@ public static partial class GeneratedFileOwnership
             using var output = DeleteLease.Open(generatedFile);
             ValidateOutput(record, output.Revision, output.Stream); receipt.Verify();
             foreach (var input in inputs) input.Verify();
-            File.SetLastWriteTimeUtc(output.Stream.SafeFileHandle, DateTime.UtcNow); return true;
+            DiskAccess.Default.SetLastWriteTimeUtc(output.Stream.SafeFileHandle, DateTime.UtcNow); return true;
         }
         catch (Exception error) when (Expected(error)) { return false; }
         finally { foreach (var input in inputs.AsEnumerable().Reverse()) input.Dispose(); }
@@ -192,7 +193,7 @@ public static partial class GeneratedFileOwnership
     }
     private static bool Present(string path)
     {
-        try { _ = File.GetAttributes(path); return true; }
+        try { _ = DiskAccess.Default.GetAttributes(path); return true; }
         catch (FileNotFoundException) { return false; }
         catch (DirectoryNotFoundException) { return false; }
     }
@@ -209,7 +210,7 @@ public static partial class GeneratedFileOwnership
             || !new ReadOnlySpan<char>(streams + 24, 7).SequenceEqual("::$DATA")) throw new IOException("Shared, protected or additional-stream content is kept.");
     }
     private static unsafe void Read(SafeFileHandle handle, int kind, byte* buffer, uint size)
-    { if (!NativeMethods.GetFileInformationByHandleEx(handle, kind, buffer, size)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
+    { if (!DiskAccess.Default.ReadHandleInformation(handle, kind, buffer, size)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
 
     private sealed class DeleteLease : IDisposable
     {
@@ -238,7 +239,7 @@ public static partial class GeneratedFileOwnership
                 try
                 {
                     CheckSingleStream(handle); lease.Revision = GeneratedReadLease.Inspect(handle, path);
-                    lease.Stream = new FileStream(handle, FileAccess.Read, 65536, false);
+                    lease.Stream = DiskAccess.Default.Open(handle, FileAccess.Read, 65536, false);
                 }
                 catch { handle.Dispose(); throw; }
                 return lease;
@@ -246,13 +247,10 @@ public static partial class GeneratedFileOwnership
             catch { lease.Dispose(); throw; }
         }
         public unsafe void Delete()
-        { byte remove = 1; if (!SetFileInformationByHandle(Stream.SafeFileHandle, 4, &remove, 1)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
+        { byte remove = 1; if (!DiskAccess.Default.WriteHandleInformation(Stream.SafeFileHandle, 4, &remove, 1)) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
         public void Dispose() { Stream?.Dispose(); foreach (var parent in _parents.AsEnumerable().Reverse()) parent.Dispose(); }
     }
 
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static unsafe partial bool SetFileInformationByHandle(SafeFileHandle file, int kind, byte* buffer, uint length);
 }
 
 public sealed class GeneratedOwnedReadLease : IDisposable

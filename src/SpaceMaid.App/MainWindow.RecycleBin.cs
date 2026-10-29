@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using System.Security.Principal;
@@ -110,7 +111,7 @@ public partial class MainWindow
                             using var identity = WindowsIdentity.GetCurrent();
                             string sid = identity.User?.Value ?? throw new IOException("Windows account could not be checked.");
                             string userBin = Path.Combine(binPath, sid);
-                            requests = RecycleBinRefreshScopes(scan, binPath, userBin, Directory.Exists(userBin), Directory.Exists(binPath));
+                            requests = RecycleBinRefreshScopes(scan, binPath, userBin, DiskAccess.Default.DirectoryExists(userBin), DiskAccess.Default.DirectoryExists(binPath));
                             if (requests.Count > 0)
                             {
                                 var current = await operations.QueryRecycleBinAsync(root);

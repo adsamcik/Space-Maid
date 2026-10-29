@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Security;
 using System.Security.Principal;
@@ -56,7 +57,7 @@ internal static class CloudDiscovery
             {
                 token.ThrowIfCancellationRequested();
                 string file = Path.Join(Environment.GetFolderPath(location), "Dropbox", "info.json");
-                if (File.Exists(file)) roots.AddRange(ParseDropbox(ReadSmallFile(file)));
+                if (DiskAccess.Default.FileExists(file)) roots.AddRange(ParseDropbox(ReadSmallFile(file)));
             }, "Dropbox folder configuration could not be read. Use Add folder.");
         Try(() =>
         {
@@ -132,7 +133,7 @@ internal static class CloudDiscovery
 
     internal static string ReadSmallFile(string path)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var stream = DiskAccess.Default.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         if (stream.Length > 262144) throw new IOException("Folder settings are too large.");
         var bytes = new byte[checked((int)stream.Length)];
         stream.ReadExactly(bytes);

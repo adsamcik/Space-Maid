@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -44,7 +45,7 @@ public partial class MainWindow
     private static string NearestAvailableFolder(ScanSnapshot scan, string path)
     {
         for (string? current = path; current is not null; current = Path.GetDirectoryName(current))
-            if (scan.FindEntry(current) is { } link && scan.Entry(link).IsDirectory && Directory.Exists(current)) return current;
+            if (scan.FindEntry(current) is { } link && scan.Entry(link).IsDirectory && DiskAccess.Default.DirectoryExists(current)) return current;
         throw new IOException("The scanned location is no longer available. Scan its drive again.");
     }
 

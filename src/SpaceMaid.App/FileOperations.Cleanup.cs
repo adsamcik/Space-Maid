@@ -32,5 +32,5 @@ internal sealed partial class FileOperations
     // allocation. The existing directory-only reader avoids extra NTFS queries.
     public Task<BuildCleanupAssessment> CheckBuildActivityAsync(Opportunity location, BuildCleanupPolicy policy,
         CancellationToken token = default, ScanSnapshot? previous = null)
-        => BuildCleanupProtection.CheckCurrentAsync(location, policy, token, previous ?? inventory?.Invoke(), MetadataSource());
+        => _disk.CheckBuildActivityAsync(location, policy, token, previous ?? inventory?.Invoke());
 }

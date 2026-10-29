@@ -6,6 +6,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <Resource Include="../../assets/branding/space-maid-visor.ico" Link="Assets/SpaceMaid.ico" />
     <EmbeddedResource Include="../../LICENSE" LogicalName="SpaceMaid.Installer.Notices.SpaceMaid.LICENSE" />

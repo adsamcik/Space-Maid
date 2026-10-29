@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
@@ -59,7 +60,7 @@ internal sealed class PhotoCatalog : IDisposable
     private readonly object _gate = new();
     public PhotoCatalog(string directory)
     {
-        Directory.CreateDirectory(directory);
+        DiskAccess.Default.CreateDirectory(directory);
         _connectionString = new SqliteConnectionStringBuilder { DataSource = Path.Join(directory, "photos.db"), Mode = SqliteOpenMode.ReadWriteCreate, Pooling = true }.ToString();
     }
     private SqliteConnection Open()

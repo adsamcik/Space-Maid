@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.ComponentModel;
@@ -161,7 +162,7 @@ public sealed partial class NativeNtfsLayoutSource
     {
         token.ThrowIfCancellationRequested(); ValidateVolume(volume);
         if (since is { } supplied) NtfsChangeJournal.ValidateCheckpoint(supplied);
-        using var handle = NativeMethods.CreateFile(@"\\.\" + volume[..2], 0x80000000, 7, 0, 3, 0, 0);
+        using var handle = DiskAccess.Default.OpenHandle(@"\\.\" + volume[..2], 0x80000000, 7, 0, 3, 0, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         ulong serial = VolumeSerial(volume);
         var state = Query(handle, serial);

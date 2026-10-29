@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -61,10 +62,8 @@ public partial class MainWindow
             bool helperStarted = false;
             string root = Path.GetPathRoot(target)!;
             string? historyVolume = await Task.Run(() => DriveDiscovery.VolumeId(root)).WaitAsync(work.Token);
-            var selectedDrive = root.Length == 3 ? new DriveInfo(root) : null;
             if (_fastEnabled && _scanHelper?.IsAvailable != true
-                && selectedDrive is not null && selectedDrive.DriveType is DriveType.Fixed or DriveType.Removable
-                && selectedDrive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+                && DiskAccess.Default.CanUseNtfs(target))
             {
                 try
                 {
