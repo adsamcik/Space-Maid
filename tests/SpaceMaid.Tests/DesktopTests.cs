@@ -979,6 +979,8 @@ public sealed partial class DesktopTests
                 }
                 BeginWorkflow("Extension workspaces");
                 CheckExtensionWorkspace(window, app, FindRepository());
+                BeginWorkflow("Cloud drive browsing and online-only review");
+                CheckCloudDrives(window, app, FindRepository());
                 BeginWorkflow("Agent access sharing and human review");
                 CheckAgentAccess(app);
                 SetStage("closing windows");

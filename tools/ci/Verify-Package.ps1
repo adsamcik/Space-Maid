@@ -11,6 +11,7 @@ $required = @(
     'Extensions/space-maid.photos/SQLitePCLRaw.core.dll',
     'Extensions/space-maid.photos/SQLitePCLRaw.provider.e_sqlite3.dll',
     'Extensions/space-maid.apps/extension.json', 'Extensions/space-maid.apps/SpaceMaid.Extensions.Apps.dll',
+    'Extensions/space-maid.cloud/extension.json', 'Extensions/space-maid.cloud/SpaceMaid.Extensions.Cloud.dll',
     'Extensions/space-maid.opportunities/extension.json', 'Extensions/space-maid.opportunities/SpaceMaid.Extensions.Opportunities.dll',
     'Extensions/space-maid.developer/extension.json', 'Extensions/space-maid.developer/SpaceMaid.Extensions.Developer.dll',
     'Extensions/space-maid.containers/extension.json', 'Extensions/space-maid.containers/SpaceMaid.Extensions.Containers.dll',

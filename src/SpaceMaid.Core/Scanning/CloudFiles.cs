@@ -47,6 +47,20 @@ public static partial class CloudFiles
         var selected = Inspect(path) ?? throw new IOException("This location has no supported Windows online-only capability.");
         if (scan.HasAllocationData && selected.Identity != scan.Records[scan.Entry(link).FileIndex].Identity)
             throw new IOException("This location changed since scanning. Recheck it first.");
+        return Prepare(path, selected, token);
+    }
+
+    public static OnlineOnlyPlan Prepare(string path, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        path = NormalizeLocalPath(path);
+        ValidateAncestors(path);
+        var selected = Inspect(path) ?? throw new IOException("This location has no supported Windows online-only capability.");
+        return Prepare(path, selected, token);
+    }
+
+    private static OnlineOnlyPlan Prepare(string path, CloudFileState selected, CancellationToken token)
+    {
         var targets = new List<OnlineOnlyPlan.Target>();
         var warnings = new List<string>();
         int skipped = 0;
@@ -148,15 +162,31 @@ public static partial class CloudFiles
         fixed (byte* buffer = root)
             if (CfGetSyncRootInfoByHandle(handle, 2, buffer, (uint)root.Length, out uint _) < 0) return null;
         var file = new byte[4200];
+        bool placeholder;
         fixed (byte* buffer = file)
         {
-            if (CfGetPlaceholderInfo(handle, 1, buffer, (uint)file.Length, out uint _) < 0) return null;
+            placeholder = CfGetPlaceholderInfo(handle, 1, buffer, (uint)file.Length, out uint _) >= 0;
+        }
+        bool directory = (attributes & (uint)FileAttributes.Directory) != 0;
+        // Sync roots, and ordinary directories below them, need not themselves
+        // be placeholders. They can be traversed without treating ordinary
+        // unsynced files as eligible for an online-only request.
+        if (!placeholder && !directory) return null;
+        long syncRootId;
+        if (placeholder) syncRootId = LayoutParser.I64(file, 48);
+        else
+        {
+            Array.Clear(file);
+            var basic = new byte[8];
+            fixed (byte* buffer = basic)
+                if (CfGetSyncRootInfoByHandle(handle, 0, buffer, (uint)basic.Length, out uint _) < 0) return null;
+            syncRootId = LayoutParser.I64(basic, 0);
         }
         var id = Information(handle, 18, 24);
         string provider = MemoryMarshal.Cast<byte, char>(root.AsSpan(4, 512)).ToString().TrimEnd('\0');
-        return new(provider, (attributes & (uint)FileAttributes.Directory) != 0,
+        return new(provider, directory,
             LayoutParser.I64(file, 0), LayoutParser.I64(file, 16), LayoutParser.U32(file, 36) == 1, (int)LayoutParser.U32(file, 32))
-        { Identity = new(LayoutParser.U64(id, 8), LayoutParser.U64(id, 16)), Volume = LayoutParser.U64(id, 0), SyncRootId = LayoutParser.I64(file, 48) };
+        { Identity = new(LayoutParser.U64(id, 8), LayoutParser.U64(id, 16)), Volume = LayoutParser.U64(id, 0), SyncRootId = syncRootId };
     }
 
     [LibraryImport("cldapi.dll")]

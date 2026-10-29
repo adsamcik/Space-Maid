@@ -8,6 +8,7 @@ A Windows app for finding what fills your drives and cleaning up development clu
 - **Optimize space** — extension-provided actions for generated files, native package-cache maintenance and owner-reviewed Docker, WSL, model and agent cleanup. Automatic generated-file cleanup stays opt-in, with exact previews, exclusions and run limits. [Optimization](docs/automatic-optimization.md) describes coverage and safeguards.
 - **Storage tools** — resumable [duplicate discovery and content-preserving compression/block sharing](docs/duplicates-and-storage.md), native package-cache maintenance, and enrolled worktree quarantine with recovery grace.
 - **Apps** — installation folders, measured sizes and quick access in Explorer.
+- **Cloud drives** — browse local OneDrive, Google Drive, Dropbox and Proton Drive folders, inspect file residency and review native online-only requests. [Cloud storage](docs/cloud-drives.md) explains provider support and limits.
 - **Photos** — collections, exact duplicate review and related RAW/JPEG/sidecar files.
 - **Extensions** — trusted local workflows, including an optional local assistant.
   [Agent cleanup](docs/ai-storage-coverage.md), [Containers & WSL](docs/containers-and-wsl.md) and AI models provide previews and confirmed in-app cleanup, including old transcripts/logs, Cursor CLI chats, local OpenCode sessions and virtual-disk compaction.

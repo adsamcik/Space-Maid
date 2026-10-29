@@ -28,7 +28,8 @@ public partial class MainWindow
         {
             _extensions = new ExtensionRuntime(() => _snapshot, () => _scanStale, RevealExtensionLocation,
                 dataRoot: ExtensionDataRoot, logDirectory: Path.Join(LogDirectory, "Extensions"), evidenceReview: ReviewAssistantEvidenceAsync,
-                operations: Operations, opportunityBrowser: new OpportunityBrowserHost(this), navigation: new WorkspaceNavigation(this));
+                operations: Operations, opportunityBrowser: new OpportunityBrowserHost(this), navigation: new WorkspaceNavigation(this),
+                cloudStorage: new CloudStorageServices(this));
             _extensions.JobsChanged += ExtensionJobsChanged;
             _extensions.SetDiscoveryBusy(_work is not null);
             await _extensions.InitializeAsync(_extensionLifetime.Token);

@@ -81,6 +81,12 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public Task<OnlineOnlyPlan> PrepareOnlineOnlyAsync(ScanSnapshot scan, int link, CancellationToken token)
         => Task.Run(() => CloudFiles.Prepare(scan, link, token), token);
 
+    public Task<OnlineOnlyPlan> PrepareOnlineOnlyAsync(string path, CancellationToken token)
+        => Task.Run(() => CloudFiles.Prepare(path, token), token);
+
+    public Task<CloudDirectoryListing> ReadCloudDirectoryAsync(string path, CancellationToken token)
+        => Task.Run(() => CloudFiles.ReadDirectory(path, token), token);
+
     // Execute reports partial cancellation, so it must run even if the token
     // was cancelled before scheduling, rather than returning a cancelled Task.
     public Task<OnlineOnlyResult> MakeOnlineOnlyAsync(OnlineOnlyPlan plan, IProgress<OnlineOnlyProgress>? progress,

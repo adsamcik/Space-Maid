@@ -7,6 +7,7 @@
     <Project Path="src/SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Photos/SpaceMaid.Extensions.Photos.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Apps/SpaceMaid.Extensions.Apps.csproj" />
+    <Project Path="src/SpaceMaid.Extensions.Cloud/SpaceMaid.Extensions.Cloud.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Opportunities/SpaceMaid.Extensions.Opportunities.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Developer/SpaceMaid.Extensions.Developer.csproj" />
     <Project Path="src/SpaceMaid.Extensions.Containers/SpaceMaid.Extensions.Containers.csproj" />

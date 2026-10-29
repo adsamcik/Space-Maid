@@ -1,0 +1,76 @@
+<UserControl x:Class="SpaceMaid.Extensions.Cloud.CloudView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,8">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed" Margin="0,0,8,0"/>
+                <Button x:Name="AddButton" Content="Add folder" Click="Add_Click" Margin="0,0,8,0">
+                    <Button.ContextMenu><ContextMenu>
+                        <MenuItem Header="OneDrive" Tag="OneDrive" Click="AddProvider_Click"/>
+                        <MenuItem Header="Google Drive" Tag="Google Drive" Click="AddProvider_Click"/>
+                        <MenuItem Header="Dropbox" Tag="Dropbox" Click="AddProvider_Click"/>
+                        <MenuItem Header="Proton Drive" Tag="Proton Drive" Click="AddProvider_Click"/>
+                    </ContextMenu></Button.ContextMenu>
+                </Button>
+                <Button x:Name="FindButton" Content="Find drives" Click="Find_Click"/>
+            </StackPanel>
+            <TextBlock Text="Cloud drives" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        </DockPanel>
+        <TextBlock x:Name="StatusText" Grid.Row="1" Text="Find connected drives or add a sync folder." TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite"/>
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="210"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <DockPanel>
+                <Button x:Name="RemoveButton" DockPanel.Dock="Bottom" Content="Forget added folder" Click="Remove_Click" Visibility="Collapsed" Margin="0,8,0,0" ToolTip="Removes this shortcut. Files and sync settings stay."/>
+                <ListBox x:Name="RootList" SelectionChanged="Root_Changed" AutomationProperties.Name="Connected cloud folders" HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemTemplate><DataTemplate>
+                        <StackPanel Margin="4,7" ToolTip="{Binding Path}">
+                            <TextBlock Text="{Binding Provider}" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="12" Margin="0,3,0,0"/>
+                        </StackPanel>
+                    </DataTemplate></ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <DockPanel Margin="0,0,0,8">
+                    <Button x:Name="UpButton" Content="Up" Click="Up_Click" DockPanel.Dock="Left" Margin="0,0,8,0" IsEnabled="False"/>
+                    <Button x:Name="RefreshButton" Content="Refresh" Click="Refresh_Click" DockPanel.Dock="Right" Margin="8,0,0,0" IsEnabled="False"/>
+                    <TextBox x:Name="FolderPath" IsReadOnly="True" VerticalContentAlignment="Center" AutomationProperties.Name="Current cloud folder"/>
+                </DockPanel>
+                <Grid Grid.Row="1" Margin="0,0,0,8">
+                    <TextBox x:Name="SearchBox" TextChanged="Search_Changed" AutomationProperties.Name="Filter current folder" ToolTip="Filter names in the current folder"/>
+                    <TextBlock Text="Filter this folder" VerticalAlignment="Center" Margin="12,0" Opacity="0.6" IsHitTestVisible="False">
+                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+                <DataGrid x:Name="FileList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False"
+                          SelectionMode="Single" SelectionChanged="File_Changed" MouseDoubleClick="File_DoubleClick" PreviewKeyDown="File_KeyDown"
+                          RowHeight="38" HeadersVisibility="Column" GridLinesVisibility="Horizontal" EnableRowVirtualization="True" EnableColumnVirtualization="True" AutomationProperties.Name="Cloud folder contents">
+                    <DataGrid.CellStyle><Style TargetType="DataGridCell"><Setter Property="VerticalContentAlignment" Value="Center"/></Style></DataGrid.CellStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" MinWidth="130" SortMemberPath="Name">
+                            <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Margin" Value="8,0"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Name}"/></Style></DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Header="File size" Binding="{Binding SizeText}" SortMemberPath="LogicalBytes" Width="90"/>
+                        <DataGridTextColumn Header="Local data" Binding="{Binding LocalText}" SortMemberPath="LocalBytes" Width="90"/>
+                        <DataGridTextColumn Header="Availability" Binding="{Binding Availability}" Width="160"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock x:Name="EmptyText" Grid.Row="2" Text="OneDrive · Google Drive · Dropbox · Proton Drive" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" MaxWidth="300" Margin="20" IsHitTestVisible="False"/>
+            </Grid>
+        </Grid>
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBox x:Name="SelectedPath" IsReadOnly="True" Background="Transparent" BorderThickness="0" Padding="0" FontSize="12" AutomationProperties.Name="Selected cloud location"/>
+            <WrapPanel Margin="0,6,0,0">
+                <Button x:Name="OpenFolderButton" Content="Open folder" Click="OpenFolder_Click" IsEnabled="False" Margin="0,0,8,0"/>
+                <Button x:Name="ExplorerButton" Content="Show in Explorer" Click="Explorer_Click" IsEnabled="False" Margin="0,0,8,0" ToolTip="Use the provider’s right-click controls to manage offline availability."/>
+                <Button x:Name="ExploreButton" Content="Explore in Space Maid" Click="Explore_Click" IsEnabled="False" Margin="0,0,8,0"/>
+                <Button x:Name="FreeButton" Content="Free local space…" Click="Free_Click" IsEnabled="False" ToolTip="Review synced files to make online-only. Cloud copies stay."/>
+            </WrapPanel>
+            <TextBlock x:Name="ActionHint" Text="Local space only. Cloud quota and files outside these folders are managed in the provider’s app." FontSize="12" Opacity="0.75" TextWrapping="Wrap" Margin="0,7,0,0"/>
+            <Expander Header="Details" FontSize="12" Margin="0,6,0,0"><TextBlock x:Name="DetailsText" Text="Browsing reads metadata. File size is not cloud quota usage; local data excludes folder totals and provider caches. Freeing local space requires an installed provider with Windows online-only support." TextWrapping="Wrap" Margin="0,5,0,0" MaxHeight="95"/></Expander>
+        </StackPanel>
+    </Grid>
+</UserControl>

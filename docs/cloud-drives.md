@@ -1,0 +1,19 @@
+# Cloud drives
+
+Open **Cloud drives** in the sidebar, then **Find drives**. The bundled extension finds this Windows user's registered OneDrive, Google Drive, Dropbox and Proton Drive sync folders. It also checks OneDrive account locations, Dropbox's documented `info.json` and mounted volumes labelled Google Drive. Detection varies with the installed desktop client. **Add folder** lets you choose a provider and its local sync folder or mounted drive when automatic discovery cannot find it. Added folders are saved locally; **Forget added folder** removes only that shortcut.
+
+Select a drive and browse folders using **Open folder**, double-click or Enter. **Up** stays inside the selected drive. Search filters the current folder. Browsing reads names, lengths and Windows sync metadata without opening file contents. Each view shows at most 5,000 immediate children and explicitly reports partial or unavailable results. Folder sizes are not recursive totals.
+
+**File size** is the local namespace's reported file length. **Local data** is the file's resident data reported by Windows Cloud Files, excluding filesystem metadata and the provider's separate cache. A dash means unknown or a folder, not zero. These measurements do not establish cloud quota usage or account completeness, and overlapping folders are not added into a total.
+
+Select a supported file or folder and choose **Free local space…**. The host checks current sync state, previews the exact path, eligible file count and observed local data, and asks for confirmation. Only synchronized files with no modified data are eligible. Unsynced, excluded, unsupported and already online-only files are skipped. Execution rechecks file identity and sync-root membership before sending Windows' unpinned intent. It does not delete files, force dehydration or change the provider's sync state. A kept-offline file can be included in this explicit review; accepting changes its offline preference.
+
+Accepted requests are asynchronous. They do not prove bytes were released; refresh to check the provider's current state. Cancellation stops further requests, while earlier accepted requests remain active. Cloud copies remain available through the provider; opening online-only files later requires a download.
+
+OneDrive, Dropbox and Proton Drive clients can expose Windows online-only capabilities. Space Maid enables the action only when Windows reports that capability for the actual selected item, regardless of the chosen provider label. Google Drive's virtual streaming volumes and mirrored folders may not expose it. Use **Show in Explorer** and the provider's own availability controls in that case. Never delete a provider cache to reclaim space; deleting synced files can delete cloud copies too.
+
+This workflow manages local sync storage. Remote account sign-in, quota analysis, cloud deletion, remote trash and changing sync configuration remain in the provider's app. Space Maid does not read account tokens or ask for cloud passwords. Reparse links that redirect outside the selected location are not followed.
+
+The extension uses the optional API v1 `ICloudStorageHost` / `ICloudStorageServices` capability. The host owns metadata operations, live checks, confirmation, execution and diagnostics; the extension owns provider discovery, saved shortcuts and browsing state. Disabling it in **Extensions** takes effect after restart and retains saved folders.
+
+Provider references: [Windows pin-state requests](https://learn.microsoft.com/en-us/windows/win32/api/cfapi/nf-cfapi-cfsetpinstate), [Windows sync-root registration](https://learn.microsoft.com/en-us/windows/win32/shell/integrate-cloud-storage), [Dropbox folder discovery](https://help.dropbox.com/installs/locate-dropbox-folder), [Google Drive streaming and mirroring](https://support.google.com/drive/answer/13401938), [Proton Drive on-demand sync](https://proton.me/support/proton-drive-windows-on-demand-sync).
