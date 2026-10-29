@@ -1,6 +1,6 @@
 # File access
 
-`SpaceMaid.Core.IO.DiskAccess` is the runtime boundary for file access. Use it for file/directory probes, content streams, enumeration, settings/cache writes, moves, deletes, drive information and native file handles. The host's `FileOperations` composes it with confirmation, inventory caching, Shell recycling and sync-provider workflows. Extensions use host inventory services for discovery and measurement and `DiskAccess` for their own local storage.
+`SpaceMaid.Core.IO.DiskAccess` is the runtime boundary for file access. Use it for file/directory probes, content streams, enumeration, settings/cache writes, moves, deletes, drive information and native file handles. The host's `FileOperations` composes it with confirmation, inventory caching, Shell recycling and sync-provider workflows. Extensions receive the same configured instance as `IExtensionHost.Files`, including the host's current NTFS helper. Use that service for extension file access; keep inventory references and cached measurements on `host.Inventory`.
 
 ```csharp
 var disk = DiskAccess.Default;
@@ -9,6 +9,8 @@ await foreach (var batch in disk.ReadMetadataAsync(folder, token))
     Process(batch);
 using var input = disk.OpenRead(settingsPath);
 ```
+
+An extension uses `host.Files` in place of `DiskAccess.Default` above and passes it to its storage/discovery services. Existing API v1 host implementations remain compatible through the interface's default property; production hosts override it with their configured service. Native safety providers still acquire handles through `DiskAccess` and retain their own validation. Third-party engines keep ownership of their internal I/O.
 
 Backend selection follows the operation:
 

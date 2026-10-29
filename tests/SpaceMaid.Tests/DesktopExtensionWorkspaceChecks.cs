@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using SpaceMaid.App;
 using SpaceMaid.App.Extensions;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Contracts;
 using Xunit;
 
@@ -11,7 +12,7 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
-    private static void CheckExtensionWorkspace(MainWindow window, Application app, string artifactRoot)
+    private static void CheckExtensionWorkspace(MainWindow window, Application app, string artifactRoot, DiskAccess expectedFiles)
     {
         using var fixture = new TestDirectory();
         string previousPath = window.CurrentPath;
@@ -77,6 +78,7 @@ public sealed partial class DesktopTests
 
             var apps = runtime.Entries.Single(entry => entry.Id == "space-maid.apps").View!;
             var host = Assert.IsAssignableFrom<IExtensionHost>(apps.GetType().GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(apps));
+            Assert.Same(expectedFiles, host.Files);
             var navigation = Assert.IsAssignableFrom<IExtensionNavigationHost>(host).Navigation!;
             window.SetScanTarget(@"R:\Context");
             Assert.Equal(@"R:\", apps.GetType().GetField("_drive", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(apps));
@@ -84,6 +86,9 @@ public sealed partial class DesktopTests
             PumpUntil(() => open.IsCompleted, TimeSpan.FromSeconds(5)); Assert.True(open.GetAwaiter().GetResult());
             string target = Directory.CreateDirectory(Path.Join(fixture.Path, "owned-folder")).FullName;
             File.WriteAllText(Path.Join(target, "sample.txt"), "sample");
+            var measured = host.Files.MeasureFolderAsync(target);
+            PumpUntil(() => measured.IsCompleted, TimeSpan.FromSeconds(10));
+            Assert.Equal(6, measured.GetAwaiter().GetResult().LogicalBytes);
             var explore = Task.Run(() => navigation.ExploreFolderAsync(target));
             PumpUntil(() => explore.IsCompleted, TimeSpan.FromSeconds(15)); Assert.True(explore.GetAwaiter().GetResult());
             Assert.Equal(target, window.CurrentPath); Assert.True(((RadioButton)window.FindName("ExploreTab")).IsChecked);

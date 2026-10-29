@@ -15,7 +15,7 @@ public sealed class PhotosExtension : ISpaceMaidExtension, IOpportunityExtension
     public async Task InitializeAsync(IExtensionHost host, CancellationToken token)
     {
         _host = host;
-        _catalog = new PhotoCatalog(host.DataDirectory);
+        _catalog = new PhotoCatalog(host.DataDirectory, host.Files);
         var native = await Task.Run(_catalog.Initialize, token);
         host.Log("photos-catalog-ready", new { ManagedSqlite = typeof(Microsoft.Data.Sqlite.SqliteConnection).Assembly.GetName().Version?.ToString(), NativeSqlite = native, Schema = 1 });
     }

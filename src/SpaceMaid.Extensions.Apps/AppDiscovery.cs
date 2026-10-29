@@ -17,16 +17,19 @@ internal static class AppDiscovery
     private static readonly EnumerationOptions Shallow = new() { IgnoreInaccessible = false, AttributesToSkip = 0 };
 
     internal static AppDiscoveryResult Discover(string drive, IReadOnlyList<string> addedFolders, CancellationToken token)
+        => Discover(DiskAccess.Default, drive, addedFolders, token);
+
+    internal static AppDiscoveryResult Discover(DiskAccess files, string drive, IReadOnlyList<string> addedFolders, CancellationToken token)
     {
         var warnings = new List<string>();
-        var registrations = ReadRegistrations(warnings, token);
+        var registrations = ReadRegistrations(warnings, token, files);
         int unknown = registrations.Where(app => app.Path is null).Select(app => app.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         if (unknown > 0) Warn(warnings, $"{unknown:N0} Windows installation records have no known folder and cannot be assigned to a drive.");
         var roots = new HashSet<string>(StringComparer.Ordinal);
         foreach (string name in new[] { "Program Files", "Program Files (x86)", "Apps", "Applications", "Programs", "Games" })
             roots.Add(System.IO.Path.Join(drive, name));
         string users = System.IO.Path.Join(drive, "Users");
-        foreach (string user in Directories(users, warnings, token))
+        foreach (string user in Directories(users, warnings, token, files))
             roots.Add(System.IO.Path.Join(user, "AppData", "Local", "Programs"));
 
         // Steam's common folder is a bounded directory listing, not a recursive
@@ -36,14 +39,14 @@ internal static class AppDiscovery
             games.Add(System.IO.Path.Join(app.Path!, "steamapps", "common"));
         foreach (string root in roots)
         {
-            foreach (string folder in Directories(root, warnings, token))
+            foreach (string folder in Directories(root, warnings, token, files))
             {
                 games.Add(System.IO.Path.Join(folder, "steamapps", "common"));
-                if (registrations.Any(app => app.Path == folder) || HasExecutable(folder, warnings, token))
+                if (registrations.Any(app => app.Path == folder) || HasExecutable(folder, warnings, token, files))
                 { AddFolder(folder, "App folder"); continue; }
                 // Covers vendor/product and the common bin layout, at one extra level.
-                foreach (string child in Directories(folder, warnings, token))
-                    if (HasExecutable(child, warnings, token))
+                foreach (string child in Directories(folder, warnings, token, files))
+                    if (HasExecutable(child, warnings, token, files))
                     {
                         if (System.IO.Path.GetFileName(child).Equals("bin", StringComparison.OrdinalIgnoreCase)) AddFolder(folder, "App folder");
                         else AddFolder(child, "App folder");
@@ -51,7 +54,7 @@ internal static class AppDiscovery
             }
         }
         foreach (string common in games)
-            foreach (string folder in Directories(common, warnings, token)) AddFolder(folder, "Game folder");
+            foreach (string folder in Directories(common, warnings, token, files)) AddFolder(folder, "Game folder");
         foreach (string folder in addedFolders.Where(folder => OnDrive(folder, drive))) AddFolder(folder, "Added folder");
         token.ThrowIfCancellationRequested();
         return new(Group(registrations.Where(app => app.Path is not null && OnDrive(app.Path, drive)).ToArray()), warnings);
@@ -64,8 +67,9 @@ internal static class AppDiscovery
         }
     }
 
-    internal static List<AppRegistration> ReadRegistrations(List<string> warnings, CancellationToken token)
+    internal static List<AppRegistration> ReadRegistrations(List<string> warnings, CancellationToken token, DiskAccess? files = null)
     {
+        files ??= DiskAccess.Default;
         var result = new List<AppRegistration>();
         RegistryView[] views = Environment.Is64BitOperatingSystem ? [RegistryView.Registry64, RegistryView.Registry32] : [RegistryView.Registry32];
         foreach (var hive in new[] { RegistryHive.LocalMachine, RegistryHive.CurrentUser })
@@ -87,7 +91,7 @@ internal static class AppDiscovery
                         string? name = key.GetValue("DisplayName") as string;
                         if (string.IsNullOrWhiteSpace(name)) continue;
                         string? path = NormalizeFolder(key.GetValue("InstallLocation") as string)
-                            ?? FolderFromIcon(key.GetValue("DisplayIcon") as string);
+                            ?? FolderFromIcon(key.GetValue("DisplayIcon") as string, files);
                         result.Add(new(name.Trim(), key.GetValue("Publisher") as string, key.GetValue("DisplayVersion") as string,
                             path, ReportedSize(key.GetValue("EstimatedSize")), "Windows installation record"));
                     }
@@ -129,7 +133,7 @@ internal static class AppDiscovery
         catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
     }
 
-    internal static string? FolderFromIcon(string? icon)
+    internal static string? FolderFromIcon(string? icon, DiskAccess? files = null)
     {
         if (string.IsNullOrWhiteSpace(icon)) return null;
         icon = icon.Trim();
@@ -147,7 +151,7 @@ internal static class AppDiscovery
         }
         file = Environment.ExpandEnvironmentVariables(file.Trim());
         if (!file.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !System.IO.Path.IsPathFullyQualified(file)) return null;
-        try { return DiskAccess.Default.FileExists(file) ? NormalizeFolder(System.IO.Path.GetDirectoryName(file)) : null; }
+        try { return (files ?? DiskAccess.Default).FileExists(file) ? NormalizeFolder(System.IO.Path.GetDirectoryName(file)) : null; }
         catch (ArgumentException) { return null; }
     }
 
@@ -170,27 +174,27 @@ internal static class AppDiscovery
 
     internal static bool OnDrive(string path, string drive) => string.Equals(System.IO.Path.GetPathRoot(path), drive, StringComparison.OrdinalIgnoreCase);
     private static bool IsWithin(string path, string parent) => path.StartsWith(parent.TrimEnd('\\') + "\\", StringComparison.Ordinal);
-    private static bool HasExecutable(string folder, List<string> warnings, CancellationToken token)
+    private static bool HasExecutable(string folder, List<string> warnings, CancellationToken token, DiskAccess files)
     {
         try
         {
-            if (!IsRegular(folder)) return false;
-            foreach (string file in DiskAccess.Default.EnumerateFiles(folder, "*.exe", Shallow))
+            if (!IsRegular(folder, files)) return false;
+            foreach (string file in files.EnumerateFiles(folder, "*.exe", Shallow))
             {
                 token.ThrowIfCancellationRequested();
-                if (IsRegular(file)) return true;
+                if (IsRegular(file, files)) return true;
             }
         }
         catch (Exception error) when (IsAccessError(error)) { Warn(warnings, "Some app folders could not be inspected."); }
         return false;
     }
-    private static IEnumerable<string> Directories(string root, List<string> warnings, CancellationToken token)
+    private static IEnumerable<string> Directories(string root, List<string> warnings, CancellationToken token, DiskAccess files)
     {
-        if (!DiskAccess.Default.DirectoryExists(root)) yield break;
+        if (!files.DirectoryExists(root)) yield break;
         IEnumerator<string>? iterator = null;
         try
         {
-            if (IsRegular(root)) iterator = DiskAccess.Default.EnumerateDirectories(root, "*", Shallow).GetEnumerator();
+            if (IsRegular(root, files)) iterator = files.EnumerateDirectories(root, "*", Shallow).GetEnumerator();
         }
         catch (Exception error) when (IsAccessError(error)) { Warn(warnings, "Some app folders could not be inspected."); }
         if (iterator is null) yield break;
@@ -200,18 +204,18 @@ internal static class AppDiscovery
             {
                 token.ThrowIfCancellationRequested();
                 string folder;
-                try { if (!iterator.MoveNext()) break; folder = iterator.Current; if (!IsRegular(folder)) continue; }
+                try { if (!iterator.MoveNext()) break; folder = iterator.Current; if (!IsRegular(folder, files)) continue; }
                 catch (Exception error) when (IsAccessError(error)) { Warn(warnings, "Some app folders could not be inspected."); break; }
                 yield return folder;
             }
         }
     }
-    private static bool IsRegular(string path)
+    private static bool IsRegular(string path, DiskAccess files)
     {
         // Check ancestors too: a normal child under a junction is still outside
         // the intended drive. Metadata-only access never opens executable bytes.
         for (string? current = path; current is not null; current = System.IO.Path.GetDirectoryName(System.IO.Path.TrimEndingDirectorySeparator(current)))
-            if ((DiskAccess.Default.GetAttributes(current) & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x40000 | 0x400000))) != 0) return false;
+            if ((files.GetAttributes(current) & (FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x40000 | 0x400000))) != 0) return false;
         return true;
     }
     private static bool IsAccessError(Exception error) => error is IOException or UnauthorizedAccessException or SecurityException;

@@ -16,6 +16,7 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     private readonly object _measurementGate = new();
     private static readonly INtfsLayoutSource NativeSource = new NativeNtfsLayoutSource();
     private readonly DiskAccess _disk = new(() => ntfsSource?.Invoke() ?? NativeSource);
+    internal DiskAccess Files => _disk;
 
     public Task<ScanSnapshot> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, Action<ScanDiagnostic>? diagnostic = null,

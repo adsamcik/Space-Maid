@@ -12,6 +12,7 @@ using System.Windows.Threading;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Contracts;
 using Xunit;
 
@@ -30,7 +31,10 @@ public sealed partial class DesktopTests
         // default load context conflicts with WPF's assembly-name resource cache.
         var view = packaged;
         var type = view.GetType(); var assembly = type.Assembly;
-        host.Navigation = (type.GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view) as IExtensionNavigationHost)?.Navigation;
+        var runtimeHost = Assert.IsAssignableFrom<IExtensionHost>(type.GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view));
+        Assert.Same(window.Operations.Files, runtimeHost.Files);
+        host.Navigation = (runtimeHost as IExtensionNavigationHost)?.Navigation;
+        host.Files = runtimeHost.Files;
         type.GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(view, host);
         var discoveryProperty = type.GetProperty("Discover", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var appType = assembly.GetType("SpaceMaid.Extensions.Apps.DetectedApp")!;
@@ -118,6 +122,7 @@ public sealed partial class DesktopTests
 
     private sealed class AppsUiHost(string path) : IExtensionHost, IInventoryReader, IInventoryFolderSizes, IExtensionNavigationHost
     {
+        public DiskAccess Files { get; set; } = DiskAccess.Default;
         public IExtensionNavigation? Navigation { get; set; }
         public string DataDirectory => path;
         public string CacheDirectory => path;

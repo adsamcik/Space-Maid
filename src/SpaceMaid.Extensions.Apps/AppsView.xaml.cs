@@ -1,4 +1,3 @@
-using SpaceMaid.Core.IO;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -27,6 +26,7 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
     internal AppsView(IExtensionHost host, CancellationToken lifetime)
     {
         _host = host; _lifetime = lifetime;
+        Discover = (drive, added, token) => AppDiscovery.Discover(host.Files, drive, added, token);
         InitializeComponent();
         ExploreButton.Visibility = (host as IExtensionNavigationHost)?.Navigation is null ? Visibility.Collapsed : Visibility.Visible;
         AppList.ItemsSource = _rows;
@@ -182,7 +182,7 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
     private void Open_Click(object sender, RoutedEventArgs e)
     {
         if (AppList.SelectedItem is not AppRow { App.Path: { } path }) return;
-        if (!DiskAccess.Default.DirectoryExists(path)) { StatusText.Text = "This folder is no longer available. Refresh apps."; return; }
+        if (!_host.Files.DirectoryExists(path)) { StatusText.Text = "This folder is no longer available. Refresh apps."; return; }
         _host.RevealLocation(path);
     }
     internal async Task ShutdownAsync()

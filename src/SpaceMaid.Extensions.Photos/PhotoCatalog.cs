@@ -58,9 +58,10 @@ internal sealed class PhotoCatalog : IDisposable
     internal const int PageSize = 100;
     private readonly string _connectionString;
     private readonly object _gate = new();
-    public PhotoCatalog(string directory)
+    public PhotoCatalog(string directory) : this(directory, DiskAccess.Default) { }
+    public PhotoCatalog(string directory, DiskAccess files)
     {
-        DiskAccess.Default.CreateDirectory(directory);
+        files.CreateDirectory(directory);
         _connectionString = new SqliteConnectionStringBuilder { DataSource = Path.Join(directory, "photos.db"), Mode = SqliteOpenMode.ReadWriteCreate, Pooling = true }.ToString();
     }
     private SqliteConnection Open()

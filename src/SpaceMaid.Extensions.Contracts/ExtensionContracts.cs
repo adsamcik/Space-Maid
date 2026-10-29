@@ -1,4 +1,5 @@
 using System.Windows;
+using SpaceMaid.Core.IO;
 
 namespace SpaceMaid.Extensions.Contracts;
 
@@ -15,6 +16,9 @@ public interface IExtensionHost
 {
     string DataDirectory { get; }
     string CacheDirectory { get; }
+    // The host supplies its configured service, including its current NTFS
+    // helper. The default keeps existing API v1 host implementations compatible.
+    DiskAccess Files => DiskAccess.Default;
     IInventoryReader Inventory { get; }
     IExtensionJobs Jobs { get; }
     IToolBroker Tools { get; }

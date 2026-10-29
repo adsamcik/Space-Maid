@@ -86,6 +86,7 @@ public sealed partial class DesktopTests
                 window.WorktreeLifecycleSettingsPath = Path.Join(fixture.Path, "managed-worktrees.json");
                 window.UpdateSettingsPath = Path.Join(fixture.Path, "update-settings.json");
                 window.Operations = new(recycleBins: new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call.")));
+                var extensionFiles = window.Operations.Files;
                 window.LoadBuildCleanupSettings();
                 string fixtureRoot = Path.GetPathRoot(fixture.Path)!;
                 window.DriveProvider = () => [new(fixtureRoot, "Development", DriveDiscovery.VolumeId(fixtureRoot), true, GiB(500), GiB(20)),
@@ -192,7 +193,8 @@ public sealed partial class DesktopTests
                 string events = File.ReadAllText(logFile);
                 Assert.Contains("backend-selected", events);
                 Assert.Contains("app-scan-complete", events);
-                Assert.Contains("Standard Windows scan", ((TextBlock)window.FindName("BackendStatusText")).Text);
+                var completedScan = Assert.IsType<ScanSnapshot>(typeof(MainWindow).GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+                Assert.Contains(completedScan.Backend, ((TextBlock)window.FindName("BackendStatusText")).Text);
                 SetStage("opening automatic optimization after the scan completes");
                 var optimizeButton = (Button)window.FindName("OptimizationButton");
                 Assert.True(optimizeButton.IsEnabled);
@@ -978,7 +980,7 @@ public sealed partial class DesktopTests
                     Assert.True(appHelper.IsAvailable); Assert.False(appHelper.Exit.IsCompleted);
                 }
                 BeginWorkflow("Extension workspaces");
-                CheckExtensionWorkspace(window, app, FindRepository());
+                CheckExtensionWorkspace(window, app, FindRepository(), extensionFiles);
                 BeginWorkflow("Cloud drive browsing and online-only review");
                 CheckCloudDrives(window, app, FindRepository());
                 BeginWorkflow("Agent access sharing and human review");

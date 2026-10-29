@@ -89,8 +89,8 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                 await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
                 try
                 {
-                    DiskAccess.Default.CreateDirectory(_directory);
-                    if (DiskAccess.Default.FileExists(cachePath))
+                    host.Files.CreateDirectory(_directory);
+                    if (host.Files.FileExists(cachePath))
                     {
                         var owned = false;
                         try
@@ -126,12 +126,12 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                             GeneratedProducedFile? produced = null;
                             try
                             {
-                                using (var output = DiskAccess.Default.Open(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                                using (var output = host.Files.Open(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                                 {
                                     var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(output);
                                     produced = GeneratedFileOwnership.CaptureProduced(output, temporary);
                                 }
-                                DiskAccess.Default.MoveFile(temporary, cachePath, overwrite: false); _diskBytes += produced.Revision.Length;
+                                host.Files.MoveFile(temporary, cachePath, overwrite: false); _diskBytes += produced.Revision.Length;
                                 GeneratedFileOwnership.Record(cachePath, Owner, [row.Path], produced);
                             }
                             catch (Exception error) when (CacheFailure(error))
@@ -209,11 +209,11 @@ internal sealed class ThumbnailCache(IExtensionHost host)
         // they must never cause a delete loop or be treated as disposable.
         var oldest = new PriorityQueue<DiskFileMetadata, DateTime>(Comparer<DateTime>.Create((a, b) => b.CompareTo(a)));
         long bytes = 0; int examined = 0; var complete = true;
-        foreach (var file in DiskAccess.Default.EnumerateFileMetadata(_directory, "*.png"))
+        foreach (var file in host.Files.EnumerateFileMetadata(_directory, "*.png"))
         {
             if (++examined > 4096) { complete = false; break; }
             bytes = checked(bytes + file.Length);
-            if (!DiskAccess.Default.FileExists(GeneratedFileOwnership.ReceiptPath(file.FullName))) continue;
+            if (!host.Files.FileExists(GeneratedFileOwnership.ReceiptPath(file.FullName))) continue;
             oldest.Enqueue(file, file.LastWriteTimeUtc); if (oldest.Count > 128) oldest.Dequeue();
         }
         _diskBytes = bytes;
@@ -232,7 +232,7 @@ internal sealed class ThumbnailCache(IExtensionHost host)
         if (!complete || _diskBytes > limit) _diskWritesDisabled = true;
         int receipts = 0;
         const string suffix = ".spacemaid-owner.json";
-        foreach (var receipt in DiskAccess.Default.EnumerateFileMetadata(_directory, "*.png" + suffix))
+        foreach (var receipt in host.Files.EnumerateFileMetadata(_directory, "*.png" + suffix))
         {
             if (++receipts > 128) break;
             GeneratedFileOwnership.TryRemoveOrphanReceipt(receipt.FullName[..^suffix.Length], Owner);

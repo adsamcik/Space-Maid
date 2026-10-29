@@ -15,6 +15,7 @@ internal sealed record WslDiskRow(string Owner, string Path, long Length)
 public partial class WslDiskView : UserControl
 {
     private readonly CancellationToken _lifetime;
+    private readonly DiskAccess _files;
     private readonly List<WslDiskRow> _disks = [];
     private bool _busy;
     internal bool IsOptimizationBusy => _busy;
@@ -24,8 +25,10 @@ public partial class WslDiskView : UserControl
     internal Func<string, CancellationToken, Task<VirtualDiskTarget>> Prepare { get; set; } = WslDiskClient.PreviewAsync;
     internal Func<VirtualDiskRequest, CancellationToken, Task<VirtualDiskResult>> Execute { get; set; } = WslDiskClient.ExecuteAsync;
     public WslDiskView() : this(CancellationToken.None) { }
-    internal WslDiskView(CancellationToken lifetime)
+    internal WslDiskView(CancellationToken lifetime) : this(lifetime, DiskAccess.Default) { }
+    internal WslDiskView(CancellationToken lifetime, DiskAccess files)
     {
+        _files = files;
         _lifetime = lifetime; InitializeComponent();
         Loaded += (_, _) =>
         {
@@ -49,7 +52,7 @@ public partial class WslDiskView : UserControl
         SetBusy(true);
         try
         {
-            var disks = await Task.Run(Discover, _lifetime);
+            var disks = await Task.Run(() => Discover(_files), _lifetime);
             _disks.Clear(); _disks.AddRange(disks); Publish();
             StatusText.Text = disks.Count == 0 ? "No registered WSL2 ext4.vhdx files found. Add a disk for Docker Desktop or a custom location." : $"{disks.Count} WSL2 disks from up to 128 registrations. Add any other disk explicitly; preview checks the exact file before confirmation.";
         }
@@ -64,7 +67,7 @@ public partial class WslDiskView : UserControl
         try
         {
             string path = VirtualDiskCleanup.ValidatePath(picker.FileName);
-            if (!_disks.Any(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) _disks.Add(new("Custom · verify owner", path, DiskAccess.Default.FileLength(path)));
+            if (!_disks.Any(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) _disks.Add(new("Custom · verify owner", path, _files.FileLength(path)));
             Publish(); DiskList.SelectedItem = _disks.First(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception error) when (Expected(error)) { StatusText.Text = error.Message; }
@@ -114,8 +117,9 @@ public partial class WslDiskView : UserControl
         if (!busy && !IsLoaded) DetachOwner();
     }
     private static bool Expected(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or Win32Exception or OperationCanceledException or System.Text.Json.JsonException;
-    internal static IReadOnlyList<WslDiskRow> Discover()
+    internal static IReadOnlyList<WslDiskRow> Discover(DiskAccess? files = null)
     {
+        files ??= DiskAccess.Default;
         var result = new List<WslDiskRow>();
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss");
         foreach (string name in key?.GetSubKeyNames().Take(128) ?? [])
@@ -126,7 +130,7 @@ public partial class WslDiskView : UserControl
             path = System.IO.Path.Join(path, "ext4.vhdx");
             try { path = VirtualDiskCleanup.ValidatePath(path); }
             catch (InvalidOperationException) { continue; }
-            if (DiskAccess.Default.FileExists(path)) result.Add(new(distro.GetValue("DistributionName") as string ?? "WSL2", path, DiskAccess.Default.FileLength(path)));
+            if (files.FileExists(path)) result.Add(new(distro.GetValue("DistributionName") as string ?? "WSL2", path, files.FileLength(path)));
         }
         return result;
     }

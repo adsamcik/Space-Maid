@@ -19,8 +19,9 @@ internal static class CloudDiscovery
     internal static readonly string[] Providers = ["OneDrive", "Google Drive", "Dropbox", "Proton Drive"];
     private const string SyncRootsKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager";
 
-    internal static CloudDiscoveryResult Find(CancellationToken token)
+    internal static CloudDiscoveryResult Find(CancellationToken token, DiskAccess? files = null)
     {
+        files ??= DiskAccess.Default;
         var roots = new List<CloudRoot>();
         var warnings = new List<string>();
         using var identity = WindowsIdentity.GetCurrent();
@@ -57,19 +58,19 @@ internal static class CloudDiscovery
             {
                 token.ThrowIfCancellationRequested();
                 string file = Path.Join(Environment.GetFolderPath(location), "Dropbox", "info.json");
-                if (DiskAccess.Default.FileExists(file)) roots.AddRange(ParseDropbox(ReadSmallFile(file)));
+                if (files.FileExists(file)) roots.AddRange(ParseDropbox(ReadSmallFile(file, files)));
             }, "Dropbox folder configuration could not be read. Use Add folder.");
         Try(() =>
         {
             // Some Drive for desktop versions use a virtual volume rather than
             // Windows Cloud Files. This is a discovery hint, never a capability.
-            foreach (var drive in DriveInfo.GetDrives().Where(d => d.DriveType is DriveType.Fixed or DriveType.Removable))
+            foreach (var drive in files.GetDrives().Where(d => d.DriveType is DriveType.Fixed or DriveType.Removable))
             {
                 token.ThrowIfCancellationRequested();
                 try
                 {
                     if (drive.IsReady && drive.VolumeLabel.StartsWith("Google Drive", StringComparison.OrdinalIgnoreCase))
-                        roots.Add(new("Google Drive", drive.RootDirectory.FullName, "Mounted Drive for desktop volume"));
+                        roots.Add(new("Google Drive", drive.Name, "Mounted Drive for desktop volume"));
                 }
                 catch (IOException) { }
             }
@@ -131,9 +132,9 @@ internal static class CloudDiscovery
         return result.OrderBy(root => root.Provider).ThenBy(root => root.Path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    internal static string ReadSmallFile(string path)
+    internal static string ReadSmallFile(string path, DiskAccess? files = null)
     {
-        using var stream = DiskAccess.Default.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var stream = (files ?? DiskAccess.Default).Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         if (stream.Length > 262144) throw new IOException("Folder settings are too large.");
         var bytes = new byte[checked((int)stream.Length)];
         stream.ReadExactly(bytes);

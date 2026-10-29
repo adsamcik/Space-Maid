@@ -46,7 +46,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     {
         await RunAsync(async token =>
         {
-            var result = await Task.Run(() => CloudDiscovery.Find(token), token);
+            var result = await Task.Run(() => CloudDiscovery.Find(token, _host.Files), token);
             await LoadSavedAsync(token);
             _discovered = result.Roots;
             UpdateRoots();
@@ -110,8 +110,8 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (_settingsLoaded) return;
         try
         {
-            var roots = await Task.Run(() => DiskAccess.Default.FileExists(SettingsPath)
-                ? JsonSerializer.Deserialize<CloudRoot[]>(CloudDiscovery.ReadSmallFile(SettingsPath)) ?? throw new JsonException("Invalid saved folders.") : [], token);
+            var roots = await Task.Run(() => _host.Files.FileExists(SettingsPath)
+                ? JsonSerializer.Deserialize<CloudRoot[]>(CloudDiscovery.ReadSmallFile(SettingsPath, _host.Files)) ?? throw new JsonException("Invalid saved folders.") : [], token);
             if (roots.Length > 64 || roots.Any(root => root is null || root.Path is null || !CloudDiscovery.Providers.Contains(root.Provider)))
                 throw new JsonException("Invalid saved folders.");
             foreach (var root in roots) _ = CloudDiscovery.Normalize(root.Path);
@@ -125,10 +125,10 @@ public partial class CloudView : UserControl, IExtensionContextView
     private Task SaveAsync(IReadOnlyList<CloudRoot> roots, CancellationToken token) => Task.Run(() =>
     {
         token.ThrowIfCancellationRequested();
-        DiskAccess.Default.CreateDirectory(_host.DataDirectory);
+        _host.Files.CreateDirectory(_host.DataDirectory);
         string temporary = SettingsPath + ".tmp";
-        DiskAccess.Default.WriteAllText(temporary, JsonSerializer.Serialize(roots));
-        DiskAccess.Default.MoveFile(temporary, SettingsPath, true);
+        _host.Files.WriteAllText(temporary, JsonSerializer.Serialize(roots));
+        _host.Files.MoveFile(temporary, SettingsPath, true);
     }, token);
 
     private void UpdateRoots(string? select = null)

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using SpaceMaid.Core.IO;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -28,11 +29,12 @@ public partial class ContainersView : UserControl, SpaceMaid.Extensions.Contract
     internal Func<DockerStorageItem, CancellationToken, Task<DockerCleanupPlan>> Preparer { get; set; } = DockerCleanup.PrepareAsync;
     internal Func<DockerCleanupPlan, CancellationToken, Task<DockerCleanupResult>> Executor { get; set; } = DockerCleanup.ExecuteAsync;
 
-    internal ContainersView(CancellationToken lifetime)
+    internal ContainersView(CancellationToken lifetime) : this(lifetime, DiskAccess.Default) { }
+    internal ContainersView(CancellationToken lifetime, DiskAccess files)
     {
         _lifetime = lifetime;
         InitializeComponent();
-        WslContent.Content = new WslDiskView(_lifetime);
+        WslContent.Content = new WslDiskView(_lifetime, files);
         KindPicker.ItemsSource = new[] { "Containers", "Images", "Build cache", "Volumes" };
         KindPicker.SelectedIndex = 0;
         Unloaded += (_, _) => _work?.Cancel();

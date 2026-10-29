@@ -27,6 +27,7 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     private readonly ExtensionInventory _inventory;
     private readonly ExtensionJobs _jobs;
     private readonly ExifToolBroker _tools;
+    private readonly DiskAccess _files;
     private readonly List<ISpaceMaidExtension> _loaded = [];
     private readonly List<ExtensionLoadContext> _contexts = [];
     private readonly List<LoadedExtension> _entries = [];
@@ -67,6 +68,8 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
         _diagnostics = new ScanLog(logDirectory ?? ScanLog.DefaultDirectory);
         Opportunities = new(_diagnostics.Record, _lifetime.Token);
         _jobs = new(_diagnostics.Record);
+        operations ??= new FileOperations();
+        _files = operations.Files;
         _inventory = new(currentScan, isScanStale, _jobs.BeginDiscovery, _lifetime.Token, operations, _diagnostics.Record);
         _tools = new(_jobs.WaitForDiscoveryAsync, _diagnostics.Record, _administrator);
         _settings = ReadSettings();
@@ -121,7 +124,7 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                     throw new InvalidDataException("The extension descriptor differs from its manifest.");
                 string dataDirectory = Path.Combine(_dataRoot, id), cacheDirectory = Path.Combine(dataDirectory, "Cache");
                 DiskAccess.Default.CreateDirectory(dataDirectory); DiskAccess.Default.CreateDirectory(cacheDirectory);
-                var host = new Host(dataDirectory, cacheDirectory, _opportunityBrowser, _navigation, _cloudStorage, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
+                var host = new Host(dataDirectory, cacheDirectory, _files, _opportunityBrowser, _navigation, _cloudStorage, _inventory, _jobs.ForOwner(id), _tools, _reveal, ReviewEvidenceAsync,
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
@@ -259,7 +262,7 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
         _loaded.Clear(); _diagnostics.Dispose(); _lifetime.Dispose();
         // Contexts intentionally remain loaded until process exit; settings apply on restart.
     }
-    private sealed record Host(string DataDirectory, string CacheDirectory, IOpportunityBrowserHost? OpportunityBrowser, IExtensionNavigation? Navigation, ICloudStorageServices? CloudStorage, IInventoryReader Inventory,
+    private sealed record Host(string DataDirectory, string CacheDirectory, DiskAccess Files, IOpportunityBrowserHost? OpportunityBrowser, IExtensionNavigation? Navigation, ICloudStorageServices? CloudStorage, IInventoryReader Inventory,
         IExtensionJobs Jobs, IToolBroker Tools, Action<string> Reveal,
         Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>> EvidenceReview,
         Action<string, object> Diagnostics) : IExtensionHost, IExtensionEvidenceReview, IOpportunityBrowserServices, IExtensionNavigationHost, ICloudStorageHost
