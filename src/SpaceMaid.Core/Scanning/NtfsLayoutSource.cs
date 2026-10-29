@@ -103,7 +103,7 @@ public sealed partial class NativeNtfsLayoutSource : INtfsLayoutSource
             bool success; int bytes;
             fixed (byte* from = input)
             fixed (byte* to = output)
-                success = NativeMethods.DeviceIoControl(handle, NativeMethods.QueryFileLayout,
+                success = DiskAccess.Default.DeviceControl(handle, NativeMethods.QueryFileLayout,
                     from, input.Length, to, size, out bytes, 0);
             int error = success ? 0 : Marshal.GetLastPInvokeError();
             double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;

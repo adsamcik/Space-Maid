@@ -64,11 +64,11 @@ internal sealed class ThumbnailCache(IExtensionHost host)
             await host.Jobs.RunAsync("photos-thumbnail", JobResource.Thumbnail, async context =>
             {
                 await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
-                using var metadata = NativeMediaFile.Open(row.Path, false);
+                using var metadata = NativeMediaFile.Open(row.Path, false, host.Files);
                 if (!metadata.Revision.ContentAvailable) throw new IOException("Cloud-only, offline and reparse files remain metadata-only.");
                 if (metadata.Revision.Identity != row.ObjectId || metadata.Revision.Key != row.Revision)
                     throw new IOException("File changed · Refresh and Analyze to enable preview");
-                using var source = NativeMediaFile.Open(row.Path, true);
+                using var source = NativeMediaFile.Open(row.Path, true, host.Files);
                 if (source.Revision.Key != row.Revision) throw new IOException("File changed · Refresh this collection");
                 // WIC extensions can update independently of Windows or WPF.
                 // Header inspection is in the approved content lane; cached

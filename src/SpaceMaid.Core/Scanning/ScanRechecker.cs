@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using SpaceMaid.Core.IO;
 
 namespace SpaceMaid.Core.Scanning;
 
@@ -12,7 +13,7 @@ public static class ScanRechecker
         CancellationToken token = default, Action<string, object>? diagnostic = null, INtfsLayoutSource? layoutSource = null)
     {
         if (!scan.HasAllocationData) throw new InvalidOperationException("This scan has no stable file identities. A full rescan is required.");
-        var scanner = new VolumeScanner(layoutSource);
+        var scanner = new DiskAccess(() => layoutSource);
         var replacements = new List<Replacement>();
         var pending = new Queue<ScanRecheckRequest>(requests);
         var visited = new HashSet<string>(StringComparer.Ordinal);

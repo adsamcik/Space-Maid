@@ -1,10 +1,13 @@
 using System.Runtime.InteropServices;
+using System.ComponentModel;
+using System.IO.Enumeration;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace SpaceMaid.Core.IO;
 
 public readonly record struct DiskFileMetadata(string FullName, long Length, DateTime LastWriteTimeUtc);
+public readonly record struct DiskVolumeInformation(uint Serial, uint MaximumNameLength, uint Flags, string FileSystem);
 
 // Keep lazy drive probes (especially offline network drives) inside the boundary.
 public sealed class DiskDrive
@@ -45,6 +48,8 @@ public sealed partial class DiskAccess
     public IEnumerable<string> EnumerateDirectories(string path) => Directory.EnumerateDirectories(path);
     public IEnumerable<string> EnumerateDirectories(string path, string pattern, EnumerationOptions options) => Directory.EnumerateDirectories(path, pattern, options);
     public IEnumerable<string> EnumerateFileSystemEntries(string path) => Directory.EnumerateFileSystemEntries(path);
+    public IEnumerable<T> EnumerateEntries<T>(string path, FileSystemEnumerable<T>.FindTransform transform, EnumerationOptions options)
+        => new FileSystemEnumerable<T>(path, transform, options);
     public IEnumerable<DiskFileMetadata> EnumerateFileMetadata(string path, string pattern)
     {
         foreach (var file in new DirectoryInfo(path).EnumerateFiles(pattern))
@@ -63,6 +68,21 @@ public sealed partial class DiskAccess
     {
         var name = new StringBuilder(64);
         return GetVolumeNameForVolumeMountPoint(root, name, name.Capacity) ? name.ToString() : null;
+    }
+    public DiskVolumeInformation VolumeInformation(string root)
+    {
+        var format = new StringBuilder(261);
+        if (!GetVolumeInformation(root, null, 0, out uint serial, out uint maximumName, out uint flags, format, format.Capacity))
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+        return new(serial, maximumName, flags, format.ToString());
+    }
+    public uint ClusterBytes(string root)
+    {
+        if (!GetDiskFreeSpace(root, out uint sectors, out uint bytes, out _, out _))
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+        uint cluster = checked(sectors * bytes);
+        if (cluster == 0) throw new IOException("The filesystem did not report a usable cluster size.");
+        return cluster;
     }
 
     public bool CanUseNtfs(string path)
@@ -91,4 +111,12 @@ public sealed partial class DiskAccess
     [DllImport("kernel32.dll", EntryPoint = "GetVolumeNameForVolumeMountPointW", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, StringBuilder volumeName, int length);
+    [DllImport("kernel32.dll", EntryPoint = "GetVolumeInformationW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeInformation(string root, StringBuilder? name, int nameLength, out uint serial,
+        out uint maximumName, out uint flags, StringBuilder fileSystem, int fileSystemLength);
+    [LibraryImport("kernel32.dll", EntryPoint = "GetDiskFreeSpaceW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetDiskFreeSpace(string root, out uint sectorsPerCluster, out uint bytesPerSector,
+        out uint freeClusters, out uint totalClusters);
 }

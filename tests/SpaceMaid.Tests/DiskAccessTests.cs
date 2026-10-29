@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using SpaceMaid.Core.IO;
 using SpaceMaid.Core.Scanning;
 using Xunit;
@@ -7,6 +8,22 @@ namespace SpaceMaid.Tests;
 
 public sealed class DiskAccessTests
 {
+    [Fact]
+    public void LegacyMetadataUsesHeldHandleAndRejectsWrongBufferLayouts()
+    {
+        using var fixture = new TestDirectory();
+        string path = Path.Join(fixture.Path, "owned.bin");
+        File.WriteAllBytes(path, new byte[8193]);
+        using var held = File.OpenRead(path);
+        var disk = new DiskAccess(() => throw new InvalidOperationException("Held-handle metadata must not request an NTFS layout."));
+        Assert.True(disk.ReadHandleInformation<LegacyInformation>(held.SafeFileHandle, out var metadata));
+        Assert.Equal(8193UL, ((ulong)metadata.SizeHigh << 32) | metadata.SizeLow);
+        Assert.True(metadata.Links >= 1);
+        Assert.NotEqual(0UL, ((ulong)metadata.IndexHigh << 32) | metadata.IndexLow);
+        Assert.Throws<ArgumentException>(() => disk.ReadHandleInformation<int>(held.SafeFileHandle, out _));
+        Assert.Equal(8193, held.Length);
+    }
+
     [Fact]
     public async Task UnsupportedWholeVolumeQuerySelectsStandardBackendWithoutPublishingDiscardedData()
     {
@@ -116,5 +133,12 @@ public sealed class DiskAccessTests
         internal int Calls;
         public void Acquire(string volume, Action<NtfsLayoutBlock> consume, CancellationToken token)
         { Calls++; throw new NotSupportedException("This query is unsupported."); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LegacyInformation
+    {
+        public uint Attributes, CreatedLow, CreatedHigh, AccessLow, AccessHigh, WrittenLow, WrittenHigh,
+            Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
 }

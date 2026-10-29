@@ -165,7 +165,7 @@ public static class BuildCleanupProtection
     public static async Task<BuildCleanupAssessment> CheckCurrentAsync(Opportunity location, BuildCleanupPolicy policy,
         CancellationToken token = default, ScanSnapshot? previous = null, INtfsLayoutSource? layoutSource = null)
     {
-        var reader = new VolumeScanner(layoutSource);
+        var reader = new SpaceMaid.Core.IO.DiskAccess(() => layoutSource);
         bool allStreams = previous?.IncludesAllDataStreams == true;
         var output = await reader.ReadDirectoryAsync(location.Path, true, token, allStreams, allowBasic: true, previous: previous).ConfigureAwait(false);
         if (output.WarningCount > 0) return new(CleanupReadiness.Protected, null, "Current activity could not be checked · Kept");

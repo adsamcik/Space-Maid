@@ -55,7 +55,7 @@ public static class OpportunityReviewValidator
         var scopes = PlanScopes(requests.Select(value => new ScanRecheckRequest(value.Key, value.Value)), token);
         diagnostic?.Invoke("opportunity-validation-start", new { Selected = choices.Count, Scopes = scopes.Length,
             scan.HasAllocationData, MaximumConcurrentReads });
-        var reader = new VolumeScanner(DiskAccess.Serialize(layoutSource));
+        var reader = new DiskAccess(() => layoutSource);
         var replacements = new ScanRechecker.Replacement[scopes.Length];
         var reportGate = new object();
         var progressTimer = Stopwatch.StartNew(); int completed = 0;

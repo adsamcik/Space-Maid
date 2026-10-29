@@ -185,7 +185,7 @@ public sealed partial class NativeNtfsLayoutSource
                 BinaryPrimitives.WriteUInt64LittleEndian(new(input + 32, 8), baseline.JournalId);
                 bool success; int bytes;
                 fixed (byte* buffer = output)
-                    success = NativeMethods.DeviceIoControl(handle, ReadUsnJournal, input, 40, buffer, 64 * 1024, out bytes, 0);
+                    success = DiskAccess.Default.DeviceControl(handle, ReadUsnJournal, input, 40, buffer, 64 * 1024, out bytes, 0);
                 if (!success) throw new Win32Exception(Marshal.GetLastPInvokeError());
                 if (bytes is < 8 or > 64 * 1024) throw new InvalidDataException("Invalid NTFS journal response size.");
                 total = checked(total + bytes);
@@ -204,7 +204,7 @@ public sealed partial class NativeNtfsLayoutSource
     private static unsafe NtfsChangeJournal.State Query(SafeFileHandle handle, ulong serial)
     {
         byte* buffer = stackalloc byte[80];
-        if (!NativeMethods.DeviceIoControl(handle, QueryUsnJournal, null, 0, buffer, 80, out int bytes, 0))
+        if (!DiskAccess.Default.DeviceControl(handle, QueryUsnJournal, null, 0, buffer, 80, out int bytes, 0))
             throw new Win32Exception(Marshal.GetLastPInvokeError());
         if (bytes is < 56 or > 80) throw new InvalidDataException("Invalid NTFS journal-state response size.");
         return NtfsChangeJournal.ParseState(new(buffer, bytes), serial);
@@ -212,13 +212,7 @@ public sealed partial class NativeNtfsLayoutSource
 
     private static ulong VolumeSerial(string volume)
     {
-        if (!GetVolumeInformation(volume, 0, 0, out uint serial, out _, out _, 0, 0))
-            throw new Win32Exception(Marshal.GetLastPInvokeError());
-        return serial;
+        return DiskAccess.Default.VolumeInformation(volume).Serial;
     }
 
-    [LibraryImport("kernel32.dll", EntryPoint = "GetVolumeInformationW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool GetVolumeInformation(string volume, nint name, uint nameLength,
-        out uint serial, out uint componentLength, out uint flags, nint fileSystem, uint fileSystemLength);
 }

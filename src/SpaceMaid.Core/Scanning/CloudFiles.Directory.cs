@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.IO.Enumeration;
 
@@ -27,7 +28,7 @@ public static partial class CloudFiles
         var warnings = new List<string>();
         bool complete = true;
         var options = new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, AttributesToSkip = 0 };
-        var children = new FileSystemEnumerable<(string Path, string Name, bool Directory, long Length)>(path,
+        var children = DiskAccess.Default.EnumerateEntries<(string Path, string Name, bool Directory, long Length)>(path,
             (ref FileSystemEntry entry) => (entry.ToFullPath(), entry.FileName.ToString(), entry.IsDirectory,
                 entry.IsDirectory ? 0 : entry.Length), options);
         try

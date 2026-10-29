@@ -41,6 +41,9 @@ jobs:
         if: inputs.version != ''
         shell: pwsh
         run: ./tools/ci/Get-ReleaseVersion.ps1 -Tag "v$env:RELEASE_VERSION" | Out-Null
+      - name: Verify shared disk access boundary
+        shell: pwsh
+        run: ./tools/Verify-DiskAccess.ps1
       - name: Build app and test bundle
         run: |
           version_args=()

@@ -39,14 +39,11 @@ public static partial class StoragePreservation
     public static StorageCapabilities Capabilities(string path)
     {
         string root = Path.GetPathRoot(OptimizationPolicy.NormalizePath(path)) ?? throw new ArgumentException("Choose a local file.");
-        var format = new StringBuilder(32);
-        if (!GetVolumeInformationW(root, null, 0, out _, out _, out uint flags, format, format.Capacity))
-            throw new Win32Exception(Marshal.GetLastPInvokeError());
-        if (!GetDiskFreeSpaceW(root, out uint sectors, out uint bytes, out _, out _)) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        string filesystem = format.ToString(); bool ntfs = filesystem.Equals("NTFS", StringComparison.OrdinalIgnoreCase);
+        var volume = DiskAccess.Default.VolumeInformation(root);
+        uint flags = volume.Flags;
+        string filesystem = volume.FileSystem; bool ntfs = filesystem.Equals("NTFS", StringComparison.OrdinalIgnoreCase);
         bool refs = filesystem.Equals("ReFS", StringComparison.OrdinalIgnoreCase) && (flags & 0x08000000) != 0;
-        uint cluster = checked(sectors * bytes);
-        if (cluster == 0) throw new IOException("The filesystem did not report a usable cluster size.");
+        uint cluster = DiskAccess.Default.ClusterBytes(root);
         return new(filesystem, ntfs && (flags & 0x10) != 0, refs, cluster,
             refs ? "Block sharing preserves independent files; physical reclaim depends on existing shared extents."
                 : ntfs ? "Per-file NTFS compression preserves file contents. Block sharing requires supported ReFS storage."
@@ -77,7 +74,7 @@ public static partial class StoragePreservation
         try
         {
             token.ThrowIfCancellationRequested(); ushort format = decompress ? (ushort)0 : (ushort)1;
-            if (!NativeMethods.DeviceIoControl(file.Handle, SetCompression, (byte*)&format, 2, null, 0, out _, 0))
+            if (!DiskAccess.Default.DeviceControl(file.Handle, SetCompression, (byte*)&format, 2, null, 0, out _, 0))
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
             changed = true;
             // A storage-only mutation changes the revision. Verify bytes against
@@ -125,7 +122,7 @@ public static partial class StoragePreservation
             {
                 long count = Math.Min(chunkMaximum, aligned - shared);
                 var input = new CloneRange { Source = source.Handle.DangerousGetHandle(), SourceOffset = shared, TargetOffset = shared, ByteCount = count };
-                if (!NativeMethods.DeviceIoControl(target.Handle, DuplicateExtents, (byte*)&input, sizeof(CloneRange), null, 0, out _, 0))
+                if (!DiskAccess.Default.DeviceControl(target.Handle, DuplicateExtents, (byte*)&input, sizeof(CloneRange), null, 0, out _, 0))
                     throw new Win32Exception(Marshal.GetLastPInvokeError());
                 changed = true; shared += count;
             }
@@ -157,17 +154,9 @@ public static partial class StoragePreservation
     private static unsafe bool EqualIntegrity(SafeFileHandle first, SafeFileHandle second)
     {
         byte* a = stackalloc byte[16], b = stackalloc byte[16];
-        if (!NativeMethods.DeviceIoControl(first, GetIntegrity, null, 0, a, 16, out _, 0)
-            || !NativeMethods.DeviceIoControl(second, GetIntegrity, null, 0, b, 16, out _, 0)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        if (!DiskAccess.Default.DeviceControl(first, GetIntegrity, null, 0, a, 16, out _, 0)
+            || !DiskAccess.Default.DeviceControl(second, GetIntegrity, null, 0, b, 16, out _, 0)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         return new ReadOnlySpan<byte>(a, 8).SequenceEqual(new ReadOnlySpan<byte>(b, 8));
     }
     [StructLayout(LayoutKind.Sequential)] private struct CloneRange { internal nint Source; internal long SourceOffset, TargetOffset, ByteCount; }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetVolumeInformationW(string root, StringBuilder? name, int nameLength, out uint serial, out uint maximumName,
-        out uint flags, StringBuilder fileSystem, int fileSystemLength);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetDiskFreeSpaceW(string root, out uint sectorsPerCluster, out uint bytesPerSector,
-        out uint freeClusters, out uint totalClusters);
 }

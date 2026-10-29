@@ -35,6 +35,13 @@ public sealed partial class DiskAccess(Func<INtfsLayoutSource?>? ntfsSource = nu
         Action<string, object>? diagnostic = null, ScanSnapshot? previous = null)
         => new VolumeScanner(MetadataSource()).MeasureFolderAsync(path, token, diagnostic, previous);
 
+    // Safety/refresh providers request shallow or recursive current metadata
+    // here too; backend construction stays within the shared disk boundary.
+    internal Task<ScanSnapshot> ReadDirectoryAsync(string path, bool recursive, CancellationToken token,
+        bool allStreams = false, bool allowBasic = false, Action<string, object>? diagnostic = null,
+        ScanSnapshot? previous = null)
+        => new VolumeScanner(MetadataSource()).ReadDirectoryAsync(path, recursive, token, allStreams, allowBasic, diagnostic, previous);
+
     public Task<ScanSnapshot> RecheckAsync(ScanSnapshot scan, IEnumerable<ScanRecheckRequest> requests,
         CancellationToken token = default, Action<string, object>? diagnostic = null)
         => ScanRechecker.RefreshAsync(scan, requests, token, diagnostic, MetadataSource());

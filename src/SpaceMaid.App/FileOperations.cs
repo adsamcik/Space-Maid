@@ -98,8 +98,8 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public string OpenInExplorer(string path)
     {
         path = Path.GetFullPath(path);
-        bool folder = DiskAccess.Default.DirectoryExists(path);
-        if (!folder && !DiskAccess.Default.FileExists(path)) throw new FileNotFoundException("This location is no longer available.", path);
+        bool folder = _disk.DirectoryExists(path);
+        if (!folder && !_disk.FileExists(path)) throw new FileNotFoundException("This location is no longer available.", path);
         var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
         start.ArgumentList.Add(folder ? path : "/select," + path);
         using var process = Process.Start(start);

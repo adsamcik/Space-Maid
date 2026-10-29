@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.IO;
 using System.Runtime.InteropServices;
 
@@ -12,12 +13,15 @@ internal static class AgentFileRecycler
     private const uint OperationFlags = 0x00080000 | 0x20000000 | 0x00000400 | 0x00100000 | 0x00000010 | 0x00004000;
 
     public static Task<bool> RecycleAsync(AgentHistoryItem target, nint owner, CancellationToken token,
+        Action<string, object>? diagnostic = null) => RecycleAsync(DiskAccess.Default, target, owner, token, diagnostic);
+
+    public static Task<bool> RecycleAsync(DiskAccess files, AgentHistoryItem target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null)
     {
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { completion.SetResult(Recycle(target, owner, token, diagnostic)); }
+            try { completion.SetResult(Recycle(files, target, owner, token, diagnostic)); }
             catch (Exception ex) { completion.SetException(ex); }
         }) { IsBackground = true, Name = "Space Maid recycling" };
         thread.SetApartmentState(ApartmentState.STA);
@@ -25,16 +29,16 @@ internal static class AgentFileRecycler
         return completion.Task;
     }
 
-    private static bool Recycle(AgentHistoryItem target, nint owner, CancellationToken token,
+    private static bool Recycle(DiskAccess files, AgentHistoryItem target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic)
     {
         token.ThrowIfCancellationRequested();
-        Validate(target);
-        using var lease = AgentFileTarget.Lease(target);
+        Validate(files, target);
+        using var lease = AgentFileTarget.Lease(files, target);
         IFileOperation? operation = null;
         IShellItem? item = null;
         uint cookie = 0;
-        var sink = new RecycleSink(target, token, diagnostic);
+        var sink = new RecycleSink(files, target, token, diagnostic);
         try
         {
             var type = Type.GetTypeFromCLSID(new("3AD05575-8857-4850-9277-11B85BDB8E09"), throwOnError: true)!;
@@ -49,7 +53,7 @@ internal static class AgentFileRecycler
             Marshal.ThrowExceptionForHR(SHCreateItemFromParsingName(target.Path, 0, ref shellItemId, out item));
             operation.DeleteItem(item, null);
             token.ThrowIfCancellationRequested();
-            Validate(target);
+            Validate(files, target);
             diagnostic?.Invoke("recycle-native-start", new { target.Path, Flags = $"0x{OperationFlags:X8}" });
             int result = operation.PerformOperations();
             operation.GetAnyOperationsAborted(out bool aborted);
@@ -71,7 +75,7 @@ internal static class AgentFileRecycler
             // is Windows' evidence that it was recycled rather than destroyed.
             if (!sink.RootCompleted || sink.RecycledPath is null)
                 throw new IOException("Windows did not confirm a Recycle Bin destination. Rescan to check the file's current state.");
-            AgentFileTarget.ValidateRecycled(target, sink.RecycledPath);
+            AgentFileTarget.ValidateRecycled(files, target, sink.RecycledPath);
             diagnostic?.Invoke("recycle-verified", new { target.Path, sink.RecycledPath });
             return true;
         }
@@ -86,11 +90,11 @@ internal static class AgentFileRecycler
         }
     }
 
-    private static void Validate(AgentHistoryItem item)
+    private static void Validate(DiskAccess files, AgentHistoryItem item)
     {
         AgentOwnerProtection.RequireStopped(item.Home.Tool);
-        item.SessionEvidence?.Validate(item, default);
-        if (AgentFileTarget.Capture(item.Path) != item.Identity) throw new IOException("This history file changed after confirmation. Inspect again.");
+        item.SessionEvidence?.Validate(files, item, default);
+        if (AgentFileTarget.Capture(files, item.Path) != item.Identity) throw new IOException("This history file changed after confirmation. Inspect again.");
     }
 
     // Testable policy gate as well as a live PreDeleteItem guard. Windows must
@@ -121,7 +125,7 @@ internal static class AgentFileRecycler
     }
 
     [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
-    private sealed class RecycleSink(AgentHistoryItem target, CancellationToken token,
+    private sealed class RecycleSink(DiskAccess files, AgentHistoryItem target, CancellationToken token,
         Action<string, object>? diagnostic) : IFileOperationProgressSink
     {
         public bool CannotRecycle { get; private set; }
@@ -143,7 +147,7 @@ internal static class AgentFileRecycler
             try
             {
                 item.GetDisplayName(0x80058000, out string path);
-                if (path.Equals(target.Path, StringComparison.OrdinalIgnoreCase)) Validate(target);
+                if (path.Equals(target.Path, StringComparison.OrdinalIgnoreCase)) Validate(files, target);
                 else
                     throw new IOException("Windows requested a file outside the confirmed location.");
                 return 0;

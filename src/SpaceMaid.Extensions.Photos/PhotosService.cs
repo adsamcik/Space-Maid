@@ -24,7 +24,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
         var initializationTicks = Stopwatch.GetTimestamp() - initializing;
         long count = 0, unresolved = 0; var complete = false; var resolvedAll = true; var observedCoverage = false;
         var warnings = new HashSet<string>(StringComparer.Ordinal);
-        using var reader = new NativeMediaFile.DiscoveryReader();
+        using var reader = new NativeMediaFile.DiscoveryReader(host.Files);
         var observations = new List<PhotoObservation>(512);
         long inventoryTicks = 0, metadataTicks = 0, catalogTicks = initializationTicks, batches = 0, commits = 0, committed = 0;
         long lastCommitMs = 0, lastReportMs = 0;
@@ -164,7 +164,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                             await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
                             try
                             {
-                                var lease = NativeMediaFile.Open(row.Path, true);
+                                var lease = NativeMediaFile.Open(row.Path, true, host.Files);
                                 if (lease.Revision.Identity != row.ObjectId) { lease.Dispose(); throw new IOException("The location now belongs to a different file. Refresh this collection."); }
                                 leases.Add((row, lease));
                             }
@@ -224,7 +224,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                             NativeMediaFile? lease = null;
                             try
                             {
-                                lease = NativeMediaFile.Open(row.Path, true);
+                                lease = NativeMediaFile.Open(row.Path, true, host.Files);
                                 if (lease.Revision.Identity != row.ObjectId || lease.Revision.Key != row.Revision)
                                     throw new IOException("The candidate changed after metadata inspection.");
                                 var hash = await HashAsync(lease, context, read =>

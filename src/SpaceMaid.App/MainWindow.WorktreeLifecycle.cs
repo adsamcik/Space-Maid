@@ -19,7 +19,7 @@ public partial class MainWindow
         _worktreeLifecycleTimer?.Stop();
         try
         {
-            if (!new WorktreeRetirement(WorktreeLifecycleSettingsPath).Load().Policies.Any(p => p.Automatic)) return;
+            if (!new WorktreeRetirement(WorktreeLifecycleSettingsPath, Operations.Files).Load().Policies.Any(p => p.Automatic)) return;
             if (_worktreeLifecycleTimer is null)
             {
                 _worktreeLifecycleTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
@@ -37,7 +37,7 @@ public partial class MainWindow
         try
         {
             var paths = _rows.Where(row => row.Item.IsWorktree).Select(row => row.Path).ToArray();
-            _worktreeLifecycleWindow = new(paths, new WorktreeRetirement(WorktreeLifecycleSettingsPath), RunWorktreeLifecycleActionAsync,
+            _worktreeLifecycleWindow = new(paths, new WorktreeRetirement(WorktreeLifecycleSettingsPath, Operations.Files), RunWorktreeLifecycleActionAsync,
                 moved => { InitializeWorktreeLifecycle(); if (moved && _snapshot is { } scan) MarkScanStale("Worktree lifecycle changed a checkout. Scan again to update locations.", [new(scan.RootPath)]); }) { Owner = this };
             _worktreeLifecycleWindow.ShowDialog();
         }
@@ -69,7 +69,7 @@ public partial class MainWindow
             || _optimizationWindow is not null || _worktreeLifecycleTask is not null || !CanRestartForUpdate()) return;
         try
         {
-            var service = new WorktreeRetirement(WorktreeLifecycleSettingsPath); var state = service.Load();
+            var service = new WorktreeRetirement(WorktreeLifecycleSettingsPath, Operations.Files); var state = service.Load();
             var policies = state.Policies.Where(p => p.Automatic && (!_worktreeRetirementAttempts.TryGetValue(p.Path, out var attempt)
                 || DateTime.UtcNow - attempt >= TimeSpan.FromHours(1))).ToArray();
             if (policies.Length == 0) return;

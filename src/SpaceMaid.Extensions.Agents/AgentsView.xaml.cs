@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -23,14 +24,16 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     private bool _recycling, _changingSource;
     private int _observedAge = 30;
     private readonly Dictionary<int, string> _homes = [];
-    internal Func<IReadOnlyList<AgentHome>, int, CancellationToken, Task<AgentHistorySnapshot>> Inspector { get; set; } = AgentHistoryCleanup.InspectAsync;
+    internal Func<IReadOnlyList<AgentHome>, int, CancellationToken, Task<AgentHistorySnapshot>> Inspector { get; set; }
     internal Func<IReadOnlyList<AgentHistoryItem>, int, CancellationToken, Task<AgentHistoryPlan>> Preparer { get; set; }
-        = (items, days, token) => Task.Run(() => AgentHistoryCleanup.Prepare(items, days, token), token);
     internal Func<AgentHistoryPlan, nint, CancellationToken, Task<AgentHistoryResult>> Executor { get; set; }
-        = (plan, owner, token) => AgentHistoryCleanup.ExecuteAsync(plan, owner, token);
 
-    internal AgentsView(CancellationToken lifetime)
+    internal AgentsView(CancellationToken lifetime) : this(lifetime, DiskAccess.Default) { }
+    internal AgentsView(CancellationToken lifetime, DiskAccess files)
     {
+        Inspector = (homes, days, token) => AgentHistoryCleanup.InspectAsync(files, homes, days, token);
+        Preparer = (items, days, token) => Task.Run(() => AgentHistoryCleanup.Prepare(files, items, days, token), token);
+        Executor = (plan, owner, token) => AgentHistoryCleanup.ExecuteAsync(files, plan, owner, token);
         _lifetime = lifetime; InitializeComponent(); OpenCodeView.Initialize(lifetime);
         Loaded += (_, _) => AttachOwner();
         Unloaded += (_, _) => { if (!_recycling) { _work?.Cancel(); DetachOwner(); } };

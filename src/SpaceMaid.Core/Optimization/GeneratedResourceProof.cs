@@ -121,7 +121,7 @@ internal sealed class GeneratedResourceProof : IDisposable
         if (suffix == ".CoreCompileInputs.cache") project = Path.Join(projectRoot, stem);
         else
         {
-            var choices = new[] { ".csproj", ".fsproj", ".vbproj" }.Select(ext => Path.Join(projectRoot, stem + ext)).Where(File.Exists).ToArray();
+            var choices = new[] { ".csproj", ".fsproj", ".vbproj" }.Select(ext => Path.Join(projectRoot, stem + ext)).Where(DiskAccess.Default.FileExists).ToArray();
             if (choices.Length != 1) throw new IOException("The build resource has no single project owner; kept.");
             project = choices[0];
         }
@@ -182,7 +182,7 @@ internal sealed class GeneratedResourceProof : IDisposable
             if (module is null || !Regex.IsMatch(module, @"^[A-Za-z_][A-Za-z0-9_.]*$")) throw new IOException("Unknown mypy dependency; review manually.");
             string direct = Path.Join(versionRoot, module.Replace('.', Path.DirectorySeparatorChar) + ".data.json");
             string package = Path.Join(versionRoot, module.Replace('.', Path.DirectorySeparatorChar), "__init__.data.json");
-            var choices = new[] { direct, package }.Where(File.Exists).ToArray();
+            var choices = new[] { direct, package }.Where(DiskAccess.Default.FileExists).ToArray();
             if (choices.Length != 1) throw new IOException("Mypy dependency evidence is missing or ambiguous; kept.");
             if (_mypyModules.Contains(choices[0][..^".data.json".Length])) continue;
             var dependent = Input(choices[0], preserveAccessTime: true);

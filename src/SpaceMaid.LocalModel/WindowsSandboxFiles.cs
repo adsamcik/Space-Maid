@@ -103,7 +103,7 @@ internal sealed class WindowsSandboxFiles : IDisposable
             throw Error("Cannot hold the model/runtime path safely");
         }
         _pins.Add(handle);
-        Check(GetFileInformationByHandle(handle, out var info), "Cannot verify a model/runtime path");
+        Check(DiskAccess.Default.ReadHandleInformation<FileInformation>(handle, out var info), "Cannot verify a model/runtime path");
         if ((info.Attributes & UnsafeAttributes) != 0 || ((info.Attributes & 0x10) != 0) != directory)
             throw new IOException("The model and runtime must be regular files and directories with no redirection.");
         _pinned.Add(path, handle);

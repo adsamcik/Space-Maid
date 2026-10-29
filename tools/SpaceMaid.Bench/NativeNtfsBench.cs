@@ -46,7 +46,7 @@ internal static class NativeNtfsBench
                 ProcessId = Environment.ProcessId, Samples = samples,
                 Scope = "Full live-volume native metadata acquisition plus streaming per-batch parsing and accounting fingerprinting; no final inventory, directory aggregation, helper IPC, opportunity analysis or UI. Probe mode intentionally cancels after the first parsed batch and is not equal work across buffer sizes. Query metrics count delivered blocks; cancelled read-ahead can finish an undelivered query. Query and consumer times overlap with read-ahead and must not be added. Configurations are interleaved and reverse each pass; disk cache and external activity are uncontrolled. Fingerprints help detect changed work but are not cryptographic snapshot proof. Working-set samples may miss short peaks; the OS peak covers this entire process. DATA totals sum returned records, not directory-attributed disk usage." },
                 new JsonSerializerOptions { WriteIndented = true });
-            if (options.Output is not null) File.WriteAllText(options.Output, json);
+            if (options.Output is not null) SpaceMaid.Core.IO.DiskAccess.Default.WriteAllText(options.Output, json);
             // Progress is on stderr; keep stdout a single complete JSON document.
             if (final) Console.WriteLine(json);
         }

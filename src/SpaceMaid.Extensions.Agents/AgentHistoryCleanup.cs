@@ -49,15 +49,19 @@ internal static partial class AgentHistoryCleanup
             .. AdditionalHomes(profile)];
     }
 
-    internal static async Task<AgentHistorySnapshot> InspectAsync(IReadOnlyList<AgentHome> homes, int olderThanDays, CancellationToken token)
+    internal static Task<AgentHistorySnapshot> InspectAsync(IReadOnlyList<AgentHome> homes, int olderThanDays, CancellationToken token) => InspectAsync(DiskAccess.Default, homes, olderThanDays, token);
+
+    internal static async Task<AgentHistorySnapshot> InspectAsync(DiskAccess files, IReadOnlyList<AgentHome> homes, int olderThanDays, CancellationToken token)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(TimeSpan.FromMinutes(1));
-        try { return await Task.Run(() => Inspect(homes, olderThanDays, DateTime.UtcNow, budget.Token), budget.Token).ConfigureAwait(false); }
+        try { return await Task.Run(() => InspectUsing(files, homes, olderThanDays, DateTime.UtcNow, budget.Token), budget.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new IOException("Inspection reached its one-minute limit. Choose a single agent home and inspect again."); }
     }
 
-    internal static AgentHistorySnapshot Inspect(IReadOnlyList<AgentHome> homes, int olderThanDays, DateTime utcNow, CancellationToken token)
+    internal static AgentHistorySnapshot Inspect(IReadOnlyList<AgentHome> homes, int olderThanDays, DateTime utcNow, CancellationToken token) => InspectUsing(DiskAccess.Default, homes, olderThanDays, utcNow, token);
+
+    internal static AgentHistorySnapshot InspectUsing(DiskAccess files, IReadOnlyList<AgentHome> homes, int olderThanDays, DateTime utcNow, CancellationToken token)
     {
         ValidateAge(olderThanDays); RequireUtc(utcNow);
         var items = new List<AgentHistoryItem>(); var warnings = new List<string>(); int visited = 0;
@@ -67,8 +71,8 @@ internal static partial class AgentHistoryCleanup
             try
             {
                 string root = AgentFileTarget.ValidatePath(source.Path);
-                if (!DiskAccess.Default.DirectoryExists(root)) continue;
-                AgentFileTarget.ValidateAncestors(root, includeSelf: true);
+                if (!files.DirectoryExists(root)) continue;
+                AgentFileTarget.ValidateAncestors(files, root, includeSelf: true);
                 var home = source with { Path = root };
                 string[] roots = home.Tool switch
                 {
@@ -80,7 +84,7 @@ internal static partial class AgentHistoryCleanup
                 foreach (string child in roots)
                 {
                     string basePath = System.IO.Path.Join(root, child);
-                    if (DiskAccess.Default.DirectoryExists(basePath)) Walk(basePath, home, 1);
+                    if (files.DirectoryExists(basePath)) Walk(basePath, home, 1);
                 }
             }
             catch (Exception error) when (Expected(error))
@@ -91,12 +95,12 @@ internal static partial class AgentHistoryCleanup
         void Walk(string path, AgentHome home, int depth)
         {
             token.ThrowIfCancellationRequested();
-            AgentFileTarget.ValidateAncestors(path, includeSelf: true);
-            foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(path))
+            AgentFileTarget.ValidateAncestors(files, path, includeSelf: true);
+            foreach (string child in files.EnumerateFileSystemEntries(path))
             {
                 token.ThrowIfCancellationRequested();
                 if (++visited > MaximumEntries) throw new IOException($"Inspection reached its {MaximumEntries:N0}-entry limit. The list is partial; choose one agent home to narrow it.");
-                var attributes = DiskAccess.Default.GetAttributes(child);
+                var attributes = files.GetAttributes(child);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) { warnings.Add("Linked path kept: " + child); continue; }
                 if (attributes.HasFlag(FileAttributes.Directory))
                 {
@@ -104,7 +108,7 @@ internal static partial class AgentHistoryCleanup
                     {
                         try
                         {
-                            var folder = CursorChatCleanup.Capture(home, child, token);
+                            var folder = CursorChatCleanup.Capture(files, home, child, token);
                             if (OldEnough(folder.LatestWriteFileTime, olderThanDays, utcNow))
                                 items.Add(new(home, child, "CLI chat folder", folder.RootIdentity, folder));
                         }
@@ -118,8 +122,8 @@ internal static partial class AgentHistoryCleanup
                 if (kind is null) continue;
                 try
                 {
-                    var identity = AgentFileTarget.Capture(child);
-                    var evidence = AgentSessionEvidence.Capture(home, child, token);
+                    var identity = AgentFileTarget.Capture(files, child);
+                    var evidence = AgentSessionEvidence.Capture(files, home, child, token);
                     if (OldEnough(evidence?.LatestWriteFileTime ?? identity.LastWriteFileTime, olderThanDays, utcNow))
                         items.Add(new(home, child, kind, identity, SessionEvidence: evidence));
                 }
@@ -169,6 +173,9 @@ internal static partial class AgentHistoryCleanup
     }
 
     internal static AgentHistoryPlan Prepare(IReadOnlyList<AgentHistoryItem> selected, int olderThanDays, CancellationToken token,
+        Func<AgentTool, string?>? runningOwner = null) => Prepare(DiskAccess.Default, selected, olderThanDays, token, runningOwner);
+
+    internal static AgentHistoryPlan Prepare(DiskAccess files, IReadOnlyList<AgentHistoryItem> selected, int olderThanDays, CancellationToken token,
         Func<AgentTool, string?>? runningOwner = null)
     {
         ValidateAge(olderThanDays);
@@ -179,27 +186,32 @@ internal static partial class AgentHistoryCleanup
         foreach (var item in items)
         {
             token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner);
-            Validate(item, olderThanDays, DateTime.UtcNow);
-            if (item.Folder is not null) { using var folderLease = CursorChatCleanup.Lease(item, token); CursorChatCleanup.Validate(item, olderThanDays, token); continue; }
-            using var lease = AgentFileTarget.Lease(item);
-            Validate(item, olderThanDays, DateTime.UtcNow);
+            Validate(files, item, olderThanDays, DateTime.UtcNow);
+            if (item.Folder is not null) { using var folderLease = CursorChatCleanup.Lease(files, item, token); CursorChatCleanup.Validate(files, item, olderThanDays, token); continue; }
+            using var lease = AgentFileTarget.Lease(files, item);
+            Validate(files, item, olderThanDays, DateTime.UtcNow);
         }
         return new(Array.AsReadOnly(items), olderThanDays);
     }
 
-    internal static void Validate(AgentHistoryItem item, int olderThanDays, DateTime utcNow)
+    internal static void Validate(AgentHistoryItem item, int olderThanDays, DateTime utcNow) => Validate(DiskAccess.Default, item, olderThanDays, utcNow);
+
+    internal static void Validate(DiskAccess files, AgentHistoryItem item, int olderThanDays, DateTime utcNow)
     {
         ValidateAge(olderThanDays); RequireUtc(utcNow);
-        if (item.Folder is not null) { CursorChatCleanup.Validate(item, olderThanDays, default); return; }
+        if (item.Folder is not null) { CursorChatCleanup.Validate(files, item, olderThanDays, default); return; }
         if (KnownFile(item.Home, item.Path) != item.Kind) throw new InvalidOperationException("This is not a supported history file. Inspect again.");
         if (!OldEnough(item.LastActivityFileTime, olderThanDays, utcNow)) throw new InvalidOperationException("Recent history is kept. Inspect again with the intended age filter.");
-        if (item.SessionEvidence is null && AgentSessionEvidence.Capture(item.Home, item.Path, default) is not null)
+        if (item.SessionEvidence is null && AgentSessionEvidence.Capture(files, item.Home, item.Path, default) is not null)
             throw new InvalidOperationException("This session requires related-file checks. Inspect again before cleanup.");
-        item.SessionEvidence?.Validate(item, default);
-        if (AgentFileTarget.Capture(item.Path) != item.Identity) throw new InvalidOperationException("This history file changed or was replaced after inspection. Inspect again.");
+        item.SessionEvidence?.Validate(files, item, default);
+        if (AgentFileTarget.Capture(files, item.Path) != item.Identity) throw new InvalidOperationException("This history file changed or was replaced after inspection. Inspect again.");
     }
 
-    internal static async Task<AgentHistoryResult> ExecuteAsync(AgentHistoryPlan plan, nint owner, CancellationToken token,
+    internal static Task<AgentHistoryResult> ExecuteAsync(AgentHistoryPlan plan, nint owner, CancellationToken token,
+        Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle = null, Func<AgentTool, string?>? runningOwner = null) => ExecuteAsync(DiskAccess.Default, plan, owner, token, recycle, runningOwner);
+
+    internal static async Task<AgentHistoryResult> ExecuteAsync(DiskAccess files, AgentHistoryPlan plan, nint owner, CancellationToken token,
         Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle = null, Func<AgentTool, string?>? runningOwner = null)
     {
         // Validate the complete set before starting; each file is checked once
@@ -207,7 +219,7 @@ internal static partial class AgentHistoryCleanup
         await Task.Run(() =>
         {
             foreach (var item in plan.Items)
-            { token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(item, plan.OlderThanDays, DateTime.UtcNow); }
+            { token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(files, item, plan.OlderThanDays, DateTime.UtcNow); }
         }, token).ConfigureAwait(false);
         int completed = 0;
         var removed = new HashSet<string>(StringComparer.Ordinal);
@@ -216,10 +228,10 @@ internal static partial class AgentHistoryCleanup
             foreach (var original in plan.Items)
             {
                 var item = original.SessionEvidence is { } evidence
-                    ? original with { SessionEvidence = evidence.AfterOwnRemovals(original, removed, token) } : original;
-                token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(item, plan.OlderThanDays, DateTime.UtcNow);
-                bool moved = recycle is null ? item.Folder is not null ? await CursorChatCleanup.RecycleAsync(item, owner, token, plan.OlderThanDays)
-                    : await AgentFileRecycler.RecycleAsync(item, owner, token)
+                    ? original with { SessionEvidence = evidence.AfterOwnRemovals(files, original, removed, token) } : original;
+                token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(files, item, plan.OlderThanDays, DateTime.UtcNow);
+                bool moved = recycle is null ? item.Folder is not null ? await CursorChatCleanup.RecycleAsync(files, item, owner, token, plan.OlderThanDays)
+                    : await AgentFileRecycler.RecycleAsync(files, item, owner, token)
                     : await recycle(item, owner, token);
                 if (!moved) return new(completed, $"Stopped after {completed:N0} confirmed files. The last file may have moved; inspect again before retrying.");
                 completed++;

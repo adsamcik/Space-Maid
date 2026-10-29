@@ -454,7 +454,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
             token.ThrowIfCancellationRequested();
             try
             {
-                var entries = new FileSystemEnumerable<BasicEntry>(directory.Path,
+                var entries = DiskAccess.Default.EnumerateEntries<BasicEntry>(directory.Path,
                     (ref FileSystemEntry entry) => new(entry.FileName.ToString(), entry.Attributes,
                         entry.IsDirectory ? 0 : entry.Length, entry.LastWriteTimeUtc.ToFileTime(), entry.CreationTimeUtc.ToFileTime()), options);
                 foreach (var entry in entries)

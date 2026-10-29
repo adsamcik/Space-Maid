@@ -33,15 +33,19 @@ public sealed record WorktreeRetirementSettings(IReadOnlyList<ManagedWorktreePol
 
 // Managed worktrees are explicitly enrolled. Git-aware moves retain registration;
 // finalization deletes only the captured unchanged objects, never recursively.
-public sealed partial class WorktreeRetirement(string settingsPath)
+public sealed partial class WorktreeRetirement
 {
+    private readonly string settingsPath;
+    private readonly DiskAccess _files;
+    public WorktreeRetirement(string settingsPath) : this(settingsPath, DiskAccess.Default) { }
+    public WorktreeRetirement(string settingsPath, DiskAccess files) => (this.settingsPath, _files) = (settingsPath, files);
     private const int EntryLimit = 4000;
     private readonly SemaphoreSlim _gate = new(1);
     public WorktreeRetirementSettings Load()
     {
         try
         {
-            using var input = DiskAccess.Default.OpenRead(settingsPath);
+            using var input = _files.OpenRead(settingsPath);
             if (input.Length > 4 * 1024 * 1024) throw new IOException("Managed worktree records exceed their bounded size.");
             var state = JsonSerializer.Deserialize<WorktreeRetirementSettings>(input) ?? throw new IOException("Managed worktree settings are invalid.");
             if (state.Policies is null || state.Records is null || state.Policies.Count > 32 || state.Records.Count > 128)
@@ -77,7 +81,7 @@ public sealed partial class WorktreeRetirement(string settingsPath)
         // building a full inventory, including for manual enrollment checks.
         using var preflight = new GitWorktreeAnalyzer.MetadataGuard(token);
         await Task.Run(() => { preflight.Ancestors(path); preflight.Tree(path, rejectNestedGit: true); }, token).ConfigureAwait(false);
-        var scan = await DiskAccess.Default.ScanAsync(path, cancellationToken: token).ConfigureAwait(false);
+        var scan = await _files.ScanAsync(path, cancellationToken: token).ConfigureAwait(false);
         var location = new Opportunity(scan.RootIndex, "Linked Git checkout", "Git worktrees", scan.RootPath,
             scan.LogicalBytes, scan.AllocatedBytes, "", "", "", true) { IsWorktree = true };
         return await GitWorktreeAnalyzer.AssessAsync(scan, location, integrationReference, token).ConfigureAwait(false);
@@ -127,7 +131,7 @@ public sealed partial class WorktreeRetirement(string settingsPath)
             using (var root = RetirementLease.Open(policy.Path, false))
                 if (root.Entry.Identity != policy.RootIdentity) throw new InvalidOperationException("The enrolled checkout was replaced.");
             string destination = policy.Path + ".space-maid-retired-" + Guid.NewGuid().ToString("N");
-            if (DiskAccess.Default.DirectoryExists(destination) || DiskAccess.Default.FileExists(destination)) throw new IOException("The quarantine destination already exists.");
+            if (_files.DirectoryExists(destination) || _files.FileExists(destination)) throw new IOException("The quarantine destination already exists.");
             // Capture complete known contents while the analyzer's positive Git
             // state still applies. Unknown/new data after the move blocks finalization.
             _ = Capture(policy.Path, token);
@@ -140,7 +144,7 @@ public sealed partial class WorktreeRetirement(string settingsPath)
             var moved = await git.Run("worktree", "move", "--", policy.Path, destination).ConfigureAwait(false);
             if (moved.Code != 0)
             {
-                bool originalUnmoved = DiskAccess.Default.DirectoryExists(policy.Path) && !DiskAccess.Default.DirectoryExists(destination);
+                bool originalUnmoved = _files.DirectoryExists(policy.Path) && !_files.DirectoryExists(destination);
                 record = record with { State = originalUnmoved ? WorktreeRetirementState.Restored : WorktreeRetirementState.NeedsReview,
                     Message = "Git refused the move; files and recovery intent were retained. " + Detail(moved.Error) };
                 Put(record); return record;
@@ -166,9 +170,9 @@ public sealed partial class WorktreeRetirement(string settingsPath)
         {
             var record = Find(id);
             if (record.State is WorktreeRetirementState.Completed or WorktreeRetirementState.Restored) throw new InvalidOperationException("This record has no quarantined checkout to restore.");
-            if (record.State == WorktreeRetirementState.Prepared && DiskAccess.Default.DirectoryExists(record.Policy.Path) && !DiskAccess.Default.DirectoryExists(record.QuarantinePath))
+            if (record.State == WorktreeRetirementState.Prepared && _files.DirectoryExists(record.Policy.Path) && !_files.DirectoryExists(record.QuarantinePath))
             { record = record with { State = WorktreeRetirementState.Restored, Message = "The move had not started. The original checkout remains in place." }; Put(record); return record; }
-            if (DiskAccess.Default.DirectoryExists(record.Policy.Path) || DiskAccess.Default.FileExists(record.Policy.Path)) throw new IOException("The original location is occupied. Nothing was overwritten.");
+            if (_files.DirectoryExists(record.Policy.Path) || _files.FileExists(record.Policy.Path)) throw new IOException("The original location is occupied. Nothing was overwritten.");
             using (var root = RetirementLease.Open(record.QuarantinePath, false))
                 if (root.Entry.Identity != record.Policy.RootIdentity) throw new IOException("The quarantined root was replaced.");
             var result = await new GitWorktreeAnalyzer.GitReader(record.CommonGitDirectory, token)
@@ -250,7 +254,7 @@ public sealed partial class WorktreeRetirement(string settingsPath)
             || "refs/heads/" + value.Branch != branch || value.Head != head || common is null || value.CommonGitDirectory != common)
             throw new InvalidOperationException("Checkout identity, branch or local contents require review. " + value.Reason);
     }
-    private static IReadOnlyList<WorktreeRetirementEntry> Capture(string root, CancellationToken token)
+    private IReadOnlyList<WorktreeRetirementEntry> Capture(string root, CancellationToken token)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(TimeSpan.FromSeconds(10));
         token = budget.Token;
@@ -263,7 +267,7 @@ public sealed partial class WorktreeRetirement(string settingsPath)
             using var lease = RetirementLease.Open(path, false, token, 256L * 1024 * 1024 - bytes);
             result.Add(lease.Entry with { RelativePath = System.IO.Path.GetRelativePath(root, path) });
             if (!lease.Entry.Directory) bytes += lease.Entry.Length;
-            if (lease.Entry.Directory) foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(path)) pending.Push(child);
+            if (lease.Entry.Directory) foreach (string child in _files.EnumerateFileSystemEntries(path)) pending.Push(child);
         }
         return result.AsReadOnly();
     }
@@ -285,10 +289,10 @@ public sealed partial class WorktreeRetirement(string settingsPath)
         if (state.Policies.Count > 32 || state.Records.Count > 128) throw new IOException("Managed worktree record limit reached. Keep recovery records before enrolling more checkouts.");
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(state);
         if (json.Length > 4 * 1024 * 1024) throw new IOException("Managed worktree recovery records exceed 4 MiB. Preserve existing records before enrolling more checkouts.");
-        DiskAccess.Default.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(settingsPath))!);
+        _files.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(settingsPath))!);
         string temporary = settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { DiskAccess.Default.WriteAllBytes(temporary, json); DiskAccess.Default.MoveFile(temporary, settingsPath, true); }
-        finally { if (DiskAccess.Default.FileExists(temporary)) DiskAccess.Default.DeleteFile(temporary); }
+        try { _files.WriteAllBytes(temporary, json); _files.MoveFile(temporary, settingsPath, true); }
+        finally { if (_files.FileExists(temporary)) _files.DeleteFile(temporary); }
     }
     private static bool Expected(Exception error) => error is IOException or Win32Exception or UnauthorizedAccessException or InvalidOperationException or ArgumentException or OperationCanceledException;
     private static string Detail(string text) => text.Trim().Length > 4096 ? text.Trim()[..4096] : text.Trim();

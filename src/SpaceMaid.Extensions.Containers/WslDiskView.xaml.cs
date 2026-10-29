@@ -22,13 +22,15 @@ public partial class WslDiskView : UserControl
     internal void FocusInspection() => FindButton.Focus();
     private Task? _execution;
     private Window? _owner;
-    internal Func<string, CancellationToken, Task<VirtualDiskTarget>> Prepare { get; set; } = WslDiskClient.PreviewAsync;
-    internal Func<VirtualDiskRequest, CancellationToken, Task<VirtualDiskResult>> Execute { get; set; } = WslDiskClient.ExecuteAsync;
+    internal Func<string, CancellationToken, Task<VirtualDiskTarget>> Prepare { get; set; }
+    internal Func<VirtualDiskRequest, CancellationToken, Task<VirtualDiskResult>> Execute { get; set; }
     public WslDiskView() : this(CancellationToken.None) { }
     internal WslDiskView(CancellationToken lifetime) : this(lifetime, DiskAccess.Default) { }
     internal WslDiskView(CancellationToken lifetime, DiskAccess files)
     {
         _files = files;
+        Prepare = (path, token) => WslDiskClient.PreviewAsync(path, token, _files);
+        Execute = (request, token) => WslDiskClient.ExecuteAsync(request, token, _files);
         _lifetime = lifetime; InitializeComponent();
         Loaded += (_, _) =>
         {
@@ -117,9 +119,9 @@ public partial class WslDiskView : UserControl
         if (!busy && !IsLoaded) DetachOwner();
     }
     private static bool Expected(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or Win32Exception or OperationCanceledException or System.Text.Json.JsonException;
-    internal static IReadOnlyList<WslDiskRow> Discover(DiskAccess? files = null)
+    internal static IReadOnlyList<WslDiskRow> Discover() => Discover(DiskAccess.Default);
+    internal static IReadOnlyList<WslDiskRow> Discover(DiskAccess files)
     {
-        files ??= DiskAccess.Default;
         var result = new List<WslDiskRow>();
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss");
         foreach (string name in key?.GetSubKeyNames().Take(128) ?? [])

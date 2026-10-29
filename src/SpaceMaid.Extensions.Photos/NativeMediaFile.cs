@@ -18,12 +18,16 @@ internal sealed record MediaRevision(string Identity, long Length, long Written,
 internal sealed class NativeMediaFile : IDisposable
 {
     private readonly List<SafeFileHandle> _guards;
+    private readonly DiskAccess _files;
     public FileStream? Stream { get; private set; }
     public MediaRevision Revision { get; }
-    private NativeMediaFile(List<SafeFileHandle> guards, MediaRevision revision)
-    { _guards = guards; Revision = revision; }
+    private NativeMediaFile(List<SafeFileHandle> guards, MediaRevision revision, DiskAccess files)
+    { _guards = guards; Revision = revision; _files = files; }
 
     public static NativeMediaFile Open(string path, bool readContent)
+        => Open(path, readContent, DiskAccess.Default);
+
+    public static NativeMediaFile Open(string path, bool readContent, DiskAccess files)
     {
         var full = Path.GetFullPath(path);
         if (!Path.IsPathFullyQualified(full) || full.StartsWith("\\\\", StringComparison.Ordinal))
@@ -36,35 +40,35 @@ internal sealed class NativeMediaFile : IDisposable
                 ancestors.Push(parent);
             while (ancestors.TryPop(out var ancestor))
             {
-                var handle = OpenHandle(ancestor, 0x80, 3, 0x02300000);
+                var handle = OpenHandle(ancestor, 0x80, 3, 0x02300000, files);
                 guards.Add(handle);
-                var attributes = ReadBasic(handle).Attributes;
+                var attributes = ReadBasic(handle, files).Attributes;
                 if ((attributes & (0x400U | 0x1000U | 0x40000U | 0x400000U)) != 0)
                     throw new IOException("Reparse or offline ancestors remain metadata-only.");
                 if (readContent)
                 {
-                    var identity = Inspect(handle).Identity;
-                    var directory = OpenHandle(ancestor, 0x81, 3, 0x02300000);
+                    var identity = Inspect(handle, files).Identity;
+                    var directory = OpenHandle(ancestor, 0x81, 3, 0x02300000, files);
                     guards.Add(directory);
-                    var observed = Inspect(directory);
+                    var observed = Inspect(directory, files);
                     if (observed.Identity != identity || !observed.ContentAvailable)
                         throw new IOException("A folder changed or became metadata-only before content inspection.");
                 }
             }
-            var metadata = OpenHandle(full, 0x80, 1, 0x02300000);
+            var metadata = OpenHandle(full, 0x80, 1, 0x02300000, files);
             guards.Add(metadata);
-            var revision = Inspect(metadata);
+            var revision = Inspect(metadata, files);
             if ((revision.Attributes & 0x10) != 0) throw new IOException("The selected location is a folder.");
-            var lease = new NativeMediaFile(guards, revision);
+            var lease = new NativeMediaFile(guards, revision, files);
             if (readContent)
             {
                 if (!revision.ContentAvailable) throw new IOException("Cloud-only, offline and reparse files remain metadata-only.");
-                var data = OpenHandle(full, 0x80000080, 1, 0x0a300000);
+                var data = OpenHandle(full, 0x80000080, 1, 0x0a300000, files);
                 try
                 {
-                    var observed = Inspect(data);
+                    var observed = Inspect(data, files);
                     if (observed.Key != revision.Key || !observed.ContentAvailable) throw new IOException("The file changed before it could be read.");
-                    lease.Stream = DiskAccess.Default.Open(data, FileAccess.Read, 64 * 1024, false);
+                    lease.Stream = files.Open(data, FileAccess.Read, 64 * 1024, false);
                 }
                 catch { data.Dispose(); throw; }
             }
@@ -78,6 +82,7 @@ internal sealed class NativeMediaFile : IDisposable
     // gets fresh ancestor attributes, native identity and Cloud Files checks.
     internal sealed class DiscoveryReader : IDisposable
     {
+        private readonly DiskAccess _files;
         private readonly List<(string Path, SafeFileHandle Handle)> _parents = [];
         private readonly MetadataBuffers _buffers = new();
         private string? _parent;
@@ -88,6 +93,9 @@ internal sealed class NativeMediaFile : IDisposable
         public long FilesInspected { get; private set; }
         public long UncachedFiles { get; private set; }
         public int PeakParentHandles { get; private set; }
+
+        public DiscoveryReader() : this(DiskAccess.Default) { }
+        public DiscoveryReader(DiskAccess files) => _files = files;
 
         public MediaRevision Read(string path)
         {
@@ -115,7 +123,7 @@ internal sealed class NativeMediaFile : IDisposable
                         // Attribute-only access is exempt from sharing checks.
                         // LIST_DIRECTORY makes the no-delete guard effective;
                         // this handle is never used to enumerate or read data.
-                        var handle = OpenHandle(paths[i], 0x81, 3, 0x02300000);
+                        var handle = OpenHandle(paths[i], 0x81, 3, 0x02300000, _files);
                         _parents.Add((paths[i], handle)); ParentHandleOpens++;
                         PeakParentHandles = Math.Max(PeakParentHandles, _parents.Count);
                         // Check before opening the next descendant, including
@@ -134,8 +142,8 @@ internal sealed class NativeMediaFile : IDisposable
                 catch { ReleaseParents(); throw; }
             }
             foreach (var entry in _parents) CheckParent(entry.Handle);
-            using var metadata = OpenHandle(full, 0x80, 1, 0x02300000);
-            var revision = Inspect(metadata, _buffers);
+            using var metadata = OpenHandle(full, 0x80, 1, 0x02300000, _files);
+            var revision = Inspect(metadata, _buffers, _files);
             if ((revision.Attributes & 0x10) != 0) throw new IOException("The selected location is a folder.");
             FilesInspected++;
             return revision;
@@ -151,11 +159,11 @@ internal sealed class NativeMediaFile : IDisposable
             {
                 while (paths.TryPop(out var ancestor))
                 {
-                    var handle = OpenHandle(ancestor, 0x80, 3, 0x02300000);
+                    var handle = OpenHandle(ancestor, 0x80, 3, 0x02300000, _files);
                     handles.Add(handle); ParentHandleOpens++; PeakParentHandles = Math.Max(PeakParentHandles, handles.Count); CheckParent(handle);
                 }
-                using var metadata = OpenHandle(full, 0x80, 1, 0x02300000);
-                var revision = Inspect(metadata, _buffers);
+                using var metadata = OpenHandle(full, 0x80, 1, 0x02300000, _files);
+                var revision = Inspect(metadata, _buffers, _files);
                 if ((revision.Attributes & 0x10) != 0) throw new IOException("The selected location is a folder.");
                 FilesInspected++; return revision;
             }
@@ -165,7 +173,7 @@ internal sealed class NativeMediaFile : IDisposable
         private void CheckParent(SafeFileHandle handle)
         {
             ParentChecks++;
-            var attributes = ReadBasic(handle, _buffers.Basic, _buffers.Tag).Attributes;
+            var attributes = ReadBasic(handle, _buffers.Basic, _buffers.Tag, _files).Attributes;
             if ((attributes & (0x400U | 0x1000U | 0x40000U | 0x400000U)) != 0)
                 throw new IOException("Reparse or offline ancestors remain metadata-only.");
         }
@@ -179,8 +187,8 @@ internal sealed class NativeMediaFile : IDisposable
 
     public void VerifyUnchanged()
     {
-        var metadata = Inspect(_guards[^1]);
-        if (metadata.Key != Revision.Key || (Stream is not null && (!metadata.ContentAvailable || Inspect(Stream.SafeFileHandle).Key != Revision.Key)))
+        var metadata = Inspect(_guards[^1], _files);
+        if (metadata.Key != Revision.Key || (Stream is not null && (!metadata.ContentAvailable || Inspect(Stream.SafeFileHandle, _files).Key != Revision.Key)))
             throw new IOException("The file changed during analysis; its result was not retained.");
     }
 
@@ -193,12 +201,13 @@ internal sealed class NativeMediaFile : IDisposable
         public byte[] Placeholder { get; } = new byte[4200];
     }
 
-    internal static MediaRevision Inspect(SafeFileHandle handle) => Inspect(handle, new MetadataBuffers());
-    private static MediaRevision Inspect(SafeFileHandle handle, MetadataBuffers buffers)
+    internal static MediaRevision Inspect(SafeFileHandle handle) => Inspect(handle, DiskAccess.Default);
+    internal static MediaRevision Inspect(SafeFileHandle handle, DiskAccess files) => Inspect(handle, new MetadataBuffers(), files);
+    private static MediaRevision Inspect(SafeFileHandle handle, MetadataBuffers buffers, DiskAccess files)
     {
-        var basic = ReadBasic(handle, buffers.Basic, buffers.Tag);
-        var standard = buffers.Standard; ReadInfo(handle, 1, standard);
-        var id = buffers.Identity; ReadInfo(handle, 18, id);
+        var basic = ReadBasic(handle, buffers.Basic, buffers.Tag, files);
+        var standard = buffers.Standard; ReadInfo(handle, 1, standard, files);
+        var id = buffers.Identity; ReadInfo(handle, 18, id, files);
         var attributes = basic.Attributes;
         // Fully resident Cloud Files placeholders can omit the reparse/offline
         // flags from file-info queries. Treat recognized placeholders as
@@ -212,23 +221,23 @@ internal sealed class NativeMediaFile : IDisposable
         return new(Convert.ToHexString(id) + ":" + basic.Created.ToString(System.Globalization.CultureInfo.InvariantCulture), BinaryPrimitives.ReadInt64LittleEndian(standard.AsSpan(8)),
             basic.Written, basic.Changed, attributes, BinaryPrimitives.ReadUInt32LittleEndian(standard.AsSpan(16)));
     }
-    private static (long Created, long Written, long Changed, uint Attributes) ReadBasic(SafeFileHandle handle) => ReadBasic(handle, new byte[40], new byte[8]);
-    private static (long Created, long Written, long Changed, uint Attributes) ReadBasic(SafeFileHandle handle, byte[] bytes, byte[] tag)
+    private static (long Created, long Written, long Changed, uint Attributes) ReadBasic(SafeFileHandle handle, DiskAccess files) => ReadBasic(handle, new byte[40], new byte[8], files);
+    private static (long Created, long Written, long Changed, uint Attributes) ReadBasic(SafeFileHandle handle, byte[] bytes, byte[] tag, DiskAccess files)
     {
-        ReadInfo(handle, 0, bytes);
-        ReadInfo(handle, 9, tag);
+        ReadInfo(handle, 0, bytes, files);
+        ReadInfo(handle, 9, tag, files);
         var attributes = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(32)) | BinaryPrimitives.ReadUInt32LittleEndian(tag);
         if (BinaryPrimitives.ReadUInt32LittleEndian(tag.AsSpan(4)) != 0) attributes |= 0x400;
         return (BinaryPrimitives.ReadInt64LittleEndian(bytes), BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(16)), BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(24)),
             attributes);
     }
-    private static void ReadInfo(SafeFileHandle handle, int kind, byte[] bytes)
+    private static void ReadInfo(SafeFileHandle handle, int kind, byte[] bytes, DiskAccess files)
     {
-        if (!DiskAccess.Default.ReadHandleInformation(handle, kind, bytes, bytes.Length)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!files.ReadHandleInformation(handle, kind, bytes, bytes.Length)) throw new Win32Exception(Marshal.GetLastWin32Error());
     }
-    private static SafeFileHandle OpenHandle(string path, uint access, uint share, uint flags)
+    private static SafeFileHandle OpenHandle(string path, uint access, uint share, uint flags, DiskAccess files)
     {
-        var handle = DiskAccess.Default.OpenHandle(path, access, share, 0, 3, flags, 0);
+        var handle = files.OpenHandle(path, access, share, 0, 3, flags, 0);
         if (!handle.IsInvalid) return handle;
         var error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(error);
     }

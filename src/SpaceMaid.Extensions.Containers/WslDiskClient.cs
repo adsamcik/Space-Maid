@@ -12,14 +12,20 @@ namespace SpaceMaid.Extensions.Containers;
 internal static class WslDiskClient
 {
     internal static Task<VirtualDiskTarget> PreviewAsync(string path, CancellationToken token)
-        => Task.Run(() => { token.ThrowIfCancellationRequested(); return VirtualDiskCleanup.Capture(path); }, token);
+        => PreviewAsync(path, token, DiskAccess.Default);
 
-    internal static async Task<VirtualDiskResult> ExecuteAsync(VirtualDiskRequest request, CancellationToken token)
+    internal static Task<VirtualDiskTarget> PreviewAsync(string path, CancellationToken token, DiskAccess files)
+        => Task.Run(() => { token.ThrowIfCancellationRequested(); return VirtualDiskCleanup.Capture(path, files); }, token);
+
+    internal static Task<VirtualDiskResult> ExecuteAsync(VirtualDiskRequest request, CancellationToken token)
+        => ExecuteAsync(request, token, DiskAccess.Default);
+
+    internal static async Task<VirtualDiskResult> ExecuteAsync(VirtualDiskRequest request, CancellationToken token, DiskAccess files)
     {
         token.ThrowIfCancellationRequested();
-        VirtualDiskCleanup.RequireUnchanged(request.Target, await PreviewAsync(request.Target.Path, token));
+        VirtualDiskCleanup.RequireUnchanged(request.Target, await PreviewAsync(request.Target.Path, token, files));
         string helper = Path.Join(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!, "DiskHelper", "SpaceMaid.DiskHelper.exe");
-        ValidateHelper(helper);
+        ValidateHelper(helper, files);
         string name = "SpaceMaidDisk-" + Guid.NewGuid().ToString("N");
         using var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 4096, 4096);
@@ -45,11 +51,11 @@ internal static class WslDiskClient
         { throw new IOException("The helper result was lost. Compaction may have run; inspect the disk before trying again.", error); }
     }
 
-    private static void ValidateHelper(string path)
+    private static void ValidateHelper(string path, DiskAccess files)
     {
         for (string? part = path; part is not null; part = Path.GetDirectoryName(part))
-            if ((DiskAccess.Default.GetAttributes(part) & FileAttributes.ReparsePoint) != 0) throw new IOException("The disk helper's path must not contain links.");
-        if (!DiskAccess.Default.FileExists(path) || !DiskAccess.Default.FileExists(Path.ChangeExtension(path, ".runtimeconfig.json")))
+            if ((files.GetAttributes(part) & FileAttributes.ReparsePoint) != 0) throw new IOException("The disk helper's path must not contain links.");
+        if (!files.FileExists(path) || !files.FileExists(Path.ChangeExtension(path, ".runtimeconfig.json")))
             throw new IOException("The bundled disk helper is unavailable. Reinstall the complete app package.");
     }
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint process);

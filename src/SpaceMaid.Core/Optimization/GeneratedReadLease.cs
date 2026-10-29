@@ -71,11 +71,8 @@ internal sealed partial class GeneratedReadLease : IDisposable
     internal static unsafe void SuppressAccessUpdates(SafeFileHandle handle)
     {
         long unchanged = -1;
-        if (!SetFileTime(handle, null, &unchanged, null)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        if (!DiskAccess.Default.WriteHandleTimes(handle, null, &unchanged, null)) throw new Win32Exception(Marshal.GetLastPInvokeError());
     }
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static unsafe partial bool SetFileTime(SafeFileHandle handle, long* created, long* accessed, long* written);
 
     internal static unsafe GeneratedInputRevision Inspect(SafeFileHandle handle, string path)
     {

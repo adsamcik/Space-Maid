@@ -4,6 +4,8 @@ Keep changes focused. Include screenshots for interface changes and describe how
 
 Use the shared [file access boundary](docs/file-access.md) for runtime disk operations. Keep backend selection and fallback there, and preserve specialized provider and cleanup guards.
 
+[AGENTS.md](AGENTS.md) makes this mandatory for agent work. Run `./tools/Verify-DiskAccess.ps1` before completing disk-access changes; CI runs the same source audit. Extend `DiskAccess` for missing primitives instead of adding a direct filesystem call or another facade.
+
 ## Build and test
 
 Use the .NET 10 SDK pinned in [global.json](global.json). On Windows:

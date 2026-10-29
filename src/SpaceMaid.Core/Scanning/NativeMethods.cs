@@ -1,6 +1,3 @@
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-
 namespace SpaceMaid.Core.Scanning;
 
 internal static partial class NativeMethods
@@ -11,11 +8,6 @@ internal static partial class NativeMethods
     public const uint OpenReparsePoint = 0x00200000;
     public const int NoMoreFiles = 18;
     public const int HandleEof = 38;
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static unsafe partial bool DeviceIoControl(SafeFileHandle handle, uint code,
-        byte* input, int inputSize, byte* output, int outputSize, out int bytesReturned, nint overlapped);
 
     public static string ExtendedPath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal)
         ? path : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;

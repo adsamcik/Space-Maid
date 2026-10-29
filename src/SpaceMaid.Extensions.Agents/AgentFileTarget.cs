@@ -27,42 +27,50 @@ internal static class AgentFileTarget
         return System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(path));
     }
 
-    internal static void ValidateAncestors(string path, bool includeSelf = false)
+    internal static void ValidateAncestors(string path, bool includeSelf = false) => ValidateAncestors(DiskAccess.Default, path, includeSelf);
+
+    internal static void ValidateAncestors(DiskAccess files, string path, bool includeSelf = false)
     {
         for (string? current = includeSelf ? path : System.IO.Path.GetDirectoryName(path); current is not null; current = System.IO.Path.GetDirectoryName(current))
         {
-            var attributes = DiskAccess.Default.GetAttributes(current);
+            var attributes = files.GetAttributes(current);
             if ((attributes & FileAttributes.ReparsePoint) != 0 || !attributes.HasFlag(FileAttributes.Directory))
                 throw new IOException("Linked, redirected or unavailable agent paths are kept.");
         }
     }
 
-    internal static AgentFileIdentity Capture(string path, bool directory = false)
+    internal static AgentFileIdentity Capture(string path, bool directory = false) => Capture(DiskAccess.Default, path, directory);
+
+    internal static AgentFileIdentity Capture(DiskAccess files, string path, bool directory = false)
     {
-        path = ValidatePath(path); ValidateAncestors(path);
-        using var handle = Open(path, 7, directory);
-        return Read(handle);
+        path = ValidatePath(path); ValidateAncestors(files, path);
+        using var handle = Open(files, path, 7, directory);
+        return Read(files, handle);
     }
 
     // Deny new writers/readers while allowing only the Shell's rename/delete.
     // Parent leases prevent ancestor substitution. The exact file identity is
     // checked in PreDeleteItem and again at the reported Recycle Bin location.
-    internal static IDisposable Lease(AgentHistoryItem item)
+    internal static IDisposable Lease(AgentHistoryItem item) => Lease(DiskAccess.Default, item);
+
+    internal static IDisposable Lease(DiskAccess files, AgentHistoryItem item)
     {
         var handles = new List<SafeFileHandle>();
         try
         {
             string path = ValidatePath(item.Path);
             for (string? current = System.IO.Path.GetDirectoryName(path); current is not null; current = System.IO.Path.GetDirectoryName(current))
-                handles.Add(Open(current, 3, directory: true, lockData: true));
-            var file = Open(path, 4, directory: false, lockData: true); handles.Add(file);
-            if (Read(file) != item.Identity) throw new IOException("This history file changed after confirmation. Inspect again.");
+                handles.Add(Open(files, current, 3, directory: true, lockData: true));
+            var file = Open(files, path, 4, directory: false, lockData: true); handles.Add(file);
+            if (Read(files, file) != item.Identity) throw new IOException("This history file changed after confirmation. Inspect again.");
             return new Leases(handles);
         }
         catch { foreach (var handle in handles) handle.Dispose(); throw; }
     }
 
-    internal static void ValidateRecycled(AgentHistoryItem item, string path)
+    internal static void ValidateRecycled(AgentHistoryItem item, string path) => ValidateRecycled(DiskAccess.Default, item, path);
+
+    internal static void ValidateRecycled(DiskAccess files, AgentHistoryItem item, string path)
     {
         string root = System.IO.Path.GetPathRoot(item.Path)!;
         if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new IOException("Windows returned an unexpected Recycle Bin destination.");
@@ -71,33 +79,33 @@ internal static class AgentFileTarget
             || !parts[1].StartsWith("S-1-", StringComparison.OrdinalIgnoreCase) || !parts[2].StartsWith("$R", StringComparison.OrdinalIgnoreCase)
             || parts.Any(part => part is "." or ".." || part.Contains('/') || part.EndsWith('.') || part.EndsWith(' ')))
             throw new IOException("Windows returned an unexpected Recycle Bin destination.");
-        ValidateAncestors(path);
-        using var handle = Open(path, 7, directory: false);
-        if (Read(handle) != item.Identity) throw new IOException("Windows did not recycle the confirmed file. Inspect its current state before retrying.");
-        try { DiskAccess.Default.GetAttributes(item.Path); }
+        ValidateAncestors(files, path);
+        using var handle = Open(files, path, 7, directory: false);
+        if (Read(files, handle) != item.Identity) throw new IOException("Windows did not recycle the confirmed file. Inspect its current state before retrying.");
+        try { files.GetAttributes(item.Path); }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return; }
         throw new IOException("The original file is still present. Inspect its current state before retrying.");
     }
 
-    private static SafeFileHandle Open(string path, uint share, bool directory, bool lockData = false)
+    private static SafeFileHandle Open(DiskAccess files, string path, uint share, bool directory, bool lockData = false)
     {
-        var handle = DiskAccess.Default.OpenHandle(path, 0x80, share, 0, 3, 0x00300000 | (directory ? 0x02000000u : 0u), 0);
+        var handle = files.OpenHandle(path, 0x80, share, 0, 3, 0x00300000 | (directory ? 0x02000000u : 0u), 0);
         if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "The history file is unavailable or in use. Close all agent clients before cleanup."); }
         try
         {
-            var data = Metadata(handle);
+            var data = Metadata(files, handle);
             ValidateMetadata(data, directory);
             if (!lockData) return handle;
-            var before = Read(handle);
+            var before = Read(files, handle);
             // FILE_READ_ATTRIBUTES alone does not enforce data-write sharing.
             // Ask for read/list access after the no-recall provider check, but
             // do not read a single byte of transcript content.
-            var stable = DiskAccess.Default.OpenHandle(path, directory ? 0x81u : 0x80000080u, share, 0, 3,
+            var stable = files.OpenHandle(path, directory ? 0x81u : 0x80000080u, share, 0, 3,
                 0x00300000 | (directory ? 0x02000000u : 0u), 0);
             if (stable.IsInvalid) { stable.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "The history file is in use. Close all agent clients before cleanup."); }
             try
             {
-                var after = Read(stable, directory);
+                var after = Read(files, stable, directory);
                 // Sibling activity can update ancestor directory size/time.
                 // Pin its native object; selected files still need an exact revision.
                 if (directory ? !before.IsSameObjectAs(after) : after != before)
@@ -116,9 +124,9 @@ internal static class AgentFileTarget
             || !directory && (data.Links != 1 || attributes.HasFlag(FileAttributes.ReadOnly)))
             throw new IOException("Linked, cloud-only, read-only or multiply linked history is kept.");
     }
-    private static FileMetadata Metadata(SafeFileHandle handle)
+    private static FileMetadata Metadata(DiskAccess files, SafeFileHandle handle)
     {
-        if (!GetFileInformationByHandle(handle, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!files.ReadHandleInformation<FileMetadata>(handle, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
         byte[] provider = new byte[4200];
         if (RecognizesProvider(CfGetPlaceholderInfo(handle, 1, provider, (uint)provider.Length, out _))
             || RecognizesProvider(CfGetSyncRootInfoByHandle(handle, 2, provider, 1028, out _)))
@@ -126,12 +134,12 @@ internal static class AgentFileTarget
         return metadata;
     }
     private static bool RecognizesProvider(int result) => result >= 0 || result == unchecked((int)0x800700EA);
-    private static AgentFileIdentity Read(SafeFileHandle handle, bool? directory = null)
+    private static AgentFileIdentity Read(DiskAccess files, SafeFileHandle handle, bool? directory = null)
     {
-        var data = Metadata(handle);
+        var data = Metadata(files, handle);
         if (directory is { } expectedDirectory) ValidateMetadata(data, expectedDirectory);
         byte[] identity = new byte[24];
-        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!files.ReadHandleInformation(handle, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
         ulong low = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(8)), high = BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(16));
         if (low == 0 && high == 0) throw new IOException("Windows did not provide a usable file identity.");
         return new(BinaryPrimitives.ReadUInt64LittleEndian(identity), low, high,
@@ -144,7 +152,6 @@ internal static class AgentFileTarget
         internal uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh, Volume,
             SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileMetadata metadata);
     [DllImport("cldapi.dll")] private static extern int CfGetPlaceholderInfo(SafeFileHandle file, int info, byte[] data, uint size, out uint returned);
     [DllImport("cldapi.dll")] private static extern int CfGetSyncRootInfoByHandle(SafeFileHandle file, int info, byte[] data, uint size, out uint returned);
 }

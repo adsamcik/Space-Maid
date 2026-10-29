@@ -12,14 +12,18 @@ namespace SpaceMaid.App.Extensions;
 internal sealed partial class ToolInputLease : IDisposable
 {
     private readonly List<SafeFileHandle> _handles = [];
+    private readonly DiskAccess _files;
     internal ToolInputLease(IReadOnlyList<string> paths)
+        : this(paths, DiskAccess.Default) { }
+    internal ToolInputLease(IReadOnlyList<string> paths, DiskAccess files)
     {
+        _files = files;
         try
         {
             var parents = new HashSet<string>(StringComparer.Ordinal);
             foreach (string path in paths)
             {
-                ExifToolBroker.ValidateInput(path);
+                ExifToolBroker.ValidateInputUsing(_files, path);
                 string? parent = Path.GetDirectoryName(path);
                 while (parent is not null)
                 {
@@ -35,7 +39,7 @@ internal sealed partial class ToolInputLease : IDisposable
     {
         string extended = path.StartsWith("\\\\?\\", StringComparison.Ordinal) ? path : "\\\\?\\" + path;
         const uint flags = 0x02000000 | 0x00200000 | 0x00100000; // backup semantics, open reparse point, no recall
-        var handle = DiskAccess.Default.OpenHandle(extended, 0x80, 1, 0, 3, flags, 0);
+        var handle = _files.OpenHandle(extended, 0x80, 1, 0, 3, flags, 0);
         if (handle.IsInvalid) { int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new IOException("A selected tool input could not be held stable.", new Win32Exception(error)); }
         _handles.Add(handle);
         byte[] basic = ReadInformation(handle, 0, 40);
@@ -47,7 +51,7 @@ internal sealed partial class ToolInputLease : IDisposable
         // After metadata eligibility, hold a data-read handle without reading
         // bytes. OPEN_REPARSE_POINT/NO_RECALL preserve the metadata-only cloud
         // boundary even if the path changed before this second open.
-        var data = DiskAccess.Default.OpenHandle(extended, directory ? 0x81u : 0x80000080u, 1, 0, 3, flags, 0);
+        var data = _files.OpenHandle(extended, directory ? 0x81u : 0x80000080u, 1, 0, 3, flags, 0);
         if (data.IsInvalid) { int error = Marshal.GetLastPInvokeError(); data.Dispose(); throw new IOException("A selected tool input could not be held for stable reading.", new Win32Exception(error)); }
         _handles.Add(data);
         byte[] heldBasic = ReadInformation(data, 0, 40);
@@ -58,7 +62,7 @@ internal sealed partial class ToolInputLease : IDisposable
             || ((heldAttributes & 0x10u) != 0) != directory)
             throw new IOException("A selected tool input changed while its stable read was being established.");
     }
-    private static uint ReadAttributes(SafeFileHandle handle, byte[] basic)
+    private uint ReadAttributes(SafeFileHandle handle, byte[] basic)
     {
         byte[] tag = ReadInformation(handle, 9, 8);
         uint attributes = BitConverter.ToUInt32(basic, 32) | BitConverter.ToUInt32(tag, 0);
@@ -81,11 +85,11 @@ internal sealed partial class ToolInputLease : IDisposable
         catch (EntryPointNotFoundException) { }
         return attributes;
     }
-    private static unsafe byte[] ReadInformation(SafeFileHandle handle, int infoClass, int length)
+    private unsafe byte[] ReadInformation(SafeFileHandle handle, int infoClass, int length)
     {
         byte[] result = new byte[length];
         fixed (byte* info = result)
-            if (!DiskAccess.Default.ReadHandleInformation(handle, infoClass, info, (uint)length))
+            if (!_files.ReadHandleInformation(handle, infoClass, info, (uint)length))
                 throw new IOException("A selected tool input's metadata could not be validated.", new Win32Exception(Marshal.GetLastPInvokeError()));
         return result;
     }

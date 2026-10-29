@@ -1,3 +1,4 @@
+using SpaceMaid.Core.IO;
 using System.Windows;
 using SpaceMaid.Extensions.Contracts;
 
@@ -6,11 +7,12 @@ namespace SpaceMaid.Extensions.Agents;
 public sealed class AgentsExtension : ISpaceMaidExtension, IOptimizationExtension
 {
     private AgentsView? _view;
+    private DiskAccess _files = DiskAccess.Default;
     private readonly CancellationTokenSource _lifetime = new();
     public ExtensionDescriptor Descriptor => new("space-maid.agents", "Agent cleanup", "1.0.0");
     public Task InitializeAsync(IExtensionHost host, CancellationToken token)
-    { token.ThrowIfCancellationRequested(); return Task.CompletedTask; }
-    public FrameworkElement CreateView() => _view ??= new AgentsView(_lifetime.Token);
+    { token.ThrowIfCancellationRequested(); _files = host.Files; return Task.CompletedTask; }
+    public FrameworkElement CreateView() => _view ??= new AgentsView(_lifetime.Token, _files);
     public IReadOnlyList<ExtensionOptimizationAction> GetOptimizationActions() =>
     [
         new("history", "Agent history and logs", "Review old transcripts and logs with source-specific activity checks.", "Conversations are personal data. Review selected items before moving eligible files to the Recycle Bin.", Workflow: "history"),

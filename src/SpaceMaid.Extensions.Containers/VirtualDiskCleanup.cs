@@ -32,9 +32,12 @@ internal static class VirtualDiskCleanup
     }
 
     internal static VirtualDiskTarget Capture(string path)
+        => Capture(path, DiskAccess.Default);
+
+    internal static VirtualDiskTarget Capture(string path, DiskAccess files)
     {
-        using var pins = Pin(path);
-        return ReadTarget(pins[0], ValidatePath(path));
+        using var pins = Pin(path, files);
+        return ReadTarget(pins[0], ValidatePath(path), files);
     }
 
     internal static void RequireUnchanged(VirtualDiskTarget captured, VirtualDiskTarget current)
@@ -43,15 +46,18 @@ internal static class VirtualDiskCleanup
     }
 
     internal static VirtualDiskResult Compact(VirtualDiskRequest request)
+        => Compact(request, DiskAccess.Default);
+
+    internal static VirtualDiskResult Compact(VirtualDiskRequest request, DiskAccess files)
     {
         if (request.Target is null) throw new InvalidDataException("A captured disk target is required.");
         string path = ValidatePath(request.Target.Path);
         // Shutdown is a separately disclosed part of the confirmed action.
         // Validate the target before interrupting any WSL sessions.
-        RequireUnchanged(request.Target, Capture(path));
+        RequireUnchanged(request.Target, Capture(path, files));
         if (request.ShutdownWsl) ShutdownWsl();
-        using var pins = Pin(path);
-        RequireUnchanged(request.Target, ReadTarget(pins[0], path));
+        using var pins = Pin(path, files);
+        RequireUnchanged(request.Target, ReadTarget(pins[0], path, files));
         var storage = new StorageType { DeviceId = 3, VendorId = new Guid("EC984AEC-A0F9-47e9-901F-71415A66345B") };
         var open = new OpenParameters { Version = 2 };
         // Microsoft's VHDX compaction sample uses a V2 writable handle with
@@ -66,12 +72,12 @@ internal static class VirtualDiskCleanup
             if (Info(disk, 13) != 0) throw new InvalidOperationException("This disk is attached or in use. Close its owner before compaction.");
             // Confirm the pathname still resolves to the same pinned file before
             // the final OS operation. Ancestors and target cannot be renamed.
-            RequireUnchanged(request.Target, Capture(path));
+            RequireUnchanged(request.Target, Capture(path, files));
             var compact = new CompactParameters { Version = 1 };
             status = CompactVirtualDisk(disk, 0, ref compact, 0);
             if (status != 0) throw new Win32Exception((int)status, "Windows could not finish compaction. The disk may be busy or unsupported; no file was deleted.");
         }
-        var after = ReadTarget(pins[0], path);
+        var after = ReadTarget(pins[0], path, files);
         if (after.Volume != request.Target.Volume || after.IdLow != request.Target.IdLow || after.IdHigh != request.Target.IdHigh)
             throw new IOException("The disk identity could not be verified after compaction. Inspect its state before further work.");
         return new(true, "Windows completed zero-block compaction. Guest files and virtual capacity were retained; actual host allocation can differ from file length.", request.Target.Length, after.Length);
@@ -96,7 +102,7 @@ internal static class VirtualDiskCleanup
         return BinaryPrimitives.ReadUInt32LittleEndian(info.AsSpan(8));
     }
 
-    private static DiskPins Pin(string path)
+    private static DiskPins Pin(string path, DiskAccess files)
     {
         path = ValidatePath(path); var handles = new List<SafeFileHandle>();
         try
@@ -104,10 +110,10 @@ internal static class VirtualDiskCleanup
             for (string? part = path; part is not null; part = System.IO.Path.GetDirectoryName(part))
             {
                 bool file = part == path;
-                var handle = DiskAccess.Default.OpenHandle(part, 0x80, 3, 0, 3, 0x00200000 | (file ? 0u : 0x02000000u), 0);
+                var handle = files.OpenHandle(part, 0x80, 3, 0, 3, 0x00200000 | (file ? 0u : 0x02000000u), 0);
                 if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
                 handles.Add(handle);
-                if (!GetFileInformationByHandle(handle, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (!files.ReadHandleInformation<FileMetadata>(handle, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
                 var attributes = (FileAttributes)metadata.Attributes;
                 if ((attributes & FileAttributes.ReparsePoint) != 0 || file == attributes.HasFlag(FileAttributes.Directory))
                     throw new IOException("The disk and its ancestors must be regular local files and directories, without links.");
@@ -120,11 +126,11 @@ internal static class VirtualDiskCleanup
         catch { foreach (var handle in handles) handle.Dispose(); throw; }
     }
 
-    private static VirtualDiskTarget ReadTarget(SafeFileHandle file, string path)
+    private static VirtualDiskTarget ReadTarget(SafeFileHandle file, string path, DiskAccess files)
     {
-        if (!GetFileInformationByHandle(file, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!files.ReadHandleInformation<FileMetadata>(file, out var metadata)) throw new Win32Exception(Marshal.GetLastWin32Error());
         byte[] identity = new byte[24];
-        if (!DiskAccess.Default.ReadHandleInformation(file, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!files.ReadHandleInformation(file, 18, identity, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
         return new(path, BinaryPrimitives.ReadUInt64LittleEndian(identity), BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(8)),
             BinaryPrimitives.ReadUInt64LittleEndian(identity.AsSpan(16)), ((long)metadata.SizeHigh << 32) | metadata.SizeLow,
             ((long)metadata.WriteHigh << 32) | metadata.WriteLow);
@@ -159,7 +165,6 @@ internal static class VirtualDiskCleanup
         internal uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh, Volume,
             SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileMetadata metadata);
     [DllImport("virtdisk.dll", CharSet = CharSet.Unicode)] private static extern uint OpenVirtualDisk(ref StorageType storage, string path, uint access, uint flags, ref OpenParameters parameters, out SafeFileHandle disk);
     [DllImport("virtdisk.dll")] private static extern uint GetVirtualDiskInformation(SafeFileHandle disk, ref uint size, byte[] information, nint used);
     [DllImport("virtdisk.dll")] private static extern uint CompactVirtualDisk(SafeFileHandle disk, uint flags, ref CompactParameters parameters, nint overlapped);

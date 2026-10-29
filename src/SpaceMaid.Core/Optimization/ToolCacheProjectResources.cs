@@ -32,7 +32,7 @@ internal static class ToolCacheProjectResources
 
         void ReadConfig(string directory)
         {
-            string? config = new[] { "config", "config.toml" }.Select(name => Path.Join(directory, name)).FirstOrDefault(File.Exists);
+            string? config = new[] { "config", "config.toml" }.Select(name => Path.Join(directory, name)).FirstOrDefault(DiskAccess.Default.FileExists);
             if (config is null) return;
             string text;
             try { text = ReadSmall(config); }

@@ -10,39 +10,41 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
 {
     internal long LatestWriteFileTime => AcceptedActivity ?? Members.Max(member => member.Identity.LastWriteFileTime);
 
-    internal static AgentSessionEvidence? Capture(AgentHome home, string path, CancellationToken token)
+    internal static AgentSessionEvidence? Capture(AgentHome home, string path, CancellationToken token) => Capture(DiskAccess.Default, home, path, token);
+
+    internal static AgentSessionEvidence? Capture(DiskAccess files, AgentHome home, string path, CancellationToken token)
     {
         if (home.Tool is not (AgentTool.Copilot or AgentTool.Cline or AgentTool.RooCode)
             || AgentHistoryCleanup.KnownFile(home, path) is not ("Session transcript" or "Task transcript" or "Task write leftover")) return null;
         string root = System.IO.Path.GetDirectoryName(path)!;
         if (AgentHistoryCleanup.LeftoverCanonical(System.IO.Path.GetFileName(path)) is { } canonical
-            && !DiskAccess.Default.FileExists(System.IO.Path.Join(root, canonical)))
+            && !files.FileExists(System.IO.Path.Join(root, canonical)))
             throw new IOException("This leftover may be the only recovery copy. Its canonical transcript is missing, so the file is kept.");
         string owners = System.IO.Path.Join(home.Path, "locks", "hub", "owners");
-        if (home.Tool == AgentTool.Cline && DiskAccess.Default.DirectoryExists(owners))
+        if (home.Tool == AgentTool.Cline && files.DirectoryExists(owners))
         {
-            AgentFileTarget.ValidateAncestors(owners, includeSelf: true);
-            if (DiskAccess.Default.EnumerateFileSystemEntries(owners).Any())
+            AgentFileTarget.ValidateAncestors(files, owners, includeSelf: true);
+            if (files.EnumerateFileSystemEntries(owners).Any())
                 throw new IOException("Cline background owner registrations are present. Stop its hub and agents before cleanup.");
         }
-        if (home.Tool == AgentTool.RooCode) RequireCompletedStandaloneRoo(root);
+        if (home.Tool == AgentTool.RooCode) RequireCompletedStandaloneRoo(files, root);
         var members = new List<AgentSessionMember>(); var pending = new Stack<string>(); pending.Push(root);
         while (pending.TryPop(out string? current))
         {
             token.ThrowIfCancellationRequested();
             Add(current, true);
-            foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(current))
+            foreach (string child in files.EnumerateFileSystemEntries(current))
             {
                 token.ThrowIfCancellationRequested();
                 string name = System.IO.Path.GetFileName(child);
                 if (name.EndsWith(".lock", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".pid", StringComparison.OrdinalIgnoreCase))
                     throw new IOException("A session lock or process marker is present. Finish the task and stop its agents before cleanup.");
-                var attributes = DiskAccess.Default.GetAttributes(child);
+                var attributes = files.GetAttributes(child);
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
                     // Validate before following a directory, including cloud and
                     // provider paths. No transcript or checkpoint data is read.
-                    AgentFileTarget.Capture(child, directory: true);
+                    AgentFileTarget.Capture(files, child, directory: true);
                     if (members.Count + pending.Count >= 1000) throw new IOException("This session exceeds the 1,000-entry safety limit. Review it in its owning tool.");
                     pending.Push(child);
                 }
@@ -54,25 +56,29 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
         void Add(string entry, bool directory)
         {
             if (members.Count >= 1000) throw new IOException("This session exceeds the 1,000-entry safety limit. Review it in its owning tool.");
-            var identity = AgentFileTarget.Capture(entry, directory);
+            var identity = AgentFileTarget.Capture(files, entry, directory);
             if (identity.LastWriteFileTime <= 0) throw new IOException("A related session path has no usable activity timestamp. The session is kept.");
             members.Add(new(entry, directory, identity));
         }
     }
 
-    internal void Validate(AgentHistoryItem item, CancellationToken token)
+    internal void Validate(AgentHistoryItem item, CancellationToken token) => Validate(DiskAccess.Default, item, token);
+
+    internal void Validate(DiskAccess files, AgentHistoryItem item, CancellationToken token)
     {
-        var current = Capture(item.Home, item.Path, token);
+        var current = Capture(files, item.Home, item.Path, token);
         if (current is null || current.Root != Root || !Members.SequenceEqual(current.Members))
             throw new IOException("The session or a related file changed after inspection. Inspect again; no cleanup started for this file.");
     }
 
     // A batch can contain both transcript files from one task. Only mutations
     // already confirmed by this batch may change the expected membership.
-    internal AgentSessionEvidence AfterOwnRemovals(AgentHistoryItem item, IReadOnlySet<string> removed, CancellationToken token)
+    internal AgentSessionEvidence AfterOwnRemovals(AgentHistoryItem item, IReadOnlySet<string> removed, CancellationToken token) => AfterOwnRemovals(DiskAccess.Default, item, removed, token);
+
+    internal AgentSessionEvidence AfterOwnRemovals(DiskAccess files, AgentHistoryItem item, IReadOnlySet<string> removed, CancellationToken token)
     {
         if (!Members.Any(member => removed.Contains(member.Path))) return this;
-        var current = Capture(item.Home, item.Path, token) ?? throw new IOException("Session evidence is unavailable.");
+        var current = Capture(files, item.Home, item.Path, token) ?? throw new IOException("Session evidence is unavailable.");
         var expected = Members.Where(member => !removed.Contains(member.Path)).ToArray();
         if (expected.Length != current.Members.Count) throw new IOException("Related session files changed during cleanup. Inspect again.");
         for (int i = 0; i < expected.Length; i++)
@@ -85,12 +91,12 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
         return current with { AcceptedActivity = LatestWriteFileTime };
     }
 
-    private static void RequireCompletedStandaloneRoo(string root)
+    private static void RequireCompletedStandaloneRoo(DiskAccess files, string root)
     {
         string path = System.IO.Path.Join(root, "history_item.json");
-        var before = AgentFileTarget.Capture(path);
+        var before = AgentFileTarget.Capture(files, path);
         if (before.Length > 65536) throw new IOException("Roo task status is too large to verify. Manage this task in Roo Code.");
-        using var file = DiskAccess.Default.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var file = files.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         byte[] bytes = new byte[checked((int)before.Length)]; file.ReadExactly(bytes);
         using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
         var metadata = json.RootElement;
@@ -105,7 +111,7 @@ internal sealed record AgentSessionEvidence(string Root, IReadOnlyList<AgentSess
         if (metadata.TryGetProperty("childIds", out var children)
             && (children.ValueKind != JsonValueKind.Array || children.GetArrayLength() != 0))
             throw new IOException("Roo tasks with children are kept. Manage the task chain in Roo Code.");
-        if (AgentFileTarget.Capture(path) != before) throw new IOException("Roo task status changed during inspection. Inspect again.");
+        if (AgentFileTarget.Capture(files, path) != before) throw new IOException("Roo task status changed during inspection. Inspect again.");
     }
 }
 

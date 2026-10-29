@@ -51,9 +51,9 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
 try
 {
     var timer = Stopwatch.StartNew();
-    var reader = new VolumeScanner(args.Contains("--standard") ? null : new NativeNtfsLayoutSource());
+    var reader = args.Contains("--standard") ? new SpaceMaid.Core.IO.DiskAccess(() => null) : SpaceMaid.Core.IO.DiskAccess.Default;
     var scan = await reader.ScanAsync(args[0], cancellationToken: cancellation.Token,
-        preferFast: !args.Contains("--standard"), diagnostic: log is null ? null : d => log.Record(d.Event, d));
+        diagnostic: log is null ? null : d => log.Record(d.Event, d));
     timer.Stop();
     log?.Record("benchmark-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds, scan.Backend, scan.FallbackReason });
     object? recheck = null;

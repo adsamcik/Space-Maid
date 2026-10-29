@@ -16,6 +16,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
     private readonly Action<string, object> _log;
     private readonly bool _administrator;
     private readonly string _executable;
+    private readonly DiskAccess _files;
     private Process? _process;
     private ReplyReader? _replyReader;
     private Task? _stderr;
@@ -26,7 +27,12 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
 
     internal ExifToolBroker(Func<CancellationToken, Task> checkpoint, Action<string, object> log, bool administrator,
         string? executable = null)
+        : this(DiskAccess.Default, checkpoint, log, administrator, executable) { }
+
+    internal ExifToolBroker(DiskAccess files, Func<CancellationToken, Task> checkpoint, Action<string, object> log, bool administrator,
+        string? executable = null)
     {
+        _files = files;
         _checkpoint = checkpoint; _log = log; _administrator = administrator;
         _executable = executable ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "ExifTool", "ExifTool.exe");
     }
@@ -35,7 +41,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         ThrowIfUnavailable();
         using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdown.Token);
         token = requestCancellation.Token;
-        if (!DiskAccess.Default.FileExists(_executable)) return null;
+        if (!_files.FileExists(_executable)) return null;
         await _checkpoint(token).ConfigureAwait(false);
         await _requests.WaitAsync(token).ConfigureAwait(false);
         try { await EnsureStartedAsync(token).ConfigureAwait(false); return _version; }
@@ -48,9 +54,9 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdown.Token);
         token = requestCancellation.Token;
         if (paths.Count > 32) throw new ArgumentException("ExifTool requests contain at most 32 selected files.", nameof(paths));
-        foreach (string path in paths) ValidateInput(path);
+        foreach (string path in paths) ValidateInputUsing(_files, path);
         if (paths.Count == 0) return [];
-        if (!DiskAccess.Default.FileExists(_executable)) return paths.Select(path => new MediaToolMetadata(path, null, null, null, null, null, "unavailable", "ExifTool is not installed at the approved local location.")).ToArray();
+        if (!_files.FileExists(_executable)) return paths.Select(path => new MediaToolMetadata(path, null, null, null, null, null, "unavailable", "ExifTool is not installed at the approved local location.")).ToArray();
         await _checkpoint(token).ConfigureAwait(false);
         await _requests.WaitAsync(token).ConfigureAwait(false);
         var timer = Stopwatch.StartNew();
@@ -58,8 +64,8 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         {
             // Revalidate after queue waiting; never let the tool hydrate a file
             // that became cloud-only or was replaced by a reparse point.
-            foreach (string path in paths) ValidateInput(path);
-            using var stableInputs = new ToolInputLease(paths);
+            foreach (string path in paths) ValidateInputUsing(_files, path);
+            using var stableInputs = new ToolInputLease(paths, _files);
             await EnsureStartedAsync(token).ConfigureAwait(false);
             string[] options = ["-json", "-FileType", "-ImageWidth", "-ImageHeight", "-Orientation#", "-DateTimeOriginal", "-SourceFile", "-Error", "-Warning", "-charset", "filename=UTF8"];
             string reply = await RequestAsync(options.Concat(paths), token).ConfigureAwait(false);
@@ -101,7 +107,7 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
     {
         if (_process is { HasExited: false } && _version is not null) return;
         await StopOwnedProcessAsync().ConfigureAwait(false);
-        if ((DiskAccess.Default.GetAttributes(_executable) & FileAttributes.ReparsePoint) != 0) throw new IOException("The approved ExifTool executable is a reparse file.");
+        if ((_files.GetAttributes(_executable) & FileAttributes.ReparsePoint) != 0) throw new IOException("The approved ExifTool executable is a reparse file.");
         var start = new ProcessStartInfo(_executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
         start.ArgumentList.Add("-stay_open"); start.ArgumentList.Add("True"); start.ArgumentList.Add("-@"); start.ArgumentList.Add("-");
@@ -188,13 +194,16 @@ internal sealed class ExifToolBroker : IToolBroker, IAsyncDisposable
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }
     internal static void ValidateInput(string path)
+        => ValidateInputUsing(DiskAccess.Default, path);
+
+    internal static void ValidateInputUsing(DiskAccess files, string path)
     {
         if (!Path.IsPathFullyQualified(path) || path.IndexOfAny(['\r', '\n', '\0']) >= 0 || path.StartsWith("\\\\", StringComparison.Ordinal))
             throw new ArgumentException("Tool inputs must be absolute local paths without control characters.");
         string? parent = Path.GetDirectoryName(path);
         if (parent is null) throw new IOException("The file has no local parent folder.");
         FileOperations.ValidateLocalAncestors(parent);
-        var attributes = DiskAccess.Default.GetAttributes(path);
+        var attributes = files.GetAttributes(path);
         const FileAttributes cloudUnavailable = (FileAttributes)(0x1000 | 0x40000 | 0x400000);
         if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory | cloudUnavailable)) != 0)
             throw new IOException("Cloud-only, reparse and unavailable files remain metadata-only; ExifTool was not started for this file.");
