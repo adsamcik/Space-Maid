@@ -192,7 +192,7 @@
             </Border>
             <Border x:Name="OpportunityLocations" Grid.Row="1" Grid.Column="2" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition x:Name="OpportunityRowsHeight" Height="*" /><RowDefinition x:Name="ModelRowsHeight" Height="0" /></Grid.RowDefinitions>
                     <StackPanel Margin="12">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -234,6 +234,27 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <Grid x:Name="OllamaModelsPanel" Grid.Row="3" Margin="12,0,12,12" Visibility="Collapsed">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <DockPanel Margin="0,0,0,8">
+                            <Button x:Name="RefreshModelsButton" DockPanel.Dock="Right" Content="Refresh" Click="RefreshModels_Click" Margin="8,0,0,0" AutomationProperties.Name="Refresh models in this library" />
+                            <Grid>
+                                <TextBox x:Name="ModelSearch" TextChanged="ModelSearch_Changed" AutomationProperties.Name="Search models in this library" ToolTip="Search model names and tags" />
+                                <TextBlock Text="Search models" Margin="9,0" VerticalAlignment="Center" Opacity="0.65" IsHitTestVisible="False">
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=ModelSearch}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </DockPanel>
+                        <TextBlock x:Name="ModelStatus" Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite" />
+                        <DataGrid x:Name="LibraryModelList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" RowHeight="38" EnableRowVirtualization="True" AutomationProperties.Name="Models in selected Ollama library">
+                            <DataGrid.RowStyle><Style TargetType="DataGridRow"><Setter Property="ToolTip" Value="{Binding Detail}" /></Style></DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Model" Binding="{Binding Name}" Width="*" MinWidth="130" />
+                                <DataGridTextColumn Header="Model size" Binding="{Binding SizeText}" Width="110" SortMemberPath="Bytes" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock Grid.Row="3" Text="Sizes include shared data and may differ from space on disk." FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    </Grid>
                     <StackPanel x:Name="EmptyState" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
                         <TextBlock x:Name="EmptyTitle" Text="Find cleanup opportunities" FontSize="18" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                         <TextBlock x:Name="EmptyCaption" Text="Scan a drive to start." Margin="0,12,0,0" TextAlignment="Center" TextWrapping="Wrap" Opacity="0.65">

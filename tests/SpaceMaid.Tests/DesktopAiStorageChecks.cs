@@ -22,6 +22,7 @@ public sealed partial class DesktopTests
             repositories.Append("models--org--model").Select(name => hub + name + "/refs"));
         var runtime = Assert.IsType<ExtensionRuntime>(typeof(MainWindow)
             .GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+        CheckOllamaLibrary(window, app, artifactRoot, runtime);
         var analysis = runtime.Opportunities.Analyze(scan, default);
         var load = window.InitializeExplorerAsync(scan, analysis.Findings, default);
         PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
@@ -110,5 +111,75 @@ public sealed partial class DesktopTests
         ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((Button)OpportunityControl(window, "ClearOpportunitySelectionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 1;
+    }
+
+    private static void CheckOllamaLibrary(MainWindow window, Application app, string artifactRoot, ExtensionRuntime runtime)
+    {
+        using var fixture = new TestDirectory();
+        string library = Path.Join(fixture.Path, ".ollama", "models");
+        string first = OllamaLibraryTests.WriteModel(library, "gemma3:12b-it-qat", 8L << 30);
+        OllamaLibraryTests.WriteModel(library, "qwen3:8b", 5L << 30);
+        OllamaLibraryTests.WriteModel(library, "research:local", 3L << 30, space: "team");
+        Directory.CreateDirectory(Path.Join(library, "blobs"));
+        File.WriteAllText(Path.Join(library, "blobs", "sha256-" + new string('b', 64)), "owned fixture");
+        var scanTask = window.Operations.Files.ScanAsync(fixture.Path);
+        PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
+        var scan = scanTask.GetAwaiter().GetResult();
+        var analysis = runtime.Opportunities.Analyze(scan, default);
+        var load = window.InitializeExplorerAsync(scan, analysis.Findings, default);
+        PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 1;
+        typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [scan, analysis.Findings, analysis.Groups, null, null, false]);
+        ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        var entry = Assert.Single(runtime.Entries, item => item.Id == "space-maid.opportunities");
+        var view = Assert.IsAssignableFrom<UserControl>(entry.View);
+        Assert.Same(window.Operations.Files, view.GetType().GetField("_files", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view));
+        var list = (DataGrid)view.FindName("LibraryModelList");
+        var status = (TextBlock)view.FindName("ModelStatus");
+        var search = (TextBox)view.FindName("ModelSearch");
+        var refresh = (Button)view.FindName("RefreshModelsButton");
+        PumpUntil(() => list.Items.Count == 3, TimeSpan.FromSeconds(5));
+        Assert.Equal(Visibility.Collapsed, ((ListBox)view.FindName("OpportunityGrid")).Visibility);
+        Assert.Equal(Visibility.Collapsed, ((Grid)view.FindName("OpportunityFilters")).Visibility);
+        Assert.Equal("3 models", status.Text);
+        Assert.False(((Button)view.FindName("SelectListedButton")).IsEnabled);
+        var folderSearch = (TextBox)view.FindName("OpportunitySearch");
+        folderSearch.Text = ".ollama";
+        PumpUntil(() => ((Grid)view.FindName("OpportunityFilters")).Visibility == Visibility.Visible && list.Items.Count == 3, TimeSpan.FromSeconds(5));
+        folderSearch.Text = "";
+        PumpUntil(() => ((Grid)view.FindName("OpportunityFilters")).Visibility == Visibility.Collapsed && list.Items.Count == 3, TimeSpan.FromSeconds(5));
+        search.Text = "QWEN"; Assert.Single(list.Items);
+        search.Text = "missing"; Assert.Empty(list.Items); Assert.Equal("0 of 3 models", status.Text);
+        search.Text = "";
+        list.SelectedIndex = 0;
+#pragma warning disable WPF0001
+        foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+        {
+            app.ThemeMode = mode;
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"ollama-library-{mode}.png"), 1220, 910);
+        }
+#pragma warning restore WPF0001
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "ollama-library-compact.png"), 1020, 790);
+        Assert.True(list.ActualHeight > 250);
+        Assert.True(list.ActualWidth >= 240);
+        File.WriteAllBytes(first, OllamaLibraryTests.Manifest(10L << 30));
+        search.Text = "gemma";
+        refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => refresh.IsEnabled, TimeSpan.FromSeconds(5));
+        Assert.Equal("gemma", search.Text); Assert.Single(list.Items);
+        Assert.Equal("10 GiB", list.Items[0].GetType().GetProperty("SizeText")!.GetValue(list.Items[0]));
+        Directory.Delete(Path.Join(library, "manifests"), recursive: true);
+        refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => refresh.IsEnabled, TimeSpan.FromSeconds(5));
+        Assert.Empty(list.Items); Assert.Contains("Check folder access", status.Text);
+        OllamaLibraryTests.WriteModel(library, "recovered:latest", 1024);
+        search.Text = "";
+        refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => refresh.IsEnabled, TimeSpan.FromSeconds(5));
+        Assert.Single(list.Items); Assert.Equal("1 model", status.Text);
+        ((Button)view.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((ComboBox)view.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
+        Assert.Equal(Visibility.Collapsed, ((Grid)view.FindName("OllamaModelsPanel")).Visibility);
     }
 }

@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Contracts;
 using System.ComponentModel;
 using System.Windows.Input;
@@ -33,9 +34,10 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     private bool _scanStale;
     private IReadOnlyDictionary<string, GitWorktreeAssessment> _worktreeAssessments
         => _state?.WorktreeAssessments ?? new Dictionary<string, GitWorktreeAssessment>();
-    public OpportunitiesView(IOpportunityBrowserHost host)
+    public OpportunitiesView(IOpportunityBrowserHost host) : this(host, DiskAccess.Default) { }
+    public OpportunitiesView(IOpportunityBrowserHost host, DiskAccess files)
     {
-        _host = host; InitializeComponent();
+        _host = host; _files = files; InitializeComponent();
         _opportunitySearchTimer.Tick += SearchElapsed;
         _opportunityBrowserReady = true; Reset(); UpdateSelection();
     }
@@ -227,6 +229,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         EmptyCaption.Text = missingProject ? "Choose another project or All locations."
             : _state?.RootPath is null ? "Scan a drive to start."
             : _rows.Count == 0 ? "" : "Clear search or change filters.";
+        UpdateModelLibrary();
         SelectionChanged();
         if (returningToOverview) Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
@@ -356,7 +359,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     {
         _busy = busy;
         BuildKeepRecentDaysBox.IsEnabled = OpportunityGrid.IsEnabled = GroupBrowserControls.IsEnabled = OpportunityFilters.IsEnabled
-            = OpportunityToolbar.IsEnabled = CleanupGroupCards.IsEnabled = WorktreeCleanupControls.IsEnabled = !busy;
+            = OpportunityToolbar.IsEnabled = CleanupGroupCards.IsEnabled = WorktreeCleanupControls.IsEnabled = OllamaModelsPanel.IsEnabled = !busy;
         ApplyRecycleBinState();
         UpdateSelection();
     }
@@ -381,6 +384,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     private void Opportunity_Changed(object sender, SelectionChangedEventArgs e)
     {
         var row = Detail;
+        UpdateModelLibrary();
         DetailPanel.DataContext = row?.Item;
         DetailName.Text = row?.Name ?? "";
         DetailPanel.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
@@ -400,6 +404,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        _modelRead?.Cancel();
         _opportunitySearchTimer.Stop(); _opportunitySearchTimer.Tick -= SearchElapsed;
         foreach (var row in _rows) row.PropertyChanged -= RowChanged;
     }
