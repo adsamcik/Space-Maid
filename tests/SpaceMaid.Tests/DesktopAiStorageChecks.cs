@@ -98,10 +98,13 @@ public sealed partial class DesktopTests
         Assert.Contains(Descendants(detailsExpander).OfType<TextBlock>(), text => text.Text.Contains("Windows without symlinks"));
         detailsExpander.IsExpanded = false;
         var search = (TextBox)OpportunityControl(window, "OpportunitySearch");
-        search.Text = "buttercrab";
+        search.Text = "buttercrab/dia-v1-1.6b";
         PumpUntil(() => list.Items.Count == 1, TimeSpan.FromSeconds(3));
         Assert.Contains("25 outside this view", ((TextBlock)OpportunityControl(window, "SelectionText")).Text);
-        Assert.Equal("models--buttercrab--dia-v1-1.6b", Assert.IsType<OpportunityRow>(list.Items[0]).Name);
+        var readableModel = Assert.IsType<OpportunityRow>(list.Items[0]);
+        Assert.Equal("buttercrab/dia-v1-1.6b", readableModel.Name);
+        Assert.Contains(Descendants((StackPanel)OpportunityControl(window, "DetailPanel")).OfType<TextBox>(),
+            text => text.IsReadOnly && text.Text == readableModel.Path && text.Text.EndsWith("models--buttercrab--dia-v1-1.6b", StringComparison.Ordinal));
         search.Text = "no-such-model";
         PumpUntil(() => list.Items.Count == 0, TimeSpan.FromSeconds(3));
         Assert.Equal(Visibility.Visible, ((StackPanel)OpportunityControl(window, "EmptyState")).Visibility);

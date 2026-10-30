@@ -25,7 +25,19 @@ public sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation, 
     public string Title => Item.Title;
     public string Category => Item.Category;
     public string Path => Item.Path;
-    public string Name => System.IO.Path.GetFileName(Path.TrimEnd('\\', '/')) is { Length: > 0 } name ? name : Title;
+    public string Name
+    {
+        get
+        {
+            string name = System.IO.Path.GetFileName(Path.TrimEnd('\\', '/'));
+            if (name.Length == 0) return Title;
+            if (Title != "Hugging Face repository downloads") return name;
+            string[] parts = name.Split("--", StringSplitOptions.None);
+            return parts.Length is 2 or 3 && parts[0].ToLowerInvariant() is "models" or "datasets" or "spaces"
+                && parts[1].Length > 0 && (parts.Length == 2 || parts[2].Length > 0)
+                ? string.Join("/", parts, 1, parts.Length - 1) : name;
+        }
+    }
     public string LocationContext => _scope is not null && Path.Equals(_scope, StringComparison.Ordinal) ? ""
         : System.IO.Path.GetDirectoryName(DisplayPath) ?? "";
     public string Size => unmeasured ? "Not checked" : OpportunitySizeText.Format(Item.DisplayBytes(hasAllocation));

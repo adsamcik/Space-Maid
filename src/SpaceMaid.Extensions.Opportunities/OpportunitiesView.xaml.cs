@@ -129,7 +129,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         bool detailScope = cleanup && _cleanupDetailKey is not null;
         var detailMembers = detailScope ? (detail?.Locations ?? []).Select(item => (item.ProviderId, item.DirectoryIndex, item.RuleId)).ToHashSet() : null;
         _matchingOpportunityRows = _rows.Where(row => (detailMembers is null || detailMembers.Contains(row.Identity)) && (type is null or "All types" || row.Category == type)
-            && (query.Length == 0 || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+            && (query.Length == 0 || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.Path.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Category.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.GroupName.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
         bool byType = OpportunityGroupingPicker.SelectedIndex == 2;
