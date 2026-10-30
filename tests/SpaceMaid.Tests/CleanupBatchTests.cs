@@ -20,12 +20,14 @@ public sealed class CleanupBatchTests
         Assert.Equal(CleanupReadiness.Ready, plan.BuildAssessments[captured.DirectoryIndex].State);
         IReadOnlyList<Opportunity> Discover(ScanSnapshot current, CancellationToken token) =>
             DeveloperOpportunityFixture.Find(current, token).Select(finding => finding with { IsRegeneratable = false }).ToArray();
-        var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), default,
+        var updates = new List<CleanupProgress>();
+        var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(updates.Add), default,
             (_, _) => { }, discover: Discover);
         var skipped = Assert.Single(result.Locations);
         Assert.Equal(CleanupOutcome.Skipped, skipped.Outcome);
         Assert.False(skipped.Attempted); Assert.Null(skipped.Recycle);
         Assert.Equal(0, result.RecycledCount);
+        Assert.Same(skipped, Assert.Single(updates, update => update.Result is not null).Result);
         Assert.Equal(project.Content, File.ReadAllText(project.File));
         Assert.Equal(project.SourceContent, File.ReadAllText(project.Source));
         Assert.True(Directory.Exists(project.Output));

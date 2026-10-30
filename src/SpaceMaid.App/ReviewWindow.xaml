@@ -23,6 +23,9 @@
                 </ControlTemplate.Triggers>
             </ControlTemplate></Setter.Value></Setter>
         </Style>
+        <Style x:Key="ResultFolderText" TargetType="TextBlock">
+            <Style.Triggers><DataTrigger Binding="{Binding IsRecycled}" Value="True"><Setter Property="TextDecorations" Value="Strikethrough" /></DataTrigger></Style.Triggers>
+        </Style>
     </Window.Resources>
     <Grid Margin="20,16">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -81,7 +84,7 @@
                             <Grid Margin="4,8,8,8" MinHeight="40" ToolTip="{Binding Path}">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /><ColumnDefinition Width="82" /><ColumnDefinition Width="106" /></Grid.ColumnDefinitions>
                                 <CheckBox IsChecked="{Binding Selected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}" VerticalAlignment="Center" AutomationProperties.Name="{Binding SelectionHint}" />
-                                <StackPanel Grid.Column="1" Margin="0,0,10,0"><TextBlock Text="{Binding FolderName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" Opacity="0.6" FontSize="12" Margin="0,3,0,0" /></StackPanel>
+                                <StackPanel Grid.Column="1" Margin="0,0,10,0"><TextBlock Text="{Binding FolderName}" Style="{StaticResource ResultFolderText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Path}" Style="{StaticResource ResultFolderText}" TextTrimming="CharacterEllipsis" Opacity="0.6" FontSize="12" Margin="0,3,0,0" /><TextBlock Text="{Binding Status}" FontSize="12" Margin="0,3,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsRecycled}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel>
                                 <TextBlock Grid.Column="2" Text="{Binding Size}" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                 <TextBlock Grid.Column="3" Text="{Binding Activity}" HorizontalAlignment="Right" VerticalAlignment="Center" Opacity="0.7" FontSize="12" ToolTip="{Binding ActivityTooltip}" />
                             </Grid>

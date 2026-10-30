@@ -107,6 +107,13 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-results")
+                {
+                    BeginWorkflow("Cleanup results and affected-folder estimates");
+                    CheckCleanupResults(app, artifactRoot: FindRepository());
+                    CheckOpportunityCleanup(window, app, artifactRoot: FindRepository());
+                    return;
+                }
                 // Run just these existing workflows when inspecting cleanup UI.
                 // The default desktop gate still exercises every workflow below.
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "opportunities")
@@ -967,6 +974,7 @@ public sealed partial class DesktopTests
                 SetStage("reviewing a thousand cleanup folders with bounded pages and bulk exclusions");
                 CheckBulkCleanupReview(app, artifactRoot);
                 SetStage("confirming batch cleanup and refreshing its affected folders");
+                CheckCleanupResults(app, artifactRoot);
                 CheckOpportunityCleanup(window, app, artifactRoot);
                 SetStage("keeping overlapping extension groups and selections separate");
                 CheckOverlappingOpportunityExtensions(window, app, artifactRoot);

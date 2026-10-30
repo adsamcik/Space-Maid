@@ -198,7 +198,10 @@ public sealed partial class DesktopTests
         typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, [scan, findings, OpportunityGrouping.Build(scan, findings), null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 2;
+        ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
+        Assert.Equal(3, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
         Exception? failure = null; CleanupBatchResult? result = null;
         bool kept = false, confirmed = false;
@@ -236,6 +239,10 @@ public sealed partial class DesktopTests
                     Assert.Equal(2, result.Locations.Count(item => item.Outcome == CleanupOutcome.Recycled));
                     Assert.Contains("Affected folders refreshed", ((TextBlock)dialog.FindName("ResultDetailText")).Text);
                     Assert.Contains("Space stays occupied", ((TextBlock)dialog.FindName("ResultText")).Text);
+                    var movedRows = ((ListBox)dialog.FindName("LocationList")).Items.Cast<CleanupReviewRow>().ToArray();
+                    Assert.Equal(2, movedRows.Length); Assert.All(movedRows, row => Assert.True(row.IsRecycled));
+                    PumpUntil(() => ((TextBlock)dialog.FindName("EstimateText")).Text != "…", TimeSpan.FromSeconds(5));
+                    Assert.StartsWith("1 folder remaining", ((TextBlock)dialog.FindName("EstimateCaption")).Text);
                     Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-results.png"), 860, 740);
                     dialog.Close();
                 }
@@ -247,7 +254,7 @@ public sealed partial class DesktopTests
         {
             var keep = window.ReviewSelectionAsync(); PumpUntil(() => keep.IsCompleted, TimeSpan.FromSeconds(10)); keep.GetAwaiter().GetResult();
             if (failure is not null) throw failure;
-            Assert.True(kept); Assert.True(Directory.Exists(bin)); Assert.True(Directory.Exists(obj));
+            Assert.True(kept, ((TextBlock)window.FindName("StatusText")).Text); Assert.True(Directory.Exists(bin)); Assert.True(Directory.Exists(obj));
             var clean = window.ReviewSelectionAsync(); PumpUntil(() => clean.IsCompleted, TimeSpan.FromSeconds(15)); clean.GetAwaiter().GetResult();
             if (failure is not null) throw failure;
             Assert.True(confirmed); Assert.NotNull(result);
@@ -258,6 +265,8 @@ public sealed partial class DesktopTests
             Assert.Equal(retained, remaining.Path); Assert.False(remaining.Selected);
             Assert.Equal("recent build output preserved after confirmation", File.ReadAllText(retainedFile));
             Assert.Equal(new FileInfo(retainedFile).Length, remaining.Item.LogicalBytes);
+            var remainingEstimate = window.Operations.EstimateCleanup(updated, OpportunityDetector.Find(updated));
+            Assert.Equal(SizeText.Format(remainingEstimate.EstimatedBytes), ((TextBlock)window.FindName("CandidateText")).Text);
             string log = File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip));
             Assert.Contains("cleanup-confirmed", log); Assert.Contains("cleanup-location-result", log); Assert.Contains("cleanup-complete", log);
             foreach (string line in log.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))

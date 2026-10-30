@@ -62,6 +62,8 @@ public partial class MainWindow
                     ? await Operations.RecheckAsync(validation.Snapshot, changedScopes, work.Token, log.Record) : validation.Snapshot;
                 await RefreshAffectedAsync(displayed, requests, result.Summary, work.Token, log, updated);
                 result = result with { RefreshNote = "Affected folders refreshed; other folders retain earlier scan data." };
+                if (ReferenceEquals(_snapshot, updated))
+                    result = result with { RefreshedSnapshot = updated, RefreshedFindings = _rows.Select(row => row.Item).ToArray() };
             }
             else
             {

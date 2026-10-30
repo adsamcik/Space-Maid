@@ -9,10 +9,13 @@ namespace SpaceMaid.App;
 internal enum CleanupOutcome { Recycled, Skipped, Failed, Cancelled, NotProcessed }
 internal sealed record CleanupLocationResult(Opportunity Location, CleanupOutcome Outcome,
     string Message, bool Attempted = false, RecycleResult? Recycle = null);
-internal sealed record CleanupProgress(int Completed, int Total, string Path, string Message);
+internal sealed record CleanupProgress(int Completed, int Total, string Path, string Message,
+    CleanupLocationResult? Result = null);
 internal sealed record CleanupBatchResult(IReadOnlyList<CleanupLocationResult> Locations,
     OpportunityReviewValidation? Validation, string? ValidationError = null, string? RefreshNote = null)
 {
+    public ScanSnapshot? RefreshedSnapshot { get; init; }
+    public IReadOnlyList<Opportunity>? RefreshedFindings { get; init; }
     public int RecycledCount => Locations.Count(item => item.Outcome == CleanupOutcome.Recycled);
     public bool Cancelled => Locations.Any(item => item.Outcome is CleanupOutcome.Cancelled or CleanupOutcome.NotProcessed);
     public string Summary => $"{RecycledCount:N0} moved · {Locations.Count(item => item.Outcome == CleanupOutcome.Skipped):N0} skipped"
@@ -126,7 +129,7 @@ internal static class CleanupBatch
                     {
                         results.Add(result); completed++;
                         diagnostic("cleanup-location-result", result);
-                        progress.Report(new(completed, plan.Targets.Count, target.Path, result.Message));
+                        progress.Report(new(completed, plan.Targets.Count, target.Path, result.Message, result));
                         results.AddRange(plan.Preview.Locations.Skip(completed).Select(remaining => new CleanupLocationResult(remaining,
                             CleanupOutcome.NotProcessed, "Not started because cleanup was cancelled.")));
                         break;
@@ -141,7 +144,7 @@ internal static class CleanupBatch
             }
             results.Add(result); completed++;
             diagnostic("cleanup-location-result", result);
-            progress.Report(new(completed, plan.Targets.Count, target.Path, result.Message));
+            progress.Report(new(completed, plan.Targets.Count, target.Path, result.Message, result));
         }
         return new(results.AsReadOnly(), validation);
     }

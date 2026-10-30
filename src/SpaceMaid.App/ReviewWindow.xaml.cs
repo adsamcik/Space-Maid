@@ -169,6 +169,7 @@ public partial class ReviewWindow : Window
     {
         _estimateTimer.Stop();
         if (_plan is null || _closed) return;
+        if (_executingPlan is not null) { await UpdateRemainingEstimateAsync(); return; }
         using var cancellation = new CancellationTokenSource();
         _estimateCancellation = cancellation;
         int version = _selectionVersion;
@@ -190,7 +191,8 @@ public partial class ReviewWindow : Window
     private void SetPreview(CleanupPreview preview)
     {
         EstimateText.Text = SizeText.Format(preview.EstimatedBytes);
-        EstimateCaption.Text = $"{preview.Locations.Count:N0} {(preview.Locations.Count == 1 ? "folder" : "folders")} selected · {(preview.UsesLogicalSize ? "Logical size" : "Estimated space")}";
+        EstimateCaption.Text = $"{preview.Locations.Count:N0} {(preview.Locations.Count == 1 ? "folder" : "folders")} {(_executingPlan is null ? "selected" : "remaining")} · {(preview.UsesLogicalSize ? "Logical size" : "Estimated space")}";
+        if (_remainingEstimateUncertain && preview.Locations.Count > 0) EstimateCaption.Text += " · Previous estimate";
         EstimateCaption.ToolTip = $"{preview.FileCount:N0} file objects" + (preview.UsesLogicalSize ? " · Physical saving unknown" : "")
             + (preview.ExcludedSharedBytes > 0 ? $" · {SizeText.Format(preview.ExcludedSharedBytes)} shared allocation excluded" : "");
         EstimateText.ToolTip = preview.UsesLogicalSize ? "Logical size; physical saving unknown." : "Selected estimate; shared files may remain in use.";
@@ -216,6 +218,8 @@ public partial class ReviewWindow : Window
     {
         if (_execute is null || _selectedPlan is null || !CleanupButton.IsEnabled || Execution is not null) return;
         var chosen = _selectedPlan;
+        _executingPlan = chosen;
+        _estimateTimer.Stop(); _estimateCancellation?.Cancel(); _selectionVersion++;
         using var cleanup = new CancellationTokenSource(); _cleanup = cleanup;
         CleanupButton.IsEnabled = false; SelectionControls.IsEnabled = GroupList.IsEnabled = LocationList.IsEnabled = VisibleSelection.IsEnabled = false;
         foreach (var row in _locations) row.DisableSelection();
@@ -224,6 +228,7 @@ public partial class ReviewWindow : Window
         var progress = new Progress<CleanupProgress>(update =>
         {
             if (_cleanup is null) return;
+            if (update.Result is { } completed) ShowLocationResult(completed);
             CleanupProgressBar.IsIndeterminate = update.Path.Length == 0;
             CleanupProgressBar.Maximum = Math.Max(1, update.Total); CleanupProgressBar.Value = update.Completed;
             ResultText.Text = $"{update.Completed:N0}/{update.Total:N0} · {update.Message}";
@@ -234,17 +239,16 @@ public partial class ReviewWindow : Window
         {
             var execution = _execute(chosen, progress, cleanup.Token); Execution = execution;
             Result = await execution;
-            var outcomes = Result.Locations.GroupBy(item => (item.Location.ProviderId, item.Location.RuleId, item.Location.Path)).ToDictionary(group => group.Key, group => group.Last());
-            foreach (var row in _locations)
-                row.SetResult(outcomes.GetValueOrDefault(row.Identity));
+            ShowCompletedResults(Result);
             ShowResults();
             ResultText.Text = Result.Summary;
             ResultDetailText.Text = string.Join("\n", new[] { Result.ValidationError, Result.RefreshNote }.Where(text => !string.IsNullOrEmpty(text)));
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {
-            foreach (var row in _locations) row.SetResult(row.Selected ? new(row.Location, CleanupOutcome.Failed,
-                "Recheck before trying again; some contents may already have moved.") : null);
+            _remainingEstimateUncertain = true;
+            foreach (var row in _locations) row.SetResult(row.Result ?? (row.Selected ? new(row.Location, CleanupOutcome.Failed,
+                "Recheck before trying again; some contents may already have moved.") : null));
             ShowResults();
             ResultText.Text = "Cleanup could not finish. Recheck before trying again.";
             ResultDetailText.Text = error.Message + " Some contents may already have moved.";
@@ -265,6 +269,7 @@ public partial class ReviewWindow : Window
             && _locations.Any(row => row.DisplayState == CleanupReadiness.NeedsReview))
         { _filter = CleanupReadiness.NeedsReview; ManualFilter.IsChecked = true; }
         ApplyFilters(false);
+        ScheduleRemainingEstimate();
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)
