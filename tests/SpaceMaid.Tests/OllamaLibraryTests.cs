@@ -13,7 +13,7 @@ public sealed class OllamaLibraryTests
     {
         schemaVersion = 2,
         config = new { size = 512, digest = "sha256:" + new string('a', 64) },
-        layers = cloud ? null : new[] { new { size = bytes, digest = "sha256:" + new string('b', 64) } }
+        layers = cloud ? null : new[] { new { mediaType = "application/vnd.ollama.image.model", size = bytes, digest = "sha256:" + new string('b', 64) } }
     });
     internal static string WriteModel(string library, string name, long bytes, string registry = "registry.ollama.ai", string space = "library")
     {

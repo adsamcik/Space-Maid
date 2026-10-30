@@ -79,9 +79,9 @@ public static partial class OpportunityDetector
         if ((direct & (Markers.Blobs | Markers.Manifests)) == (Markers.Blobs | Markers.Manifests)
             && evidence.HasNested(directory, "blobs", Markers.OllamaBlob))
             return new("Ollama model library", "AI models & data", "A model store with manifests and sha256-named blobs, including relocated OLLAMA_MODELS stores.",
-                "Space Maid keeps this model library. Models can share blobs and be needed offline; partial downloads may belong to active pulls. Do not remove individual blob files.",
-                "Open Extensions → AI models to inspect local Ollama models and review deletion of an individual model. The shared library folder stays protected.", true,
-                "Use the AI models workflow to remove individual Ollama models; the shared model library folder is kept.");
+                "Space Maid keeps the shared library folder. Models can share data and may be needed offline. Select a model and choose Review removal.",
+                "Select a model in this library and choose Review removal. Ollama must be running and using this library.", true,
+                "Use Review removal for individual Ollama models; the shared library folder is kept.");
         if (ParentNamed(scan, Parent(scan, parent), "models")
             && ParentNamed(scan, Parent(scan, Parent(scan, parent)), ".lmstudio") && evidence.Has(directory, Markers.ModelWeights))
             return new("LM Studio model downloads", "AI models & data", "A .lmstudio/models/<publisher>/<repository> folder containing GGUF weights.",

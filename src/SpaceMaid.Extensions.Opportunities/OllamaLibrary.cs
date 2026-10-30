@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Contracts;
@@ -10,6 +11,8 @@ namespace SpaceMaid.Extensions.Opportunities;
 internal sealed record LibraryModel(string Name, long? Bytes, string Detail)
 {
     public string SizeText => Bytes is { } bytes ? OpportunitySizeText.Format(bytes) : "Unavailable";
+    public string? Digest { get; init; }
+    public string? BlobDigest { get; init; }
 }
 internal sealed record ModelLibrary(IReadOnlyList<LibraryModel> Models, string Note);
 
@@ -65,7 +68,8 @@ internal static class OllamaLibrary
                         {
                             byte[] data = ReadManifest(files, path, token);
                             bytesRead += data.Length;
-                            models.Add(new(name, ManifestSize(data), path));
+                            models.Add(new(name, ManifestSize(data), path)
+                            { Digest = Convert.ToHexStringLower(SHA256.HashData(data)), BlobDigest = ModelBlob(data) });
                         }
                         catch (Exception error) when (Expected(error))
                         { unknown++; models.Add(new(name, null, "Model details unavailable. " + error.Message)); }
@@ -130,6 +134,17 @@ internal static class OllamaLibrary
         if (layers.ValueKind == JsonValueKind.Array)
             foreach (var layer in layers.EnumerateArray()) total = checked(total + LayerSize(layer));
         return total;
+    }
+    private static string? ModelBlob(ReadOnlyMemory<byte> data)
+    {
+        using var document = JsonDocument.Parse(data);
+        var layers = document.RootElement.GetProperty("layers");
+        if (layers.ValueKind == JsonValueKind.Array)
+            foreach (var layer in layers.EnumerateArray())
+                if (layer.TryGetProperty("mediaType", out var type) && type.ValueKind == JsonValueKind.String
+                    && type.GetString() == "application/vnd.ollama.image.model")
+                    return layer.GetProperty("digest").GetString()![7..].ToLowerInvariant();
+        return null;
     }
     private static long LayerSize(JsonElement layer)
     {

@@ -115,6 +115,7 @@ public sealed partial class DesktopTests
                     CheckOpportunityBrowser(window, app, artifactRoot: FindRepository());
                     CheckBuildContents(window, app, artifactRoot: FindRepository());
                     CheckAiStorage(window, app, artifactRoot: FindRepository());
+                    CheckModels(window, app, artifactRoot: FindRepository());
                     return;
                 }
                 SetStage("loading and independently disabling the Opportunities browser extension");

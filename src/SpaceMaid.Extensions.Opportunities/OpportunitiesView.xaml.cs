@@ -361,6 +361,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         BuildKeepRecentDaysBox.IsEnabled = OpportunityGrid.IsEnabled = GroupBrowserControls.IsEnabled = OpportunityFilters.IsEnabled
             = OpportunityToolbar.IsEnabled = CleanupGroupCards.IsEnabled = WorktreeCleanupControls.IsEnabled = OllamaModelsPanel.IsEnabled = !busy;
         ApplyRecycleBinState();
+        UpdateModelRemoval();
         UpdateSelection();
     }
     public void UpdateRecycleBin(OpportunityRecycleBinState state) { _recycleBin = state; ApplyRecycleBinState(); }
@@ -405,6 +406,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     {
         if (_disposed) return; _disposed = true;
         _modelRead?.Cancel();
+        _modelRemoval?.Cancel();
         _opportunitySearchTimer.Stop(); _opportunitySearchTimer.Tick -= SearchElapsed;
         foreach (var row in _rows) row.PropertyChanged -= RowChanged;
     }

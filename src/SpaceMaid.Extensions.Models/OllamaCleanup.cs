@@ -2,6 +2,7 @@ using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.Extensions.Models;
 
@@ -21,7 +22,10 @@ internal sealed record OllamaModel(string Name, string Digest, long Bytes, bool 
     }
 }
 internal sealed record OllamaSnapshot(IReadOnlyList<OllamaModel> Models, DateTimeOffset ObservedAt);
-internal sealed record OllamaCleanupPlan(OllamaModel Model, DateTimeOffset PreparedAt);
+internal sealed record OllamaCleanupPlan(OllamaModel Model, DateTimeOffset PreparedAt)
+{
+    public ModelRemovalRequest? Library { get; init; }
+}
 internal sealed record OllamaCleanupResult(bool Deleted, bool Attempted, string Message, OllamaSnapshot? Snapshot);
 
 internal static class OllamaCleanup
@@ -53,6 +57,19 @@ internal static class OllamaCleanup
         var current = await ReadSnapshotAsync(client, deadline.Token).ConfigureAwait(false);
         return new(RequireSameUnloadedModel(current, selected), DateTimeOffset.UtcNow);
     }
+    internal static async Task<OllamaCleanupPlan> PrepareLibraryAsync(ModelRemovalRequest request, CancellationToken token)
+    {
+        using var client = CreateClient();
+        return await PrepareLibraryWithClientAsync(client, request, token).ConfigureAwait(false);
+    }
+    internal static async Task<OllamaCleanupPlan> PrepareLibraryWithClientAsync(HttpClient client, ModelRemovalRequest request,
+        CancellationToken token, TimeSpan? timeout = null)
+    {
+        using var deadline = Deadline(token, timeout);
+        await VerifyLibraryAsync(client, request, deadline.Token).ConfigureAwait(false);
+        var current = await ReadSnapshotAsync(client, deadline.Token).ConfigureAwait(false);
+        return new(RequireSameUnloadedModel(current, new(request.Name, request.Digest, request.Bytes, false)), DateTimeOffset.UtcNow) { Library = request };
+    }
     internal static async Task<OllamaCleanupResult> ExecuteAsync(OllamaCleanupPlan plan, CancellationToken token)
     {
         using var client = CreateClient();
@@ -64,6 +81,7 @@ internal static class OllamaCleanup
         bool attempted = false;
         try
         {
+            if (plan.Library is { } library) await VerifyLibraryAsync(client, library, deadline.Token).ConfigureAwait(false);
             var fresh = await ReadSnapshotAsync(client, deadline.Token).ConfigureAwait(false);
             var model = RequireSameUnloadedModel(fresh, plan.Model);
             deadline.Token.ThrowIfCancellationRequested();
@@ -83,6 +101,34 @@ internal static class OllamaCleanup
                 ? "The deletion request may have reached Ollama. Its result could not be verified; inspect again before retrying. " + error.Message
                 : "No deletion started. " + error.Message, null);
         }
+    }
+
+    private static async Task VerifyLibraryAsync(HttpClient client, ModelRemovalRequest library, CancellationToken token)
+    {
+        // /api/show's generated first FROM names the server's actual model blob.
+        // A local model in the selected store also proves the root for cloud-only tags.
+        // https://github.com/ollama/ollama/blob/main/server/images.go (Model.String)
+        if (library.ProbeBlobDigest.Length != 64 || library.ProbeBlobDigest.AsSpan().IndexOfAnyExcept("0123456789abcdef") >= 0)
+            throw new InvalidOperationException("Ollama's library could not be verified for this model. Use AI models to inspect the running service.");
+        using var request = new HttpRequestMessage(HttpMethod.Post, LocalEndpoint + "/api/show")
+        { Content = new StringContent(JsonSerializer.Serialize(new { model = library.ProbeName }), Encoding.UTF8, "application/json") };
+        using var document = JsonDocument.Parse(await SendAsync(client, request, token).ConfigureAwait(false));
+        if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("modelfile", out var value) || value.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("Ollama did not report its model library. Update or restart Ollama, then try again.");
+        using var lines = new StringReader(value.GetString()!);
+        string? line;
+        do { line = lines.ReadLine()?.Trim(); } while (line is not null && (line.Length == 0 || line.StartsWith('#')));
+        try
+        {
+            string expected = Path.GetFullPath(Path.Join(library.LibraryPath, "blobs", "sha256-" + library.ProbeBlobDigest));
+            if (line is null || !line.StartsWith("FROM ", StringComparison.Ordinal) || !Path.IsPathFullyQualified(line[5..].Trim())
+                || !Path.GetFullPath(line[5..].Trim()).Equals(expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Ollama is not using this model library. Start Ollama with this library, then try again.");
+        }
+        catch (ArgumentException error) { throw new InvalidDataException("Ollama reported an invalid model location. Restart Ollama, then try again.", error); }
+        var current = await ReadSnapshotAsync(client, token).ConfigureAwait(false);
+        if (!current.Models.Any(model => model.Name == library.ProbeName && model.Digest == library.ProbeDigest))
+            throw new InvalidOperationException("The library's local model changed. Refresh the model list and review again.");
     }
 
     internal static OllamaModel RequireSameUnloadedModel(OllamaSnapshot current, OllamaModel expected)

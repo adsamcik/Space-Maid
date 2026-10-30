@@ -1,8 +1,10 @@
 using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using System.Reflection;
+using Expression = System.Linq.Expressions.Expression;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using SpaceMaid.App;
 using SpaceMaid.App.Extensions;
 using Xunit;
@@ -59,7 +61,7 @@ public sealed partial class DesktopTests
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         var row = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
-        Assert.Equal("Manage in owning tool", row.Review); Assert.Contains("AI models", row.Item.SuggestedAction);
+        Assert.Equal("Manage in owning tool", row.Review); Assert.Contains("Review removal", row.Item.SuggestedAction);
         Assert.False(row.CanSelect); Assert.False(((Button)OpportunityControl(window, "SelectListedButton")).IsEnabled);
         row.Selected = true; Assert.False(row.Selected);
         Assert.Contains("Space Maid keeps", row.Item.Caution);
@@ -142,6 +144,7 @@ public sealed partial class DesktopTests
         var status = (TextBlock)view.FindName("ModelStatus");
         var search = (TextBox)view.FindName("ModelSearch");
         var refresh = (Button)view.FindName("RefreshModelsButton");
+        var remove = (Button)view.FindName("RemoveModelButton");
         PumpUntil(() => list.Items.Count == 3, TimeSpan.FromSeconds(5));
         Assert.Equal(Visibility.Collapsed, ((ListBox)view.FindName("OpportunityGrid")).Visibility);
         Assert.Equal(Visibility.Collapsed, ((Grid)view.FindName("OpportunityFilters")).Visibility);
@@ -155,7 +158,9 @@ public sealed partial class DesktopTests
         search.Text = "QWEN"; Assert.Single(list.Items);
         search.Text = "missing"; Assert.Empty(list.Items); Assert.Equal("0 of 3 models", status.Text);
         search.Text = "";
+        Assert.False(remove.IsEnabled);
         list.SelectedIndex = 0;
+        Assert.True(remove.IsEnabled);
 #pragma warning disable WPF0001
         foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
         {
@@ -172,6 +177,7 @@ public sealed partial class DesktopTests
         PumpUntil(() => refresh.IsEnabled, TimeSpan.FromSeconds(5));
         Assert.Equal("gemma", search.Text); Assert.Single(list.Items);
         Assert.Equal("10 GiB", list.Items[0].GetType().GetProperty("SizeText")!.GetValue(list.Items[0]));
+        CheckInlineRemoval();
         Directory.Delete(Path.Join(library, "manifests"), recursive: true);
         refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         PumpUntil(() => refresh.IsEnabled, TimeSpan.FromSeconds(5));
@@ -184,5 +190,99 @@ public sealed partial class DesktopTests
         ((Button)view.FindName("BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((ComboBox)view.FindName("OpportunityGroupingPicker")).SelectedIndex = 0;
         Assert.Equal(Visibility.Collapsed, ((Grid)view.FindName("OllamaModelsPanel")).Visibility);
+
+        void CheckInlineRemoval()
+        {
+            var modelsView = Assert.Single(runtime.Entries, item => item.Id == "space-maid.models").View!;
+            Assert.IsAssignableFrom<IModelRemovalWorkflow>(modelsView);
+            var modelType = modelsView.GetType();
+            var preparer = modelType.GetProperty("LibraryPreparer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var executor = modelType.GetProperty("Executor", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            object originalPreparer = preparer.GetValue(modelsView)!, originalExecutor = executor.GetValue(modelsView)!;
+            int preparations = 0, executions = 0;
+            bool loaded = true;
+            bool failRefresh = false;
+            string expectedModel = "gemma3:12b-it-qat";
+            object Completed(PropertyInfo property, object value) => typeof(Task).GetMethods().Single(method => method.Name == "FromResult")
+                .MakeGenericMethod(property.PropertyType.GetMethod("Invoke")!.ReturnType.GetGenericArguments()[0]).Invoke(null, [value])!;
+            void SetDelegate(PropertyInfo property, Func<object?[], object> provider)
+            {
+                var invoke = property.PropertyType.GetMethod("Invoke")!;
+                var parameters = invoke.GetParameters().Select(parameter => Expression.Parameter(parameter.ParameterType)).ToArray();
+                var values = Expression.NewArrayInit(typeof(object), parameters.Select(parameter => Expression.Convert(parameter, typeof(object))));
+                property.SetValue(modelsView, Expression.Lambda(property.PropertyType,
+                    Expression.Convert(Expression.Invoke(Expression.Constant(provider), values), invoke.ReturnType), parameters).Compile());
+            }
+            SetDelegate(preparer, values =>
+            {
+                preparations++;
+                if (loaded) throw new InvalidOperationException("This model is loaded. Finish its sessions before cleanup.");
+                var request = Assert.IsType<ModelRemovalRequest>(values[0]);
+                Assert.Equal(library, request.LibraryPath); Assert.Equal(expectedModel, request.Name);
+                var model = Activator.CreateInstance(modelType.Assembly.GetType("SpaceMaid.Extensions.Models.OllamaModel")!,
+                    [request.Name, request.Digest, request.Bytes, false])!;
+                var plan = Activator.CreateInstance(modelType.Assembly.GetType("SpaceMaid.Extensions.Models.OllamaCleanupPlan")!, [model, DateTimeOffset.UtcNow])!;
+                plan.GetType().GetProperty("Library")!.SetValue(plan, request);
+                return Completed(preparer, plan);
+            });
+            SetDelegate(executor, _ =>
+            {
+                executions++;
+                if (failRefresh) Directory.Delete(Path.Join(library, "manifests"), recursive: true);
+                else File.Delete(first);
+                var result = Activator.CreateInstance(modelType.Assembly.GetType("SpaceMaid.Extensions.Models.OllamaCleanupResult")!,
+                    [true, true, "Model removed by Ollama. Shared data may remain.", null])!;
+                return Completed(executor, result);
+            });
+            Task Remove() => (Task)view.GetType().GetMethod("RemoveLibraryModelAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, null)!;
+            try
+            {
+                list.SelectedIndex = 0; Assert.True(remove.IsEnabled);
+                var blocked = Remove(); PumpUntil(() => blocked.IsCompleted, TimeSpan.FromSeconds(3)); blocked.GetAwaiter().GetResult();
+                Assert.Contains("loaded", status.Text); Assert.Equal(0, executions); Assert.True(File.Exists(first));
+                loaded = false;
+                Preview(confirm: false); Assert.Equal(0, executions); Assert.True(File.Exists(first));
+                Assert.Equal("gemma", search.Text); Assert.Single(list.Items);
+                Preview(confirm: true); Assert.Equal(1, executions); Assert.Equal(3, preparations);
+                Assert.False(File.Exists(first)); Assert.Empty(list.Items); Assert.Equal("gemma", search.Text);
+                Assert.Contains("Model removed", status.Text); Assert.False(remove.IsEnabled);
+                Assert.Contains("Out of date", ((TextBlock)view.FindName("CleanupFreshnessText")).Text);
+                Assert.True(File.Exists(Path.Join(library, "manifests", "registry.ollama.ai", "library", "qwen3", "8b")));
+                search.Text = "qwen"; list.SelectedIndex = 0;
+                expectedModel = "qwen3:8b"; failRefresh = true;
+                Preview(confirm: true);
+                Assert.Contains("Model removed", status.Text); Assert.Contains("could not be refreshed", status.Text);
+                Assert.Empty(list.Items); Assert.Equal("qwen", search.Text);
+                Directory.CreateDirectory(Path.Join(library, "manifests"));
+            }
+            finally { preparer.SetValue(modelsView, originalPreparer); executor.SetValue(modelsView, originalExecutor); }
+
+            void Preview(bool confirm)
+            {
+                Exception? failure = null; bool shown = false;
+                var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+                {
+                    var dialog = app.Windows.Cast<Window>().FirstOrDefault(candidate => candidate.GetType().FullName == "SpaceMaid.Extensions.Models.ModelCleanupWindow" && candidate.IsVisible);
+                    if (dialog is null) return;
+                    try
+                    {
+                        shown = true;
+                        Assert.Contains(Descendants(dialog).OfType<TextBlock>(), text => text.Text == expectedModel);
+                        Assert.Contains(Descendants(dialog).OfType<TextBox>(), text => text.IsReadOnly && text.Text == library);
+                        if (!confirm) Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "ollama-inline-removal-review.png"), 640, 570);
+                        if (confirm) ((Button)dialog.FindName("DeleteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        else dialog.DialogResult = false;
+                    }
+                    catch (Exception error) { failure = error; dialog.Close(); }
+                }, Dispatcher.CurrentDispatcher);
+                try
+                {
+                    var task = Remove(); PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(5)); task.GetAwaiter().GetResult();
+                    if (failure is not null) throw failure;
+                    Assert.True(shown);
+                }
+                finally { timer.Stop(); }
+            }
+        }
     }
 }

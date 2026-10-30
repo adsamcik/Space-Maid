@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using SpaceMaid.Core.IO;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.Extensions.Opportunities;
 
@@ -10,6 +11,7 @@ public partial class OpportunitiesView
     private CancellationTokenSource? _modelRead;
     private string? _modelLibraryPath;
     private ModelLibrary? _modelLibrary;
+    private CancellationTokenSource? _modelRemoval;
 
     private void UpdateModelLibrary()
     {
@@ -23,6 +25,7 @@ public partial class OpportunitiesView
         OpportunityRowsHeight.Height = show ? single ? new GridLength(0) : new GridLength(110) : new GridLength(1, GridUnitType.Star);
         ModelRowsHeight.Height = show ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
         if (path == _modelLibraryPath) return;
+        _modelRemoval?.Cancel();
         _modelRead?.Cancel(); _modelLibraryPath = path; _modelLibrary = null;
         ModelSearch.Text = ""; LibraryModelList.ItemsSource = null;
         if (path is not null) _ = ReadModelLibraryAsync();
@@ -35,6 +38,7 @@ public partial class OpportunitiesView
         _modelRead?.Cancel();
         using var read = new CancellationTokenSource();
         _modelRead = read; _modelLibrary = null; LibraryModelList.ItemsSource = null;
+        UpdateModelRemoval();
         RefreshModelsButton.IsEnabled = false; ModelStatus.Text = "Reading models…";
         try
         {
@@ -54,7 +58,7 @@ public partial class OpportunitiesView
         }
         finally
         {
-            if (_modelRead == read) { _modelRead = null; RefreshModelsButton.IsEnabled = true; }
+            if (_modelRead == read) { _modelRead = null; RefreshModelsButton.IsEnabled = _modelRemoval is null; UpdateModelRemoval(); }
         }
     }
     private void ModelSearch_Changed(object sender, TextChangedEventArgs e) => FilterModels();
@@ -69,5 +73,43 @@ public partial class OpportunitiesView
         ModelStatus.Text = $"{models.Length:N0}" + (models.Length == library.Models.Count ? "" : $" of {library.Models.Count:N0}")
             + (library.Models.Count == 1 ? " model" : " models") + (library.Note.Length > 0 ? " · " + library.Note : "");
         ModelStatus.ToolTip = null;
+        UpdateModelRemoval();
+    }
+    private void LibraryModel_Changed(object sender, SelectionChangedEventArgs e) => UpdateModelRemoval();
+    private void UpdateModelRemoval()
+    {
+        if (RemoveModelButton is null) return;
+        RemoveModelButton.IsEnabled = !_busy && _modelRead is null && _modelRemoval is null && _host.CanRemoveModels
+            && LibraryModelList.SelectedItem is LibraryModel { Digest: not null, Bytes: not null };
+        RemoveModelButton.ToolTip = _host.CanRemoveModels ? "Check this model and its library in Ollama, then review permanent removal."
+            : "Enable the AI models extension and reopen Space Maid to remove models.";
+    }
+    private async void RemoveModel_Click(object sender, RoutedEventArgs e) => await RemoveLibraryModelAsync();
+    internal async Task RemoveLibraryModelAsync()
+    {
+        if (!RemoveModelButton.IsEnabled || _modelLibraryPath is not { } path
+            || LibraryModelList.SelectedItem is not LibraryModel { Digest: { } digest, Bytes: { } bytes } selected) return;
+        var probe = selected.BlobDigest is not null ? selected : _modelLibrary?.Models.FirstOrDefault(model => model.BlobDigest is not null);
+        using var removal = new CancellationTokenSource();
+        _modelRemoval = removal; UpdateModelRemoval();
+        RefreshModelsButton.IsEnabled = LibraryModelList.IsEnabled = ModelSearch.IsEnabled = false;
+        ModelStatus.Text = "Checking the model and its library in Ollama…";
+        try
+        {
+            var request = new ModelRemovalRequest(path, selected.Name, digest, bytes, probe?.Name ?? "", probe?.Digest ?? "", probe?.BlobDigest ?? "");
+            var result = await _host.ReviewModelRemovalAsync(request, removal.Token);
+            if (_disposed || _modelLibraryPath != path) return;
+            if (result.Attempted) await ReadModelLibraryAsync();
+            if (_disposed || _modelLibraryPath != path) return;
+            ModelStatus.Text = result.Message + (result.Attempted && _modelLibrary is null
+                ? " Models could not be refreshed. Check folder access, then refresh."
+                : _modelLibrary?.Note is { Length: > 0 } note ? " " + note : "");
+        }
+        finally
+        {
+            _modelRemoval = null;
+            RefreshModelsButton.IsEnabled = LibraryModelList.IsEnabled = ModelSearch.IsEnabled = true;
+            UpdateModelRemoval();
+        }
     }
 }

@@ -1,10 +1,11 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.Extensions.Models;
 
-public partial class ModelsView : UserControl, SpaceMaid.Extensions.Contracts.IOptimizationWorkflowView
+public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModelRemovalWorkflow
 {
     private readonly CancellationToken _lifetime;
     private CancellationTokenSource? _work;
@@ -20,6 +21,7 @@ public partial class ModelsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     internal Func<CancellationToken, Task<OllamaSnapshot>> Inspector { get; set; } = OllamaCleanup.InspectAsync;
     internal Func<OllamaModel, CancellationToken, Task<OllamaCleanupPlan>> Preparer { get; set; } = OllamaCleanup.PrepareAsync;
     internal Func<OllamaCleanupPlan, CancellationToken, Task<OllamaCleanupResult>> Executor { get; set; } = OllamaCleanup.ExecuteAsync;
+    internal Func<ModelRemovalRequest, CancellationToken, Task<OllamaCleanupPlan>> LibraryPreparer { get; set; } = OllamaCleanup.PrepareLibraryAsync;
 
     internal ModelsView(CancellationToken lifetime)
     {
@@ -60,6 +62,29 @@ public partial class ModelsView : UserControl, SpaceMaid.Extensions.Contracts.IO
             _snapshot = result.Snapshot; Filter();
             StatusText.Text = result.Message;
         });
+    }
+    public async Task<ModelRemovalResult> ReviewModelRemovalAsync(ModelRemovalRequest model, Window owner, CancellationToken token)
+    {
+        if (IsOptimizationBusy || _lifetime.IsCancellationRequested || token.IsCancellationRequested)
+            return new(false, false, "Another model operation is active. Try again when it finishes.");
+        ModelRemovalResult? outcome = null;
+        bool attempted = false;
+        await RunAsync(async workToken =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, workToken);
+            var plan = await LibraryPreparer(model, linked.Token);
+            linked.Token.ThrowIfCancellationRequested();
+            var preview = new ModelCleanupWindow(plan) { Owner = owner };
+            if (preview.ShowDialog() != true)
+            { outcome = new(false, false, "Removal cancelled."); return; }
+            linked.Token.ThrowIfCancellationRequested();
+            _deleting = true;
+            attempted = true;
+            var result = await Executor(plan, linked.Token);
+            _snapshot = null; Filter();
+            outcome = new(result.Deleted, result.Attempted, result.Message);
+        });
+        return outcome ?? new(false, attempted, StatusText.Text);
     }
     private async Task RunAsync(Func<CancellationToken, Task> work)
     {

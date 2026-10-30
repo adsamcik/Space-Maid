@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using SpaceMaid.Extensions.Models;
+using SpaceMaid.Extensions.Contracts;
 using Xunit;
 
 namespace SpaceMaid.Tests;
@@ -117,6 +118,74 @@ public sealed class OllamaCleanupTests
             TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(2)));
         var many = Enumerable.Range(0, OllamaCleanup.MaximumModels + 1).Select(index => (object)new { name = "model" + index, digest = DigestA, size = 1 }).ToArray();
         Assert.Throws<InvalidDataException>(() => OllamaCleanup.Parse(Tags(many), Tags()));
+    }
+
+    private static readonly ModelRemovalRequest Library = new(@"C:\Owned Ollama\models", Selected.Name, DigestA, Selected.Bytes,
+        Selected.Name, DigestA, DigestB);
+    private static HttpResponseMessage LibraryReport(string? root = null) => Json(JsonSerializer.Serialize(new
+    { modelfile = "# Generated model\n\nFROM " + Path.Join(root ?? Library.LibraryPath, "blobs", "sha256-" + DigestB) + "\nTEMPLATE \"\"\"text\"\"\"" }));
+
+    [Fact]
+    public async Task LibraryReviewAndRemovalVerifyTheServiceStoreAndOnlyThenDeleteTheSelectedTag()
+    {
+        bool deleted = false;
+        using var handler = new Handler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/show") return LibraryReport();
+            if (request.Method == HttpMethod.Delete) { deleted = true; return Json("{}"); }
+            return Json(request.RequestUri.AbsolutePath == "/api/ps" || deleted ? Tags() : Present());
+        });
+        using var client = new HttpClient(handler);
+        var plan = await OllamaCleanup.PrepareLibraryWithClientAsync(client, Library, default);
+        Assert.Equal(Library, plan.Library);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Delete);
+        var result = await OllamaCleanup.ExecuteAsync(client, plan, default);
+        Assert.True(result.Deleted); Assert.True(result.Attempted);
+        Assert.Equal(2, handler.Requests.Count(request => request.Url.EndsWith("/api/show")));
+        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests, request => request.Method == HttpMethod.Delete).Body!);
+        Assert.Equal(Selected.Name, payload.RootElement.GetProperty("model").GetString());
+    }
+    [Theory]
+    [InlineData("other-store")]
+    [InlineData("changed-probe")]
+    [InlineData("unknown-store")]
+    [InlineData("invalid-path")]
+    [InlineData("no-local-model")]
+    public async Task UnverifiedOrChangedLibraryAfterConfirmationCannotDeleteAnyModel(string failure)
+    {
+        using var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/show" => failure == "unknown-store" ? Json("{}") : LibraryReport(failure == "other-store" ? @"D:\different\models" : failure == "invalid-path" ? "C:\\bad\0path" : null),
+            "/api/ps" => Json(Tags()),
+            _ => Json(failure == "changed-probe" ? Present(DigestB) : Present())
+        });
+        using var client = new HttpClient(handler);
+        var library = failure == "no-local-model" ? Library with { ProbeBlobDigest = "" } : Library;
+        var result = await OllamaCleanup.ExecuteAsync(client, new(Selected, DateTimeOffset.UtcNow) { Library = library }, default);
+        Assert.False(result.Deleted); Assert.False(result.Attempted);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Delete);
+    }
+    [Fact]
+    public async Task CloudTagsUseALocalModelToVerifyTheirLibraryWithoutSelectingThatProbeForDeletion()
+    {
+        bool deleted = false;
+        string cloudDigest = new('c', 64);
+        var cloud = Library with { Name = "cloud:latest", Digest = cloudDigest, Bytes = 512 };
+        using var handler = new Handler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/show") return LibraryReport();
+            if (request.Method == HttpMethod.Delete) { deleted = true; return Json("{}"); }
+            return Json(request.RequestUri.AbsolutePath == "/api/ps" ? Tags()
+                : deleted ? Present() : Tags(new { name = Selected.Name, digest = DigestA, size = Selected.Bytes },
+                    new { name = cloud.Name, digest = cloudDigest, size = 512L }));
+        });
+        using var client = new HttpClient(handler);
+        var plan = await OllamaCleanup.PrepareLibraryWithClientAsync(client, cloud, default);
+        var result = await OllamaCleanup.ExecuteAsync(client, plan, default);
+        Assert.True(result.Deleted);
+        using var payload = JsonDocument.Parse(Assert.Single(handler.Requests, request => request.Method == HttpMethod.Delete).Body!);
+        Assert.Equal(cloud.Name, payload.RootElement.GetProperty("model").GetString());
+        Assert.Contains(result.Snapshot!.Models, model => model.Name == Selected.Name);
     }
 
     private static byte[] Present(string? digest = null, long bytes = 4096) => Tags(new { name = Selected.Name, model = Selected.Name, digest = digest ?? DigestA, size = bytes });

@@ -14,6 +14,9 @@ public interface IOpportunityBrowserHost
     Task RefreshRecycleBinAsync();
     Task EmptyRecycleBinAsync();
     Task ReviewSelectionAsync();
+    bool CanRemoveModels => false;
+    Task<ModelRemovalResult> ReviewModelRemovalAsync(ModelRemovalRequest model, CancellationToken token)
+        => Task.FromResult(new ModelRemovalResult(false, false, "AI models is unavailable. Enable the extension and reopen Space Maid."));
     Task CheckWorktreesAsync();
     Task ShowInTreeAsync(Opportunity opportunity);
     void OpenFolder(string path);

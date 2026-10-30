@@ -50,6 +50,18 @@ public partial class MainWindow
         public Task RefreshRecycleBinAsync() => window.RefreshRecycleBinAsync();
         public Task EmptyRecycleBinAsync() => window.EmptySelectedRecycleBinAsync();
         public Task ReviewSelectionAsync() => window.ReviewSelectionAsync();
+        private IModelRemovalWorkflow? Models => window._extensions?.Entries.FirstOrDefault(entry => entry.Id == "space-maid.models")?.View as IModelRemovalWorkflow;
+        public bool CanRemoveModels => Models is not null;
+        public async Task<ModelRemovalResult> ReviewModelRemovalAsync(ModelRemovalRequest model, CancellationToken token)
+        {
+            if (window._closing || window._work is not null || window.OpportunityBrowser?.Detail is not { Title: "Ollama model library" } row
+                || row.Path != model.LibraryPath || Models is not { } workflow)
+                return new(false, false, "Model cleanup is unavailable. Reopen the library and try again.");
+            var result = await workflow.ReviewModelRemovalAsync(model, window, token);
+            if (result.Attempted && !window._closing)
+                window.MarkScanStale("Model cleanup may have changed disk usage. Rescan to update folder sizes.");
+            return result;
+        }
         public async Task CheckWorktreesAsync()
         {
             var task = window.CheckWorktreesAsync(); window._worktreeCheckTask = task;
