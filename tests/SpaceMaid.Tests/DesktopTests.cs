@@ -107,6 +107,16 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                // Run just these existing workflows when inspecting cleanup UI.
+                // The default desktop gate still exercises every workflow below.
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "opportunities")
+                {
+                    BeginWorkflow("Opportunities browsing and selection");
+                    CheckOpportunityBrowser(window, app, artifactRoot: FindRepository());
+                    CheckBuildContents(window, app, artifactRoot: FindRepository());
+                    CheckAiStorage(window, app, artifactRoot: FindRepository());
+                    return;
+                }
                 SetStage("loading and independently disabling the Opportunities browser extension");
                 CheckOpportunityExtensionLifecycle(window);
                 SetStage("keeping the build retention preference bounded and persistent");

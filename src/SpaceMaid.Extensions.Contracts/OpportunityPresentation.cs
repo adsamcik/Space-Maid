@@ -25,6 +25,9 @@ public sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation, 
     public string Title => Item.Title;
     public string Category => Item.Category;
     public string Path => Item.Path;
+    public string Name => System.IO.Path.GetFileName(Path.TrimEnd('\\', '/')) is { Length: > 0 } name ? name : Title;
+    public string LocationContext => _scope is not null && Path.Equals(_scope, StringComparison.Ordinal) ? ""
+        : System.IO.Path.GetDirectoryName(DisplayPath) ?? "";
     public string Size => unmeasured ? "Not checked" : OpportunitySizeText.Format(Item.DisplayBytes(hasAllocation));
     public bool IsUnmeasured => unmeasured;
     public long Bytes => Item.DisplayBytes(hasAllocation);
@@ -35,7 +38,7 @@ public sealed class OpportunityRow(Opportunity opportunity, bool hasAllocation, 
         : Path.StartsWith(_scope.EndsWith('\\') ? _scope : _scope + "\\", StringComparison.Ordinal)
             ? Path[(_scope.EndsWith('\\') ? _scope.Length : _scope.Length + 1)..] : Path;
     public void SetScope(string? scope)
-    { if (_scope == scope) return; _scope = scope; PropertyChanged?.Invoke(this, new(nameof(DisplayPath))); PropertyChanged?.Invoke(this, new(nameof(ScopeLabel))); }
+    { if (_scope == scope) return; _scope = scope; PropertyChanged?.Invoke(this, new(nameof(DisplayPath))); PropertyChanged?.Invoke(this, new(nameof(ScopeLabel))); PropertyChanged?.Invoke(this, new(nameof(LocationContext))); }
     public string Review => Item.CleanupBlockReason.Length > 0 ? "Manage in owning tool"
         : Item.RequiresManualReview ? "Review carefully" : "Usually rebuildable";
     public bool CanSelect => Item.CleanupBlockReason.Length == 0;

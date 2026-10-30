@@ -55,7 +55,7 @@ public sealed class AiStorageTests
         var finding = Assert.Single(OpportunityDetector.Find(scan));
         Assert.Equal(AiStorageFixture.Full(path), finding.Path);
         Assert.Equal("Hugging Face repository downloads", finding.Title); Assert.Empty(finding.CleanupBlockReason);
-        Assert.Contains("Windows", finding.Caution);
+        Assert.Contains("Windows", finding.Reason);
         Assert.Empty(OpportunityDetector.Find(AiStorageFixture.Inventory([path + "/snapshots/revision/weights.bin"])));
     }
 

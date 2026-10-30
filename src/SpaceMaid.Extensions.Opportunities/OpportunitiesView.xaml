@@ -2,15 +2,43 @@
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
+    <UserControl.Resources>
+        <Style x:Key="LocationRow" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="4,1" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding Path}" />
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+                <Grid Background="Transparent">
+                    <Border x:Name="Surface" Background="{DynamicResource WindowForeground}" Opacity="0" CornerRadius="6" />
+                    <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                    <Border x:Name="Focus" BorderBrush="{DynamicResource WindowForeground}" BorderThickness="1" CornerRadius="6" Opacity="0" IsHitTestVisible="False" />
+                </Grid>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.06" /></Trigger>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.12" /></Trigger>
+                    <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Focus" Property="Opacity" Value="0.5" /></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+        <Style x:Key="LocationContext" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" /><Setter Property="Opacity" Value="0.7" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" /><Setter Property="Margin" Value="0,3,0,0" />
+            <Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers>
+        </Style>
+    </UserControl.Resources>
           <Grid>
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="270" /></Grid.ColumnDefinitions>
-            <Grid Grid.ColumnSpan="5" Margin="0,0,0,14" x:Name="OpportunityToolbar">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="176" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="244" /></Grid.ColumnDefinitions>
+            <Grid Grid.ColumnSpan="5" Margin="0,0,0,10" x:Name="OpportunityToolbar">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                         <ToggleButton x:Name="WorktreeOptionsToggle" Content="Worktrees" Click="OpportunityOptions_Click" Visibility="Collapsed" Padding="12,6" Margin="0,0,8,0" AutomationProperties.Name="Show worktree cleanup options" />
-                        <ToggleButton x:Name="ViewOptionsToggle" Content="View options" Click="OpportunityOptions_Click" Padding="12,6" AutomationProperties.Name="Show grouping and sorting options" />
+                        <ToggleButton x:Name="ViewOptionsToggle" Click="OpportunityOptions_Click" Padding="10,5" AutomationProperties.Name="Show grouping and sorting options">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" Margin="0,0,7,0" VerticalAlignment="Center" /><TextBlock Text="View" /></StackPanel>
+                        </ToggleButton>
                     </StackPanel>
                     <Button x:Name="BackToCleanupButton" Content="← Cleanup groups" Click="BackToCleanup_Click" Visibility="Collapsed" HorizontalAlignment="Left" />
                     <TextBlock x:Name="OpportunityPanelTitle" Text="Cleanup groups" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -149,14 +177,13 @@
                     </StackPanel>
                     <ListBox x:Name="OpportunityGroupList" Grid.Row="1" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SelectionChanged="OpportunityGroup_Changed"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Opportunity groups">
-                        <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="6,2" /><Setter Property="AutomationProperties.Name" Value="{Binding Description}" /></Style></ListBox.ItemContainerStyle>
+                        <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem" BasedOn="{StaticResource LocationRow}"><Setter Property="AutomationProperties.Name" Value="{Binding Description}" /></Style></ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate><DataTemplate>
-                            <StackPanel MinHeight="65" Margin="2,4" ToolTip="{Binding Description}">
+                            <StackPanel Margin="0,4" ToolTip="{Binding Description}">
                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Text="{Binding Size}" FontWeight="SemiBold" FontSize="12" Margin="0,3,0,0" />
                                 <ProgressBar Value="{Binding RelativeSize, Mode=OneWay}" Height="4" MinHeight="0" Maximum="100" Margin="0,6,0,0" ToolTip="{Binding SizeComparison}" AutomationProperties.Name="{Binding SizeComparison}" />
                                 <TextBlock Text="{Binding Count}" FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,3,0,0" />
-                                <TextBlock Text="{Binding Path}" FontSize="11" Opacity="0.65" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
                             </StackPanel>
                         </DataTemplate></ListBox.ItemTemplate>
                     </ListBox>
@@ -166,31 +193,41 @@
             <Border x:Name="OpportunityLocations" Grid.Row="1" Grid.Column="2" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
                 <Grid>
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <StackPanel Margin="14,12">
-                        <TextBlock x:Name="OpportunityHeading" Text="All locations" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <StackPanel Margin="12">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="OpportunityHeading" Text="All locations" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="OpportunityResultSummary" Grid.Column="1" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="10,0,0,0" />
+                        </Grid>
                         <TextBlock x:Name="OpportunityScopeText" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" FontSize="12" Opacity="0.7" Margin="0,4,0,0" />
-                        <TextBlock x:Name="OpportunityResultSummary" FontSize="11" Opacity="0.7" Margin="0,5,0,0" />
                     </StackPanel>
                     <Grid x:Name="OpportunityFilters" Grid.Row="1" Margin="12,0,12,8">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                        <TextBlock Text="Search" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
-                        <TextBox x:Name="OpportunitySearch" Grid.Column="1" MinWidth="0" TextChanged="OpportunitySearch_Changed" AutomationProperties.Name="Search opportunity names, paths, types and projects" />
-                        <ComboBox x:Name="OpportunityTypeFilter" Grid.Column="3" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Filter opportunity type" />
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="130" /></Grid.ColumnDefinitions>
+                        <Grid>
+                            <TextBox x:Name="OpportunitySearch" MinWidth="0" Padding="30,6,8,6" TextChanged="OpportunitySearch_Changed" AutomationProperties.Name="Search opportunity names, paths, types and projects" />
+                            <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" Margin="10,0,0,0" VerticalAlignment="Center" Opacity="0.65" IsHitTestVisible="False" />
+                            <TextBlock Text="Search folders" Margin="31,0,8,0" VerticalAlignment="Center" Opacity="0.65" IsHitTestVisible="False" TextTrimming="CharacterEllipsis">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=OpportunitySearch}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                        <ComboBox x:Name="OpportunityTypeFilter" Grid.Column="2" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Filter opportunity type" />
                     </Grid>
                     <ListBox x:Name="OpportunityGrid" Grid.Row="2" BorderThickness="0" Background="Transparent"
                              HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              SelectionMode="Single" SelectionChanged="Opportunity_Changed" ScrollViewer.CanContentScroll="True"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Space opportunities">
-                        <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="3,0" /></Style></ListBox.ItemContainerStyle>
+                        <ListBox.ItemContainerStyle><StaticResource ResourceKey="LocationRow" /></ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Grid MinHeight="58" Margin="4,3">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /><ColumnDefinition Width="76" /></Grid.ColumnDefinitions>
-                                    <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanSelect}" ToolTip="{Binding Item.CleanupBlockReason}" VerticalAlignment="Center" HorizontalAlignment="Center" AutomationProperties.Name="{Binding Title, StringFormat=Select {0} for preview}" />
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0,12,0">
-                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}" FontSize="13" />
-                                        <TextBlock Text="{Binding DisplayPath}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" FontSize="12" Opacity="0.65" Margin="0,4,0,0" />
-                                        <TextBlock Text="{Binding ScopeLabel}" FontSize="11" Opacity="0.65" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding ScopeLabel}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+                                <Grid MinHeight="42" ToolTip="{Binding Path}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="72" /></Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanSelect}" ToolTip="{Binding Item.CleanupBlockReason}" ToolTipService.ShowOnDisabled="True" VerticalAlignment="Center" HorizontalAlignment="Center" AutomationProperties.Name="{Binding Path, StringFormat=Select {0} for cleanup review}" />
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0,10,0">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" FontSize="13" />
+                                        <TextBlock Text="{Binding LocationContext}" Style="{StaticResource LocationContext}" />
+                                        <TextBlock Text="{Binding Title}" FontSize="11" Opacity="0.7" Margin="0,3,0,0" TextTrimming="CharacterEllipsis">
+                                            <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="2" Text="{Binding Size}" VerticalAlignment="Center" HorizontalAlignment="Right" FontWeight="SemiBold" />
                                 </Grid>
@@ -210,10 +247,13 @@
                     <StackPanel>
                         <TextBlock x:Name="DetailHint" Text="Select a folder for details." TextWrapping="Wrap" Opacity="0.65" />
                         <StackPanel x:Name="DetailPanel" Visibility="Collapsed">
-                            <TextBlock Text="{Binding Title}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding Category}" Opacity="0.65" FontSize="12" Margin="0,6,0,12" />
-                            <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="12" />
-                            <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                            <TextBlock x:Name="DetailName" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Title}" Opacity="0.7" FontSize="12" Margin="0,5,0,12" TextWrapping="Wrap" />
+                            <TextBox Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="11" AutomationProperties.Name="Selected folder path" />
+                            <TextBlock Text="{Binding Caution}" TextWrapping="Wrap" FontSize="12" Margin="0,14,0,0" />
+                            <TextBlock Text="{Binding CleanupBlockReason}" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold" Margin="0,10,0,0">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
                             <StackPanel x:Name="BuildFolderContentsPanel" Visibility="Collapsed" Margin="0,14,0,0">
                                 <TextBlock Text="Inside this folder" FontWeight="SemiBold" />
                                 <ItemsControl x:Name="BuildFolderContentsList" Margin="0,6,0,0" AutomationProperties.Name="Scanned build folder contents">
@@ -226,28 +266,31 @@
                                     </DataTemplate></ItemsControl.ItemTemplate>
                                 </ItemsControl>
                                 <TextBlock x:Name="BuildFolderContentsNote" TextWrapping="Wrap" FontSize="11" Opacity="0.7" Margin="0,4,0,0" />
-                                <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,10,0,0" />
                             </StackPanel>
-                            <Expander Header="Details" Margin="0,14,0,0">
+                            <Expander x:Name="FolderDetailsExpander" Header="Details" Margin="0,14,0,0">
                                 <StackPanel Margin="0,8,0,0">
-                                    <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" />
-                                    <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                    <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock Text="{Binding SuggestedAction}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" />
                                     <TextBlock x:Name="WorktreeDetailText" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" Visibility="Collapsed" />
                                 </StackPanel>
                             </Expander>
-                            <Button Content="Open folder" Click="OpenFolder_Click" HorizontalAlignment="Left" Margin="0,22,0,0" />
-                            <Button Content="Show in tree" Click="ShowInTree_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <WrapPanel Margin="0,16,0,0">
+                                <Button Content="Open folder" Click="OpenFolder_Click" Padding="8,5" FontSize="12" Margin="0,0,6,6" />
+                                <Button Content="Show in tree" Click="ShowInTree_Click" Padding="8,5" FontSize="12" Margin="0,0,0,6" />
+                            </WrapPanel>
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </Border>
             <StackPanel Grid.Row="2" Grid.ColumnSpan="5" Margin="0,10,0,0">
-                <TextBlock x:Name="CleanupFreshnessText" FontSize="12" TextWrapping="Wrap" Opacity="0.75" Margin="0,0,0,8" Visibility="Collapsed" />
                 <DockPanel>
                     <Button x:Name="ReviewButton" Content="Review cleanup" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" Style="{DynamicResource AccentButtonStyle}" ToolTip="Recheck selected locations, then confirm moving eligible folders to the Recycle Bin." />
-                    <Button x:Name="ClearOpportunitySelectionButton" Content="Clear selection" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Margin="0,0,8,0" />
-                    <Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" DockPanel.Dock="Left" Margin="0,0,12,0" Visibility="Collapsed" ToolTip="Select all locations in the current group and filters to review cleanup." />
-                    <TextBlock x:Name="SelectionText" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                    <Button x:Name="ClearOpportunitySelectionButton" Content="Clear" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Margin="0,0,8,0" AutomationProperties.Name="Clear cleanup selection" />
+                    <Button x:Name="SelectListedButton" Content="Select all" Click="SelectListedOpportunities_Click" DockPanel.Dock="Left" Margin="0,0,12,0" Visibility="Collapsed" ToolTip="Select all locations in the current group and filters to review cleanup." AutomationProperties.Name="Select all listed folders for cleanup review" />
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                        <TextBlock x:Name="SelectionText" TextWrapping="Wrap" FontSize="12" />
+                        <TextBlock x:Name="CleanupFreshnessText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" Visibility="Collapsed" />
+                    </StackPanel>
                 </DockPanel>
             </StackPanel>
           </Grid>

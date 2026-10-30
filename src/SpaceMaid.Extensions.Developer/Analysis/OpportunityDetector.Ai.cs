@@ -73,8 +73,8 @@ public static partial class OpportunityDetector
 
         bool hubRepository = RepositoryName(name, "models--") || RepositoryName(name, "datasets--") || RepositoryName(name, "spaces--");
         if (hubRepository && evidence.Has(directory, Markers.Snapshots) && evidence.Any(directory, Markers.Refs | Markers.Blobs))
-            return new("Hugging Face repository downloads", "AI models & data", "A Hub repository cache with snapshots and refs or blobs; also recognizes relocated cache roots.",
-                "This selects the whole repository: all revisions, snapshots and its blobs. Keep offline or unavailable models and datasets. Close tools using this cache first. Revisions can share blobs; Windows without symlinks can duplicate snapshots.",
+            return new("Hugging Face repository downloads", "AI models & data", "A Hub repository cache with snapshots and refs or blobs; also recognizes relocated cache roots. Revisions can share blobs; Windows without symlinks can duplicate snapshots.",
+                "Removes all revisions, snapshots and blobs in this repository. Keep models and datasets needed offline or no longer available. Close tools using this cache first.",
                 "Review this complete repository folder and move it to the Recycle Bin here. Individual revisions and blobs are kept together; restore the whole folder if needed.", true);
         if ((direct & (Markers.Blobs | Markers.Manifests)) == (Markers.Blobs | Markers.Manifests)
             && evidence.HasNested(directory, "blobs", Markers.OllamaBlob))

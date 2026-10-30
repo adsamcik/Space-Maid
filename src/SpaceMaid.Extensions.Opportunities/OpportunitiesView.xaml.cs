@@ -163,6 +163,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         GroupNavigationSummary.Text = $"{_opportunityGroupRows.Count:N0}"
             + (_opportunityGroupRows.Count == definitions.Count ? "" : $" of {definitions.Count:N0}")
             + " " + (detailScope ? definitions.Count == 1 ? "project" : "projects" : definitions.Count == 1 ? "group" : "groups");
+        GroupNavigationSummary.Visibility = _opportunityGroupRows.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         GroupSizeNote.Text = _state?.HasAllocationData == false ? "Logical size · Physical savings unknown" : "Estimates";
         GroupSizeNote.ToolTip = byType ? "Sizes may overlap across types." : "Overlapping folders are counted once per group.";
         AllOpportunitiesButton.Content = $"All locations · {_matchingOpportunityRows.Count:N0}";
@@ -209,6 +210,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         _visibleOpportunityRows = (OpportunitySortPicker.SelectedIndex == 1 ? rows.OrderBy(row => row.Path, StringComparer.OrdinalIgnoreCase)
             : rows.OrderByDescending(row => row.Bytes).ThenBy(row => row.Path, StringComparer.Ordinal)).ToArray();
         foreach (var row in _visibleOpportunityRows) row.SetScope(string.IsNullOrEmpty(active?.Path) ? null : active.Path);
+        OpportunityGrid.Tag = _visibleOpportunityRows.Select(row => row.Title).Distinct(StringComparer.Ordinal).Take(2).Count() == 1;
         OpportunityGrid.ItemsSource = overview ? Array.Empty<OpportunityRow>() : _visibleOpportunityRows;
         OpportunityGrid.SelectedItem = _visibleOpportunityRows.FirstOrDefault(row => row.Path.Equals(detailPath, StringComparison.Ordinal))
             ?? _visibleOpportunityRows.FirstOrDefault();
@@ -336,7 +338,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
             : _worktreeAssessments.Count < worktrees ? "Check remaining worktrees" : "Recheck worktrees";
         foreach (var group in _opportunityGroupRows) group.SetSelectedCount(group.Matches.Count(row => row.Selected));
         CleanupFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
-        CleanupFreshnessText.Text = "Out of date · Review rechecks your selection";
+        CleanupFreshnessText.Text = "Out of date · Rechecked at review";
         _host.SetCaption(_state?.RootPath is null ? "Opportunities"
             : OpportunityGroupingPicker.SelectedIndex == 0 ? $"Opportunities · {_cleanupGroups.Count:N0} {(_cleanupGroups.Count == 1 ? "group" : "groups")}" : $"Opportunities · {_rows.Count:N0}");
     }
@@ -380,6 +382,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     {
         var row = Detail;
         DetailPanel.DataContext = row?.Item;
+        DetailName.Text = row?.Name ?? "";
         DetailPanel.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
         DetailHint.Visibility = row is null ? Visibility.Visible : Visibility.Collapsed;
         BuildFolderContentsPanel.Visibility = row?.Category == "Build output" ? Visibility.Visible : Visibility.Collapsed;
