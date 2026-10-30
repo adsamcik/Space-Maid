@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Extensions.Contracts;
 
 namespace SpaceMaid.App;
 
@@ -21,6 +22,7 @@ internal sealed class CleanupReviewRow : INotifyPropertyChanged
     {
         get
         {
+            if (Location.Title == "Hugging Face repository downloads") return new OpportunityRow(Location, _hasAllocation).Name;
             string path = Location.Path.TrimEnd('\\', '/');
             string name = System.IO.Path.GetFileName(path);
             string? parent = System.IO.Path.GetDirectoryName(path);

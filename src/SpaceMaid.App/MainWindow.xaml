@@ -30,7 +30,7 @@
                 <StackPanel>
                     <TextBlock Text="Space Maid" FontWeight="SemiBold" FontSize="16" Margin="12,10,0,20"/>
                     <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource WorkspaceNavigation}" GroupName="View" IsChecked="True" Checked="View_Changed"/>
-                    <RadioButton x:Name="OpportunitiesTab" Content="Opportunities" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
+                    <RadioButton x:Name="OpportunitiesTab" Content="Cleanup" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
                     <RadioButton x:Name="PhotosTab" Content="Photos" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
                     <RadioButton x:Name="AppsTab" Content="Apps" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
                     <StackPanel x:Name="ExtensionNavigation"/>

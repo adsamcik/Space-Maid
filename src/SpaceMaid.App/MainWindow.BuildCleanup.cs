@@ -25,7 +25,7 @@ public partial class MainWindow
         {
             _cleanupSettingsUnavailable = true;
             OpportunityBrowser?.SetBuildRetention("3", true);
-            StatusText.Text = "Cleanup settings unavailable. Set build retention in View options before reviewing.";
+            StatusText.Text = "Cleanup settings unavailable. Set build retention in Cleanup rules before reviewing.";
         }
     }
 
@@ -47,6 +47,7 @@ public partial class MainWindow
             BuildCleanupSettings.Save(CleanupSettingsPath, policy);
             CurrentBuildPolicy = policy;
             _cleanupSettingsUnavailable = false;
+            OpportunityBrowser?.SetBuildRetention(days.ToString(CultureInfo.InvariantCulture), false);
             StatusText.Text = $"Builds active within {days} days are kept.";
             return true;
         }

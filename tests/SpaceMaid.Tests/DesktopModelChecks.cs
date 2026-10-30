@@ -97,9 +97,12 @@ public sealed partial class DesktopTests
                     try
                     {
                         shown = true;
-                        Assert.Contains(Descendants(dialog).OfType<TextBox>(), box => box.IsReadOnly && box.Text == digest);
                         Assert.Contains(Descendants(dialog).OfType<TextBlock>(), text => text.Text == "research:local");
+                        var technical = (Expander)dialog.FindName("TechnicalDetails");
+                        Assert.False(technical.IsExpanded);
                         if (!confirm) Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "models-cleanup-preview.png"), 640, 520);
+                        technical.IsExpanded = true; dialog.UpdateLayout();
+                        Assert.Contains(Descendants(technical).OfType<TextBox>(), box => box.IsReadOnly && box.Text == digest);
                         if (confirm) ((Button)dialog.FindName("DeleteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         else dialog.DialogResult = false;
                     }

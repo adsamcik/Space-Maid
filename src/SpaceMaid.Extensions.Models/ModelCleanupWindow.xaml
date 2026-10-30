@@ -16,8 +16,14 @@
                 <TextBlock Text="Not loaded · Checked locally" Opacity="0.7" Margin="0,4,0,12" />
                 <TextBlock Text="Permanently removes this model tag through local Ollama. This does not use the Recycle Bin. Shared data needed by other models may remain, so released space can be smaller than the model size." TextWrapping="Wrap" />
                 <TextBlock Text="Preserve offline and local-only copies. Restoring may need a download or your original model files." TextWrapping="Wrap" Margin="0,10,0,0" />
-                <TextBlock Text="Avoid pulling, retagging or loading models until cleanup finishes. The app checks the name, digest and loaded state again before deletion, but concurrent changes can still happen between the check and deletion." TextWrapping="Wrap" Margin="0,10,0,12" />
-                <TextBox Text="{Binding Model.Digest, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" FontSize="11" AutomationProperties.Name="Confirmed model digest" />
+                <TextBlock Text="Avoid pulling, retagging or loading models until cleanup finishes." TextWrapping="Wrap" Margin="0,10,0,0" />
+                <Expander x:Name="TechnicalDetails" Header="Technical details" Margin="0,12,0,0">
+                    <StackPanel Margin="0,8,0,0">
+                        <TextBlock Text="The app checks the name, digest and loaded state again before deletion. Concurrent changes can still happen between the check and deletion." TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10" />
+                        <TextBlock Text="Model digest" FontSize="12" Margin="0,0,0,4" />
+                        <TextBox Text="{Binding Model.Digest, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" FontSize="11" AutomationProperties.Name="Confirmed model digest" />
+                    </StackPanel>
+                </Expander>
             </StackPanel>
         </ScrollViewer>
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">

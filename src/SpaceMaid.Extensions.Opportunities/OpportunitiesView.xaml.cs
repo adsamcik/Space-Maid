@@ -32,6 +32,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     private OpportunityRecycleBinState? _recycleBin;
     private string _currentPath = "";
     private bool _scanStale;
+    private bool _buildRulesNeedRepair;
     private IReadOnlyDictionary<string, GitWorktreeAssessment> _worktreeAssessments
         => _state?.WorktreeAssessments ?? new Dictionary<string, GitWorktreeAssessment>();
     public OpportunitiesView(IOpportunityBrowserHost host) : this(host, DiskAccess.Default) { }
@@ -48,13 +49,18 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     public IReadOnlyList<OpportunityGroup> CleanupGroups => _cleanupGroups;
     public string BuildRetention => BuildKeepRecentDaysBox.Text;
     public void SetBuildRetention(string value, bool needsRepair)
-    { BuildKeepRecentDaysBox.Text = value; if (needsRepair) ShowOptions(); }
+    { BuildKeepRecentDaysBox.Text = value; _buildRulesNeedRepair = needsRepair; if (needsRepair) ShowOptions(); }
     public void SetEmptyMessage(string message) => EmptyCaption.Text = message;
-    public void ShowOptions() => ViewOptionsToggle.IsChecked = true;
+    public void ShowOptions()
+    {
+        BuildRulesToggle.Visibility = Visibility.Visible; BuildRulesToggle.IsChecked = true;
+        ViewOptionsToggle.IsChecked = WorktreeOptionsToggle.IsChecked = false;
+    }
     public void Reset()
     {
         foreach (var row in _rows) row.PropertyChanged -= RowChanged;
         _rows = []; _state = null; _opportunitySearchTimer.Stop();
+        _lastCleanupBrowse = _selectionBrowse = null; SelectedOnlyToggle.IsChecked = false;
         _syncOpportunityBrowser = true;
         try
         {
@@ -76,7 +82,11 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         _currentPath = state.CurrentPath; _scanStale = state.Stale;
         foreach (var row in _rows) row.PropertyChanged += RowChanged;
         var groups = state.Groups;
-        if (!preserveScope) { _expandedCleanupGroups.Clear(); _expandedCleanupContents.Clear(); _cleanupOverviewOffset = 0; }
+        if (!preserveScope)
+        {
+            _expandedCleanupGroups.Clear(); _expandedCleanupContents.Clear(); _cleanupOverviewOffset = 0;
+            _lastCleanupBrowse = _selectionBrowse = null; SelectedOnlyToggle.IsChecked = false;
+        }
         RebuildWorktreeGroups();
         string? previousType = OpportunityTypeFilter.SelectedItem as string;
         _syncOpportunityBrowser = true;
@@ -110,6 +120,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         if (!_opportunityBrowserReady || _syncOpportunityBrowser) return;
         if (ReferenceEquals(sender, OpportunityGroupingPicker))
         {
+            SelectedOnlyToggle.IsChecked = false; _selectionBrowse = null;
             _activeOpportunityGroup = null; _cleanupDrillDown = false;
             _cleanupDetailKey = _cleanupDetailName = null;
             _cleanupProjectScope = null;
@@ -126,14 +137,14 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         string? type = OpportunityTypeFilter.SelectedItem as string;
         bool cleanup = OpportunityGroupingPicker.SelectedIndex == 0;
         var detail = _cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey);
-        bool detailScope = cleanup && _cleanupDetailKey is not null;
+        bool detailScope = cleanup && _cleanupDetailKey is not null && !SelectedView;
         var detailMembers = detailScope ? (detail?.Locations ?? []).Select(item => (item.ProviderId, item.DirectoryIndex, item.RuleId)).ToHashSet() : null;
-        _matchingOpportunityRows = _rows.Where(row => (detailMembers is null || detailMembers.Contains(row.Identity)) && (type is null or "All types" || row.Category == type)
+        _matchingOpportunityRows = _rows.Where(row => (!SelectedView || row.Selected) && (detailMembers is null || detailMembers.Contains(row.Identity)) && (type is null or "All types" || row.Category == type)
             && (query.Length == 0 || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.Path.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Category.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || row.GroupName.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
         bool byType = OpportunityGroupingPicker.SelectedIndex == 2;
-        var definitions = detailScope ? detail?.Children ?? [] : cleanup ? _cleanupGroups : byType ? _opportunityGroups.Types : _opportunityGroups.Projects;
+        var definitions = SelectedView ? [] : detailScope ? detail?.Children ?? [] : cleanup ? _cleanupGroups : byType ? _opportunityGroups.Types : _opportunityGroups.Projects;
         var byIdentity = _matchingOpportunityRows.ToDictionary(row => row.Identity);
         var matches = definitions.ToDictionary(group => group.Key, group => (IReadOnlyList<OpportunityRow>)group.Locations
             .Select(item => byIdentity.GetValueOrDefault((item.ProviderId, item.DirectoryIndex, item.RuleId)))
@@ -197,39 +208,45 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     }
     private void DisplayOpportunityRows(string? detailPath = null)
     {
-        bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown;
+        bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown && !SelectedView;
         bool returningToOverview = overview && CleanupOverview.Visibility != Visibility.Visible;
         CleanupOverview.Visibility = overview ? Visibility.Visible : Visibility.Collapsed;
         OpportunityNavigation.Visibility = OpportunityLocations.Visibility = OpportunityDetails.Visibility = overview ? Visibility.Collapsed : Visibility.Visible;
+        if (SelectedView) OpportunityNavigation.Visibility = Visibility.Collapsed;
+        Grid.SetColumn(OpportunityLocations, SelectedView ? 0 : 2);
+        Grid.SetColumnSpan(OpportunityLocations, SelectedView ? 3 : 1);
         BackToCleanupButton.Visibility = !overview && OpportunityGroupingPicker.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         OpportunityPanelTitle.Visibility = BackToCleanupButton.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         OpportunityPanelTitle.Text = OpportunityGroupingPicker.SelectedIndex switch { 1 => "Projects", 2 => "Clutter types", _ => "Cleanup groups" };
         SelectListedButton.Visibility = overview ? Visibility.Collapsed : Visibility.Visible;
-        var active = _opportunityGroupRows.FirstOrDefault(group => group.Group.Key == _activeOpportunityGroup);
+        var active = SelectedView ? null : _opportunityGroupRows.FirstOrDefault(group => group.Group.Key == _activeOpportunityGroup);
         if (active is not null && _cleanupDetailKey is not null) _cleanupProjectScope = active.Group;
-        bool missingProject = _cleanupDetailKey is not null && _cleanupProjectScope is not null && active is null;
+        bool missingProject = !SelectedView && _cleanupDetailKey is not null && _cleanupProjectScope is not null && active is null;
         var rows = missingProject ? Array.Empty<OpportunityRow>() : active?.Matches ?? _matchingOpportunityRows;
-        _visibleOpportunityRows = (OpportunitySortPicker.SelectedIndex == 1 ? rows.OrderBy(row => row.Path, StringComparer.OrdinalIgnoreCase)
+        _visibleOpportunityRows = (OpportunitySortPicker.SelectedIndex == 1 ? rows.OrderBy(row => row.Name, StringComparer.OrdinalIgnoreCase).ThenBy(row => row.Path, StringComparer.Ordinal)
             : rows.OrderByDescending(row => row.Bytes).ThenBy(row => row.Path, StringComparer.Ordinal)).ToArray();
         foreach (var row in _visibleOpportunityRows) row.SetScope(string.IsNullOrEmpty(active?.Path) ? null : active.Path);
         OpportunityGrid.Tag = _visibleOpportunityRows.Select(row => row.Title).Distinct(StringComparer.Ordinal).Take(2).Count() == 1;
         OpportunityGrid.ItemsSource = overview ? Array.Empty<OpportunityRow>() : _visibleOpportunityRows;
         OpportunityGrid.SelectedItem = _visibleOpportunityRows.FirstOrDefault(row => row.Path.Equals(detailPath, StringComparison.Ordinal))
             ?? _visibleOpportunityRows.FirstOrDefault();
-        OpportunityHeading.Text = active?.Name ?? (missingProject ? _cleanupProjectScope!.Name : _cleanupDetailKey is not null ? _cleanupDetailName : "All locations");
+        OpportunityHeading.Text = SelectedView ? "Selected folders" : active?.Name ?? (missingProject ? _cleanupProjectScope!.Name : _cleanupDetailKey is not null ? _cleanupDetailName : "All locations");
         OpportunityScopeText.Text = active?.Path ?? (missingProject ? _cleanupProjectScope!.Path : _state?.RootPath) ?? "";
         OpportunityScopeText.Visibility = OpportunityScopeText.Text == _currentPath ? Visibility.Collapsed : Visibility.Visible;
-        int total = active?.Group.Locations.Count ?? (_cleanupDetailKey is not null
+        int total = SelectedView ? _rows.Count(row => row.Selected) : active?.Group.Locations.Count ?? (_cleanupDetailKey is not null
             ? _cleanupGroups.SelectMany(group => group.Children ?? []).FirstOrDefault(group => group.Key == _cleanupDetailKey)?.Locations.Count ?? 0 : _rows.Count);
         OpportunityResultSummary.Text = missingProject ? "No matching folders remain in this project."
             : $"{rows.Count:N0}" + (rows.Count == total ? "" : $" of {total:N0}")
                 + $" {(total == 1 ? "folder" : "folders")}";
         EmptyState.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyTitle.Text = _state?.RootPath is null ? "Find cleanup opportunities" : _rows.Count == 0 ? "No cleanup opportunities found" : "No matching folders";
-        EmptyCaption.Text = missingProject ? "Choose another project or All locations."
+        EmptyTitle.Text = SelectedView && total == 0 ? "No folders selected" : _state?.RootPath is null ? "Find cleanup opportunities" : _rows.Count == 0 ? "No cleanup opportunities found" : "No matching folders";
+        EmptyCaption.Text = SelectedView && total == 0 ? "" : missingProject ? "Choose another project or All locations."
             : _state?.RootPath is null ? "Scan a drive to start."
             : _rows.Count == 0 ? "" : "Clear search or change filters.";
         UpdateModelLibrary();
+        BuildRulesToggle.Visibility = _buildRulesNeedRepair || (overview ? _rows : _visibleOpportunityRows).Any(row => row.Item.IsBuildOutput)
+            ? Visibility.Visible : Visibility.Collapsed;
+        if (BuildRulesToggle.Visibility != Visibility.Visible) BuildRulesToggle.IsChecked = false;
         SelectionChanged();
         if (returningToOverview) Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
@@ -258,6 +275,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         _cleanupDrillDown = true; _activeOpportunityGroup = group.Group.Key;
         _cleanupDetailKey = _cleanupDetailName = null;
         _cleanupProjectScope = null;
+        if (RestoreLastCleanupBrowse(group.Group.Key)) return;
         ApplyOpportunityFilters();
     }
     public bool ShowGroup(string? key, string name)
@@ -288,11 +306,19 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         _cleanupDetailParentName = _cleanupGroups.FirstOrDefault(parent => parent.Children?.Any(child => child.Key == group.Group.Key) == true)?.Name ?? "Cleanup groups";
         _cleanupDrillDown = true; _activeOpportunityGroup = null;
         _cleanupProjectScope = null;
+        if (RestoreLastCleanupBrowse(group.Group.Key)) return;
         ClearOpportunityFilters(); ApplyOpportunityFilters();
         if (OpportunityGroupList.Items.Count > 0) OpportunityGroupList.SelectedIndex = 0;
     }
     private void BackToCleanup_Click(object sender, RoutedEventArgs e)
     {
+        if (SelectedView)
+        {
+            SelectedOnlyToggle.IsChecked = false;
+            if (_selectionBrowse is { } location) RestoreBrowseLocation(location);
+            _selectionBrowse = null;
+        }
+        _lastCleanupBrowse = CaptureBrowseLocation();
         _cleanupDrillDown = false; _activeOpportunityGroup = null;
         _cleanupDetailKey = _cleanupDetailName = null;
         _cleanupProjectScope = null;
@@ -316,13 +342,13 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         _changingOpportunitySelection = true;
         try { foreach (var row in _rows) row.Selected = false; }
         finally { _changingOpportunitySelection = false; }
-        SelectionChanged();
+        if (SelectedView) ApplyOpportunityFilters(); else SelectionChanged();
     }
     public void UpdateSelection()
     {
         int selected = _rows.Count(row => row.Selected);
         int hidden = selected - _visibleOpportunityRows.Count(row => row.Selected);
-        bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown;
+        bool overview = OpportunityGroupingPicker.SelectedIndex == 0 && !_cleanupDrillDown && !SelectedView;
         SelectionText.Text = selected > 0 ? $"{selected:N0} {(selected == 1 ? "location" : "locations")} selected"
             + (hidden > 0 ? $" · {hidden:N0} outside this view" : "") : "";
         if (overview)
@@ -335,6 +361,12 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Any(row => row.CanSelect) && !_busy;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && !_busy;
         ClearOpportunitySelectionButton.Visibility = selected > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SelectedOnlyToggle.Visibility = !overview && (selected > 0 || SelectedView) ? Visibility.Visible : Visibility.Collapsed;
+        SelectedOnlyToggle.Content = SelectedView ? "Back to folders" : "Show selected";
+        SelectedOnlyToggle.IsEnabled = !_busy;
+        bool modelsOnly = OllamaModelsPanel.Visibility == Visibility.Visible && OpportunityGrid.Visibility == Visibility.Collapsed;
+        FolderActionsBar.Visibility = modelsOnly && selected == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SelectListedButton.Visibility = overview || modelsOnly ? Visibility.Collapsed : Visibility.Visible;
         CheckWorktreesButton.IsEnabled = !_busy && _rows.Any(row => row.Item.IsWorktree);
         int worktrees = _rows.Count(row => row.Item.IsWorktree);
         CheckWorktreesButton.Content = _worktreeAssessments.Count == 0 ? "Check worktrees"
@@ -342,12 +374,14 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         foreach (var group in _opportunityGroupRows) group.SetSelectedCount(group.Matches.Count(row => row.Selected));
         CleanupFreshnessText.Visibility = _scanStale ? Visibility.Visible : Visibility.Collapsed;
         CleanupFreshnessText.Text = "Out of date · Rechecked at review";
-        _host.SetCaption(_state?.RootPath is null ? "Opportunities"
-            : OpportunityGroupingPicker.SelectedIndex == 0 ? $"Opportunities · {_cleanupGroups.Count:N0} {(_cleanupGroups.Count == 1 ? "group" : "groups")}" : $"Opportunities · {_rows.Count:N0}");
+        _host.SetCaption("Cleanup");
     }
 
     private void RowChanged(object? sender, PropertyChangedEventArgs e)
-    { if (e.PropertyName == nameof(OpportunityRow.Selected) && !_changingOpportunitySelection) SelectionChanged(); }
+    {
+        if (e.PropertyName != nameof(OpportunityRow.Selected) || _changingOpportunitySelection) return;
+        if (SelectedView) ApplyOpportunityFilters(); else SelectionChanged();
+    }
     private void SelectionChanged() => _host.SelectionChanged();
     public void UpdateContext(string currentPath, bool stale)
     {
@@ -401,6 +435,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
             + (assessment.LastActivityUtc is { } activity ? "\nLast observed activity: " + activity.ToLocalTime().ToString("g") : "\nLast observed activity: unavailable")
             + (assessment.VerifiedClean ? "\nLocal tracked/untracked changes: none" : "")
             + (assessment.Integrated ? "\nCommits already in upstream: yes" : "");
+        UpdateModelDetails(); UpdateSelection();
     }
     public void Dispose()
     {
@@ -412,8 +447,10 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     }
     private void OpportunityOptions_Click(object sender, RoutedEventArgs e)
     {
-        if (sender == ViewOptionsToggle && ViewOptionsToggle.IsChecked == true) WorktreeOptionsToggle.IsChecked = false;
-        else if (sender == WorktreeOptionsToggle && WorktreeOptionsToggle.IsChecked == true) ViewOptionsToggle.IsChecked = false;
+        if (sender is not System.Windows.Controls.Primitives.ToggleButton { IsChecked: true }) return;
+        if (sender != ViewOptionsToggle) ViewOptionsToggle.IsChecked = false;
+        if (sender != WorktreeOptionsToggle) WorktreeOptionsToggle.IsChecked = false;
+        if (sender != BuildRulesToggle) BuildRulesToggle.IsChecked = false;
     }
     private void WorktreeRule_Changed(object sender, SelectionChangedEventArgs e) => WorktreeOptionsChanged();
     private void WorktreeAge_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) => WorktreeOptionsChanged();

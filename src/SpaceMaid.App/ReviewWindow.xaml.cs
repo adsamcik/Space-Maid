@@ -36,7 +36,7 @@ public partial class ReviewWindow : Window
         _locations.AddRange(preview.Locations.Select(location => new CleanupReviewRow(location, !preview.UsesLogicalSize,
             new(location.RequiresManualReview ? CleanupReadiness.NeedsReview : CleanupReadiness.Ready, null,
                 location.RequiresManualReview ? "Review contents" : "Ready"), true, false)));
-        BuildGroups(null); _initialized = true; ApplyFilters(true);
+        BuildGroups(null); SelectInitialFilter(); _initialized = true; ApplyFilters(true);
         ResultText.Text = "Preview only";
     }
 
@@ -61,11 +61,32 @@ public partial class ReviewWindow : Window
             _locations.Add(new(blocked.Opportunity, !plan.Preview.UsesLogicalSize,
                 new(CleanupReadiness.Protected, activity, blocked.Reason), false, false));
         }
-        BuildGroups(groups); ApplyFilters(true); UpdateCounts();
-        ResultText.Text = "Empty the Recycle Bin to free space. Synced folders also affect cloud copies.";
+        BuildGroups(groups); SelectInitialFilter(); ApplyFilters(true); UpdateCounts();
         if (_locations.Count(row => row.Selected) == plan.Preview.Locations.Count)
         { _selectedPlan = plan; CleanupButton.IsEnabled = plan.CanExecute; SetPreview(plan.Preview); }
         else ScheduleEstimate();
+        UpdateSelectionHint();
+    }
+
+    private void SelectInitialFilter()
+    {
+        _filter = _locations.Any(row => row.DisplayState == CleanupReadiness.Ready) ? CleanupReadiness.Ready
+            : _locations.Any(row => row.DisplayState == CleanupReadiness.NeedsReview) ? CleanupReadiness.NeedsReview : CleanupReadiness.Protected;
+        bool initialized = _initialized; _initialized = false;
+        try
+        {
+            (_filter switch { CleanupReadiness.Ready => ReadyFilter, CleanupReadiness.NeedsReview => ManualFilter, _ => KeptFilter }).IsChecked = true;
+        }
+        finally { _initialized = initialized; }
+    }
+
+    private void UpdateSelectionHint()
+    {
+        if (_plan is null || _hasResults || Execution is not null) return;
+        ResultText.Text = _locations.Any(row => row.Selected && row.CanSelect)
+            ? "Empty the Recycle Bin to free space. Synced folders also affect cloud copies."
+            : _locations.Any(row => row.CanSelect) ? "Choose folders to include."
+            : "These folders are kept. Nothing can be moved to the Recycle Bin.";
     }
 
     private void BuildGroups(IReadOnlyList<OpportunityGroup>? supplied)
@@ -94,7 +115,7 @@ public partial class ReviewWindow : Window
         if (!_initialized) return;
         string query = SearchBox.Text.Trim();
         bool Matches(CleanupReviewRow row) => row.DisplayState == _filter && (query.Length == 0
-            || row.Path.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || row.Path.Contains(query, StringComparison.OrdinalIgnoreCase) || row.FolderName.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
             || row.Location.Category.Contains(query, StringComparison.OrdinalIgnoreCase));
         var matching = _locations.Where(Matches).ToHashSet();
         var sets = _groups.Select(group => (Group: group, Matches: group.Rows.Where(matching.Contains).ToArray())).ToArray();
@@ -162,6 +183,7 @@ public partial class ReviewWindow : Window
         int count = _locations.Count(row => row.Selected && row.CanSelect);
         EstimateCaption.Text = $"{count:N0} {(count == 1 ? "folder" : "folders")} selected";
         EstimateText.Text = "…";
+        UpdateSelectionHint();
         _estimateTimer.Stop(); _estimateTimer.Start();
     }
 

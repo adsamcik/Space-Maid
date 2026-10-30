@@ -123,6 +123,8 @@ public sealed partial class DesktopTests
                     CheckBuildContents(window, app, artifactRoot: FindRepository());
                     CheckAiStorage(window, app, artifactRoot: FindRepository());
                     CheckModels(window, app, artifactRoot: FindRepository());
+                    CheckReviewClarity(app, artifactRoot: FindRepository());
+                    CheckCleanupUsability(window, app, artifactRoot: FindRepository());
                     return;
                 }
                 SetStage("loading and independently disabling the Opportunities browser extension");
@@ -143,6 +145,7 @@ public sealed partial class DesktopTests
                 buildRetention.Text = "3";
                 Assert.True(window.SaveBuildRetention()); Assert.Equal(3, window.CurrentBuildPolicy.KeepRecentDays);
                 ((ToggleButton)OpportunityControl(window, "ViewOptionsToggle")).IsChecked = false;
+                ((ToggleButton)OpportunityControl(window, "BuildRulesToggle")).IsChecked = false;
                 SetStage("choosing a drive without starting a scan");
                 var drivesReady = window.RefreshDriveChoicesAsync();
                 PumpUntil(() => drivesReady.IsCompleted, TimeSpan.FromSeconds(3)); drivesReady.GetAwaiter().GetResult();
@@ -961,6 +964,8 @@ public sealed partial class DesktopTests
                 CheckAdditionalCleanupCategories(window, app, artifactRoot);
                 SetStage("browsing agent history, checkpoints and model libraries");
                 CheckAiStorage(window, app, artifactRoot);
+                CheckReviewClarity(app, artifactRoot);
+                CheckCleanupUsability(window, app, artifactRoot);
                 BeginWorkflow("Containers and WSL");
                 CheckContainers(window, app, artifactRoot);
                 CheckModels(window, app, artifactRoot);

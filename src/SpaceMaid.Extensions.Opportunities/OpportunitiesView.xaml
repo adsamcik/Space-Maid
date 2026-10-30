@@ -35,6 +35,7 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <ToggleButton x:Name="BuildRulesToggle" Content="Cleanup rules" Click="OpportunityOptions_Click" Visibility="Collapsed" Padding="10,5" Margin="0,0,8,0" AutomationProperties.Name="Show build cleanup rules" />
                         <ToggleButton x:Name="WorktreeOptionsToggle" Content="Worktrees" Click="OpportunityOptions_Click" Visibility="Collapsed" Padding="12,6" Margin="0,0,8,0" AutomationProperties.Name="Show worktree cleanup options" />
                         <ToggleButton x:Name="ViewOptionsToggle" Click="OpportunityOptions_Click" Padding="10,5" AutomationProperties.Name="Show grouping and sorting options">
                             <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" Margin="0,0,7,0" VerticalAlignment="Center" /><TextBlock Text="View" /></StackPanel>
@@ -52,12 +53,14 @@
                         <StackPanel><TextBlock Text="Sort" FontSize="12" Opacity="0.65" Margin="0,0,0,6" />
                             <ComboBox x:Name="OpportunitySortPicker" Width="150" SelectedIndex="0" SelectionChanged="OpportunityFilter_Changed" AutomationProperties.Name="Sort opportunity groups and locations"><ComboBoxItem Content="Largest first" /><ComboBoxItem Content="Name A–Z" /><ComboBoxItem Content="Most locations" /></ComboBox>
                         </StackPanel>
-                        <StackPanel Margin="18,0,0,0"><TextBlock Text="Keep recent builds" FontSize="12" Opacity="0.65" Margin="0,0,0,6" />
-                            <StackPanel Orientation="Horizontal" ToolTip="Keeps outputs with recent file changes or creation, including direct project files. Actual last use is not tracked. Unknown activity is kept. Stop builds before cleanup.">
-                                <TextBox x:Name="BuildKeepRecentDaysBox" Text="3" Width="64" MaxLength="3" KeyDown="BuildRetention_KeyDown" LostFocus="BuildRetention_LostFocus" AutomationProperties.Name="Keep builds active within this many days" />
-                                <TextBlock Text="days" VerticalAlignment="Center" Margin="8,0,0,0" />
-                            </StackPanel>
-                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border x:Name="BuildRulesPanel" Grid.Row="1" Margin="0,12,0,0">
+                    <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=BuildRulesToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                    <StackPanel Orientation="Horizontal" ToolTip="Keeps outputs with recent file changes or creation, including direct project files. Actual last use is not tracked. Unknown activity is kept. Stop builds before cleanup.">
+                        <TextBlock Text="Keep builds active within" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBox x:Name="BuildKeepRecentDaysBox" Text="3" Width="64" MaxLength="3" KeyDown="BuildRetention_KeyDown" LostFocus="BuildRetention_LostFocus" AutomationProperties.Name="Keep builds active within this many days" />
+                        <TextBlock Text="days" VerticalAlignment="Center" Margin="8,0,0,0" />
                     </StackPanel>
                 </Border>
                 <Border x:Name="WorktreeCleanupControls" Grid.Row="1" Margin="0,12,0,0">
@@ -254,7 +257,7 @@
                             </DataGrid.Columns>
                         </DataGrid>
                         <DockPanel Grid.Row="3" Margin="0,8,0,0">
-                            <Button x:Name="RemoveModelButton" DockPanel.Dock="Right" Content="Review removal…" Click="RemoveModel_Click" IsEnabled="False" Margin="8,0,0,0" AutomationProperties.Name="Review removal of selected model" />
+                            <Button x:Name="RemoveModelButton" DockPanel.Dock="Right" Content="Review removal…" Click="RemoveModel_Click" IsEnabled="False" Margin="8,0,0,0" ToolTipService.ShowOnDisabled="True" AutomationProperties.Name="Review removal of selected model" />
                             <TextBlock Text="Sizes include shared data and may differ from space on disk." FontSize="11" Opacity="0.7" TextWrapping="Wrap" VerticalAlignment="Center" />
                         </DockPanel>
                     </Grid>
@@ -270,6 +273,19 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         <TextBlock x:Name="DetailHint" Text="Select a folder for details." TextWrapping="Wrap" Opacity="0.65" />
+                        <StackPanel x:Name="ModelDetailPanel" Visibility="Collapsed">
+                            <TextBlock x:Name="ModelDetailName" Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding SizeText, StringFormat=Model size: {0}}" FontSize="12" Opacity="0.7" Margin="0,5,0,12" />
+                            <TextBlock Text="Removal is permanent. Keep offline and local-only copies. Shared data may remain in use." FontSize="12" TextWrapping="Wrap" />
+                            <TextBlock x:Name="ModelDetailProblem" Text="This model could not be checked. Refresh the library before removal." FontSize="12" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
+                            <Expander Header="Library details" Margin="0,14,0,0">
+                                <StackPanel Margin="0,8,0,0">
+                                    <TextBox x:Name="ModelDetailPath" IsReadOnly="True" TextWrapping="Wrap" FontSize="11" BorderThickness="0" Background="Transparent" Padding="0" AutomationProperties.Name="Selected model library path" />
+                                    <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Expander>
+                            <Button Content="Open library folder" Click="OpenFolder_Click" HorizontalAlignment="Left" FontSize="12" Padding="8,5" Margin="0,16,0,0" />
+                        </StackPanel>
                         <StackPanel x:Name="DetailPanel" Visibility="Collapsed">
                             <TextBlock x:Name="DetailName" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding Title}" Opacity="0.7" FontSize="12" Margin="0,5,0,12" TextWrapping="Wrap" />
@@ -306,11 +322,12 @@
                     </StackPanel>
                 </ScrollViewer>
             </Border>
-            <StackPanel Grid.Row="2" Grid.ColumnSpan="5" Margin="0,10,0,0">
+            <StackPanel x:Name="FolderActionsBar" Grid.Row="2" Grid.ColumnSpan="5" Margin="0,10,0,0">
                 <DockPanel>
                     <Button x:Name="ReviewButton" Content="Review cleanup" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" Style="{DynamicResource AccentButtonStyle}" ToolTip="Recheck selected locations, then confirm moving eligible folders to the Recycle Bin." />
-                    <Button x:Name="ClearOpportunitySelectionButton" Content="Clear" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Margin="0,0,8,0" AutomationProperties.Name="Clear cleanup selection" />
-                    <Button x:Name="SelectListedButton" Content="Select all" Click="SelectListedOpportunities_Click" DockPanel.Dock="Left" Margin="0,0,12,0" Visibility="Collapsed" ToolTip="Select all locations in the current group and filters to review cleanup." AutomationProperties.Name="Select all listed folders for cleanup review" />
+                    <Button x:Name="ClearOpportunitySelectionButton" Content="Clear all" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Margin="0,0,8,0" AutomationProperties.Name="Clear all cleanup selections, including hidden folders" />
+                    <Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" DockPanel.Dock="Left" Margin="0,0,12,0" Visibility="Collapsed" ToolTip="Select all locations in the current group and filters to review cleanup." AutomationProperties.Name="Select all listed folders for cleanup review" />
+                    <ToggleButton x:Name="SelectedOnlyToggle" Content="Show selected" Click="ShowSelected_Click" DockPanel.Dock="Right" Margin="0,0,12,0" Padding="8,5" Visibility="Collapsed" AutomationProperties.Name="Show selected folders across all groups" />
                     <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
                         <TextBlock x:Name="SelectionText" TextWrapping="Wrap" FontSize="12" />
                         <TextBlock x:Name="CleanupFreshnessText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" Visibility="Collapsed" />

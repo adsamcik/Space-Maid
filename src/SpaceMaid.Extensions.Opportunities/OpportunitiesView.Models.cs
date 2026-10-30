@@ -83,6 +83,21 @@ public partial class OpportunitiesView
             && LibraryModelList.SelectedItem is LibraryModel { Digest: not null, Bytes: not null };
         RemoveModelButton.ToolTip = _host.CanRemoveModels ? "Check this model and its library in Ollama, then review permanent removal."
             : "Enable the AI models extension and reopen Space Maid to remove models.";
+        UpdateModelDetails();
+    }
+    private void UpdateModelDetails()
+    {
+        if (ModelDetailPanel is null) return;
+        var selected = OllamaModelsPanel.Visibility == Visibility.Visible ? LibraryModelList.SelectedItem as LibraryModel : null;
+        ModelDetailPanel.DataContext = selected;
+        ModelDetailPanel.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
+        DetailPanel.Visibility = selected is null && Detail is not null ? Visibility.Visible : Visibility.Collapsed;
+        DetailHint.Visibility = selected is null && Detail is null ? Visibility.Visible : Visibility.Collapsed;
+        ModelDetailPath.Text = _modelLibraryPath ?? "";
+        ModelDetailProblem.Text = selected is { Digest: null } or { Bytes: null }
+            ? "This model could not be checked. Refresh the library before removal."
+            : !_host.CanRemoveModels ? "Enable AI models in Extensions and reopen Space Maid to remove this model." : "";
+        ModelDetailProblem.Visibility = ModelDetailProblem.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
     private async void RemoveModel_Click(object sender, RoutedEventArgs e) => await RemoveLibraryModelAsync();
     internal async Task RemoveLibraryModelAsync()

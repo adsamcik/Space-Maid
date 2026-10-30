@@ -127,6 +127,10 @@ public sealed partial class DesktopTests
         OllamaLibraryTests.WriteModel(library, "research:local", 3L << 30, space: "team");
         Directory.CreateDirectory(Path.Join(library, "blobs"));
         File.WriteAllText(Path.Join(library, "blobs", "sha256-" + new string('b', 64)), "owned fixture");
+        string project = Directory.CreateDirectory(Path.Join(fixture.Path, "Orbit")).FullName;
+        File.WriteAllText(Path.Join(project, "Orbit.csproj"), "<Project />");
+        string pendingFolder = Directory.CreateDirectory(Path.Join(project, "bin")).FullName;
+        File.WriteAllText(Path.Join(pendingFolder, "Orbit.dll"), "owned output");
         var scanTask = window.Operations.Files.ScanAsync(fixture.Path);
         PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
         var scan = scanTask.GetAwaiter().GetResult();
@@ -161,6 +165,19 @@ public sealed partial class DesktopTests
         Assert.False(remove.IsEnabled);
         list.SelectedIndex = 0;
         Assert.True(remove.IsEnabled);
+        Assert.Equal(Visibility.Collapsed, ((StackPanel)view.FindName("FolderActionsBar")).Visibility);
+        Assert.Equal(Visibility.Collapsed, ((StackPanel)view.FindName("DetailPanel")).Visibility);
+        Assert.Equal(Visibility.Visible, ((StackPanel)view.FindName("ModelDetailPanel")).Visibility);
+        Assert.Equal("gemma3:12b-it-qat", ((TextBlock)view.FindName("ModelDetailName")).Text);
+        Assert.Equal(library, ((TextBox)view.FindName("ModelDetailPath")).Text);
+        var pending = Assert.Single((IEnumerable<OpportunityRow>)typeof(MainWindow).GetField("_rows", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!,
+            row => row.Path == pendingFolder);
+        pending.Selected = true;
+        Assert.Equal(Visibility.Visible, ((StackPanel)view.FindName("FolderActionsBar")).Visibility);
+        Assert.True(((Button)view.FindName("ReviewButton")).IsEnabled);
+        Assert.Contains("outside this view", ((TextBlock)view.FindName("SelectionText")).Text);
+        pending.Selected = false;
+        Assert.Equal(Visibility.Collapsed, ((StackPanel)view.FindName("FolderActionsBar")).Visibility);
 #pragma warning disable WPF0001
         foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
         {
@@ -269,7 +286,11 @@ public sealed partial class DesktopTests
                         shown = true;
                         Assert.Contains(Descendants(dialog).OfType<TextBlock>(), text => text.Text == expectedModel);
                         Assert.Contains(Descendants(dialog).OfType<TextBox>(), text => text.IsReadOnly && text.Text == library);
+                        var technical = (Expander)dialog.FindName("TechnicalDetails");
+                        Assert.False(technical.IsExpanded);
                         if (!confirm) Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "ollama-inline-removal-review.png"), 640, 570);
+                        technical.IsExpanded = true; dialog.UpdateLayout();
+                        Assert.Contains(Descendants(technical).OfType<TextBox>(), text => text.IsReadOnly && text.Text.Length == 64);
                         if (confirm) ((Button)dialog.FindName("DeleteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         else dialog.DialogResult = false;
                     }

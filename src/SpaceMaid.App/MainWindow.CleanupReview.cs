@@ -20,7 +20,7 @@ public partial class MainWindow
         if (_cleanupSettingsUnavailable)
         {
             OpportunityBrowser?.ShowOptions();
-            StatusText.Text = "Set build retention in View options before reviewing.";
+            StatusText.Text = "Set build retention in Cleanup rules before reviewing.";
             return;
         }
         if (!SaveBuildRetention()) return;

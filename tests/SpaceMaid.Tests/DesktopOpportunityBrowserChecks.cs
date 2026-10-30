@@ -385,7 +385,10 @@ public sealed partial class DesktopTests
             Assert.Equal(2, list.Items.Count); Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
             Assert.Equal("Build files › C# / .NET", ((TextBlock)OpportunityControl(window, "CleanupScopeText")).Text);
             var withoutProject = locations.Where(item => !item.Path.Contains("Chatty-NPC", StringComparison.Ordinal) || !chosen.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
+            var selectedView = (ToggleButton)OpportunityControl(window, "SelectedOnlyToggle");
+            selectedView.IsChecked = true; selectedView.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             publish.Invoke(window, [scan, withoutProject, OpportunityGrouping.Build(scan, withoutProject), chosen, null, true]);
+            selectedView.IsChecked = false; selectedView.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Empty(list.Items); Assert.Equal(199, navigation.Items.Count);
             Assert.Equal("Chatty-NPC", ((TextBlock)OpportunityControl(window, "OpportunityHeading")).Text);
             Assert.Contains("No matching folders remain", ((TextBlock)OpportunityControl(window, "OpportunityResultSummary")).Text);
