@@ -9,6 +9,50 @@ namespace SpaceMaid.Tests;
 public sealed class CleanupBatchTests
 {
     private readonly FileOperations _operations = new();
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public async Task JunctionAddedAfterConfirmationSkipsOnlyItsFolderAndRecyclesTheIndependentFixture()
+    {
+        using var fixture = new TestDirectory(); using var outside = new TestDirectory();
+        var bad = CreateProject(fixture.Path, "linked", 'a', 4096);
+        var good = CreateProject(fixture.Path, "ready", 'b', 8192);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var plan = await _operations.PrepareCleanupAsync(scan, DeveloperOpportunityFixture.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        Assert.Equal(2, plan.Targets.Count);
+        string junction = Path.Join(bad.Output, "linked"), outsideFile = Path.Join(outside.Path, "keep.txt");
+        File.WriteAllText(outsideFile, "outside contents");
+        await OpportunityReviewValidatorTests.CreateJunctionAsync(junction, outside.Path);
+        string? recycledPath = null;
+        try
+        {
+            var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), default,
+                (name, data) =>
+                {
+                    if (name == "cleanup-location-result" && data is CleanupLocationResult item && item.Location.Path == good.Output)
+                        recycledPath = item.Recycle?.RecycledPath;
+                }, discover: DeveloperOpportunityFixture.Find);
+            Assert.Null(result.ValidationError); Assert.NotNull(result.Validation);
+            Assert.Equal(1, result.RecycledCount); Assert.False(result.Cancelled);
+            var skipped = Assert.Single(result.Locations, item => item.Outcome == CleanupOutcome.Skipped);
+            Assert.Equal(bad.Output, skipped.Location.Path); Assert.False(skipped.Attempted);
+            Assert.Contains("not followed", skipped.Message);
+            Assert.Equal(good.Output, Assert.Single(result.Locations, item => item.Outcome == CleanupOutcome.Recycled).Location.Path);
+            Assert.NotNull(recycledPath); Assert.False(Directory.Exists(good.Output));
+            Assert.Equal(good.Content, File.ReadAllText(Path.Join(recycledPath, "result.dll")));
+            Assert.Equal(bad.Content, File.ReadAllText(bad.File));
+            Assert.Equal("outside contents", File.ReadAllText(outsideFile));
+            Assert.Equal(good.SourceContent, File.ReadAllText(good.Source));
+            Assert.Equal(bad.SourceContent, File.ReadAllText(bad.Source));
+        }
+        finally
+        {
+            Directory.Delete(junction);
+            if (recycledPath is not null) DeletionTests.RestoreFixture(recycledPath, good.Output);
+        }
+        Assert.Equal(good.Content, File.ReadAllText(good.File));
+    }
+
     [Fact]
     public async Task AReadyBuildThatBecomesUncertainAfterConfirmationIsSkippedWithoutRecycling()
     {

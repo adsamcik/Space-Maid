@@ -20,6 +20,72 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckResilientCleanupReview(MainWindow window, Application app, string artifactRoot)
+    {
+        using var fixture = new TestDirectory(); using var outside = new TestDirectory();
+        File.WriteAllText(Path.Join(fixture.Path, "sample.csproj"), "<Project />");
+        string good = Directory.CreateDirectory(Path.Join(fixture.Path, "bin")).FullName;
+        string bad = Directory.CreateDirectory(Path.Join(fixture.Path, "obj")).FullName;
+        File.WriteAllBytes(Path.Join(good, "good.dll"), new byte[8192]);
+        File.WriteAllBytes(Path.Join(bad, "bad.o"), new byte[4096]);
+        File.WriteAllText(Path.Join(outside.Path, "keep.txt"), "outside contents");
+        BuildActivityFixture.AgeProject(fixture.Path);
+        var scanTask = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
+        var scan = scanTask.GetAwaiter().GetResult(); var findings = OpportunityDetector.Find(scan);
+        var load = window.InitializeExplorerAsync(scan, findings, default);
+        PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(5)); load.GetAwaiter().GetResult();
+        typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [scan, findings, OpportunityGrouping.Build(scan, findings), null, null, false]);
+        ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 2;
+        ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((TextBox)OpportunityControl(window, "OpportunitySearch")).Text = "";
+        var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
+        PumpUntil(() => list.Items.Count == 2, TimeSpan.FromSeconds(3));
+        foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
+        string junction = Path.Join(bad, "linked");
+        var linking = OpportunityReviewValidatorTests.CreateJunctionAsync(junction, outside.Path);
+        PumpUntil(() => linking.IsCompleted, TimeSpan.FromSeconds(5)); linking.GetAwaiter().GetResult();
+        Exception? failure = null; bool reviewed = false;
+        var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+        {
+            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+            if (dialog is null) return;
+            try
+            {
+                reviewed = true;
+                var locations = (ListBox)dialog.FindName("LocationList");
+                Assert.Equal(good, Assert.IsType<CleanupReviewRow>(Assert.Single(locations.Items.Cast<object>())).Path);
+                Assert.True(((Button)dialog.FindName("CleanupButton")).IsEnabled);
+                Assert.Contains("See Kept for details", ((TextBlock)dialog.FindName("ValidationText")).Text);
+                ((RadioButton)dialog.FindName("KeptFilter")).IsChecked = true;
+                var kept = Assert.IsType<CleanupReviewRow>(Assert.Single(locations.Items.Cast<object>()));
+                Assert.Equal(bad, kept.Path); Assert.False(kept.Selected); Assert.False(kept.CanSelect);
+                Assert.Contains("not followed", kept.DecisionReason);
+                locations.SelectedItem = kept;
+                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-skipped-link.png"), 980, 720);
+                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-skipped-link-compact.png"), 760, 520);
+            }
+            catch (Exception error) { failure = error; }
+            finally { dialog.Close(); }
+        }, Dispatcher.CurrentDispatcher);
+        try
+        {
+            var review = window.ReviewSelectionAsync();
+            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(15)); review.GetAwaiter().GetResult();
+            if (failure is not null) throw failure;
+            Assert.True(reviewed, ((TextBlock)window.FindName("StatusText")).Text);
+            Assert.DoesNotContain("could not be checked:", ((TextBlock)window.FindName("StatusText")).Text);
+            Assert.True(list.Items.Cast<OpportunityRow>().Single(row => row.Path == good).Selected);
+            Assert.False(list.Items.Cast<OpportunityRow>().Single(row => row.Path == bad).Selected);
+            Assert.Equal(Visibility.Visible, ((TextBlock)OpportunityControl(window, "CleanupFreshnessText")).Visibility);
+            Assert.Equal("outside contents", File.ReadAllText(Path.Join(outside.Path, "keep.txt")));
+            Assert.Equal(8192, new FileInfo(Path.Join(good, "good.dll")).Length);
+        }
+        finally { timer.Stop(); Directory.Delete(junction); }
+    }
+
     private static void CheckOpportunityValidation(MainWindow window, Application app, string artifactRoot)
     {
         using var fixture = new TestDirectory();
@@ -35,6 +101,8 @@ public sealed partial class DesktopTests
         PumpUntil(() => scanTask.IsCompleted, TimeSpan.FromSeconds(5));
         var scan = scanTask.GetAwaiter().GetResult();
         Publish(scan);
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 2;
+        ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         Assert.Equal(2, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;

@@ -70,13 +70,13 @@ public partial class MainWindow
             finally { _changingOpportunitySelection = false; }
             UpdateSelection();
             string note = $"Selected locations checked at {DateTime.Now:HH:mm:ss}. "
-                + (excluded.Count == 1 ? "1 location was excluded because it is missing, changed or no longer matches. "
-                    : excluded.Count > 1 ? $"{excluded.Count:N0} locations were excluded because they are missing, changed or no longer match. " : "")
+                + (excluded.Count == 1 ? "1 location was excluded because it could not be verified or no longer matches. See Kept for details. "
+                    : excluded.Count > 1 ? $"{excluded.Count:N0} locations were excluded because they could not be verified or no longer match. See Kept for details. " : "")
                 + "Other folders retain earlier scan data.";
             if (checkedWorktrees.Count > 0) note += " Worktree rules checked: "
                 + string.Join("; ", checkedWorktrees.Values.Distinct().Select(DescribeWorktreePolicy))
                 + ". Ignored contents are included; recycling preserves branches and leaves Git registration in place.";
-            StatusText.Text = plan.Preview.Locations.Count + plan.BlockedLocations.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
+            StatusText.Text = plan.Preview.Locations.Count + plan.BlockedLocations.Count + excluded.Count == 0 ? "None of the selected locations still match. Selection updated; scan again to discover new opportunities." : note;
             log.Record("review-validation-complete", new { ElapsedMs = timer.Elapsed.TotalMilliseconds,
                 Validated = validation.ValidatedLocations.Count, validation.ExcludedPaths, validation.CanMergeInventory, plan.Preview.EstimatedBytes, Blocked = plan.BlockedLocations.Count });
             if (work.IsCancellationRequested)
@@ -85,14 +85,14 @@ public partial class MainWindow
                 log.Record("review-cancelled", new { Phase = "before-preview", validation.CanMergeInventory });
                 return;
             }
-            if (plan.Preview.Locations.Count + plan.BlockedLocations.Count > 0)
+            if (plan.Preview.Locations.Count + plan.BlockedLocations.Count + excluded.Count > 0)
             {
                 var displayed = _snapshot!;
                 new ReviewWindow(plan, note, (chosenPlan, progress, token) =>
                 {
                     var cleanup = ExecuteCleanupAsync(chosenPlan, displayed, progress, token, work, log, checkedWorktrees);
                     _cleanupTask = cleanup; return cleanup;
-                }, _cleanupGroups, Operations) { Owner = this }.ShowDialog();
+                }, _cleanupGroups, Operations, validation.ExcludedLocations) { Owner = this }.ShowDialog();
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or Win32Exception

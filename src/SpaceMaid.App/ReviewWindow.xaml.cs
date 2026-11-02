@@ -42,7 +42,13 @@ public partial class ReviewWindow : Window
 
     internal ReviewWindow(CleanupPlan plan, string validationNote,
         Func<CleanupPlan, IProgress<CleanupProgress>, CancellationToken, Task<CleanupBatchResult>> execute,
-        IReadOnlyList<OpportunityGroup>? groups = null, FileOperations? operations = null) : this(plan.Preview, validationNote)
+        IReadOnlyList<OpportunityGroup>? groups = null, FileOperations? operations = null)
+        : this(plan, validationNote, execute, groups, operations, []) { }
+
+    internal ReviewWindow(CleanupPlan plan, string validationNote,
+        Func<CleanupPlan, IProgress<CleanupProgress>, CancellationToken, Task<CleanupBatchResult>> execute,
+        IReadOnlyList<OpportunityGroup>? groups, FileOperations? operations,
+        IReadOnlyList<CleanupBlockedLocation> excludedLocations) : this(plan.Preview, validationNote)
     {
         _operations = operations ?? _operations;
         _plan = plan; _execute = execute; _locations.Clear();
@@ -54,10 +60,14 @@ public partial class ReviewWindow : Window
                 assessment.State == CleanupReadiness.Ready, true, RowSelection_Changed));
         }
         var present = _locations.Select(row => row.Identity).ToHashSet();
-        foreach (var blocked in plan.BlockedLocations)
+        var excluded = excludedLocations.ToHashSet();
+        foreach (var blocked in plan.BlockedLocations.Concat(excludedLocations))
         {
             if (!present.Add((blocked.Opportunity.ProviderId, blocked.Opportunity.RuleId, blocked.Opportunity.Path))) continue;
-            DateTime? activity = plan.BuildAssessments.TryGetValue(blocked.Opportunity.DirectoryIndex, out var assessment) ? assessment.LastActivityUtc : null;
+            // Excluded locations refer to the earlier inventory; its indexes
+            // must not pick up another folder's freshly calculated activity.
+            DateTime? activity = !excluded.Contains(blocked)
+                && plan.BuildAssessments.TryGetValue(blocked.Opportunity.DirectoryIndex, out var assessment) ? assessment.LastActivityUtc : null;
             _locations.Add(new(blocked.Opportunity, !plan.Preview.UsesLogicalSize,
                 new(CleanupReadiness.Protected, activity, blocked.Reason), false, false));
         }

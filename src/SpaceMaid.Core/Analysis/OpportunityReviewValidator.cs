@@ -1,4 +1,5 @@
 using SpaceMaid.Core.IO;
+using System.ComponentModel;
 using System.Diagnostics;
 using SpaceMaid.Core.Scanning;
 
@@ -7,7 +8,10 @@ namespace SpaceMaid.Core.Analysis;
 public sealed record OpportunityReviewValidation(ScanSnapshot Snapshot, IReadOnlyList<Opportunity> Findings,
     IReadOnlyList<Opportunity> ValidatedLocations, IReadOnlyList<string> ExcludedPaths,
     IReadOnlyList<ScanRecheckRequest> RecheckedScopes, bool CanMergeInventory,
-    IReadOnlyList<ScanRecheckRequest> UncheckedScopes);
+    IReadOnlyList<ScanRecheckRequest> UncheckedScopes)
+{
+    public IReadOnlyList<CleanupBlockedLocation> ExcludedLocations { get; init; } = [];
+}
 
 public sealed record OpportunityValidationProgress(int Completed, int Total, string Path);
 
@@ -41,22 +45,30 @@ public static class OpportunityReviewValidator
                 || !string.Equals(Normalize(scan.PathForFile(opportunity.DirectoryIndex)
                     ?? throw new ArgumentException("A selected opportunity has no resolved location.")), path, StringComparison.Ordinal))
                 throw new ArgumentException("A selected opportunity does not belong to this scan.", nameof(selected));
-            bool available = IsLiveDirectory(path);
-            choices.Add(new(opportunity, path, scan.Records[opportunity.DirectoryIndex].Identity, available));
-            if (available)
+            var required = new List<ScanRecheckRequest>();
+            bool available = false; string? failure = null;
+            try
             {
-                AddRequest(path, recursive: true);
-                string? parent = Path.GetDirectoryName(path);
-                if (parent is not null && scan.FindEntry(parent) is { } link && scan.Entry(link).IsDirectory)
-                    AddRequest(NearestLiveParent(parent), recursive: false);
+                available = IsLiveDirectory(path);
+                if (available)
+                {
+                    required.Add(new(path));
+                    string? parent = Path.GetDirectoryName(path);
+                    if (parent is not null && scan.FindEntry(parent) is { } link && scan.Entry(link).IsDirectory)
+                        required.Add(new(NearestLiveParent(parent), false));
+                }
+                else required.Add(new(NearestLiveParent(Path.GetDirectoryName(path)), false));
+                foreach (var request in required) AddRequest(request.Path, request.Recursive);
             }
-            else AddRequest(NearestLiveParent(Path.GetDirectoryName(path)), recursive: false);
+            catch (Exception error) when (IsScopeFailure(error)) { failure = error.Message; }
+            choices.Add(new(opportunity, path, scan.Records[opportunity.DirectoryIndex].Identity, available, required, failure));
         }
         var scopes = PlanScopes(requests.Select(value => new ScanRecheckRequest(value.Key, value.Value)), token);
         diagnostic?.Invoke("opportunity-validation-start", new { Selected = choices.Count, Scopes = scopes.Length,
             scan.HasAllocationData, MaximumConcurrentReads });
         var reader = new DiskAccess(() => layoutSource);
-        var replacements = new ScanRechecker.Replacement[scopes.Length];
+        var reads = new ScanRechecker.Replacement?[scopes.Length];
+        var failures = new Dictionary<string, string>(StringComparer.Ordinal);
         var reportGate = new object();
         var progressTimer = Stopwatch.StartNew(); int completed = 0;
         // Read shallow parents first so their namespace observations still
@@ -73,7 +85,6 @@ public static class OpportunityReviewValidator
             {
                 var scope = scopes[index];
                 readToken.ThrowIfCancellationRequested();
-                ScanRechecker.ValidateAncestors(scope.Path);
                 lock (reportGate)
                 {
                     readToken.ThrowIfCancellationRequested();
@@ -81,22 +92,44 @@ public static class OpportunityReviewValidator
                     if (completed == 0 || progressTimer.ElapsedMilliseconds >= 150)
                     { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
                 }
-                var fresh = await reader.ReadDirectoryAsync(scope.Path, scope.Recursive, readToken,
-                    allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData,
-                    diagnostic: (name, data) => { lock (reportGate) diagnostic?.Invoke(name, data); }, previous: scan).ConfigureAwait(false);
-                if (fresh.WarningCount > 0) throw new IOException("The selected scope could not be fully validated: " + string.Join(" ", fresh.Warnings));
-                lock (reportGate)
+                try
                 {
-                    readToken.ThrowIfCancellationRequested();
-                    replacements[index] = new(scope.Path, scope.Recursive, fresh);
-                    completed++;
-                    diagnostic?.Invoke("opportunity-validation-read-complete", new { scope.Path, scope.Recursive, fresh.FileCount,
-                        fresh.Backend, fresh.FallbackReason, ElapsedMs = fresh.Metrics.Acquisition.TotalMilliseconds });
-                    if (progressTimer.ElapsedMilliseconds >= 150)
-                    { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
+                    ScanRechecker.ValidateAncestors(scope.Path);
+                    var fresh = await reader.ReadDirectoryAsync(scope.Path, scope.Recursive, readToken,
+                        allStreams: scan.HasAllocationData && scan.IncludesAllDataStreams, allowBasic: !scan.HasAllocationData,
+                        diagnostic: (name, data) => { lock (reportGate) diagnostic?.Invoke(name, data); }, previous: scan).ConfigureAwait(false);
+                    if (fresh.WarningCount > 0) throw new IOException("Folder could not be fully checked: " + string.Join(" ", fresh.Warnings));
+                    lock (reportGate)
+                    {
+                        readToken.ThrowIfCancellationRequested();
+                        reads[index] = new(scope.Path, scope.Recursive, fresh);
+                        diagnostic?.Invoke("opportunity-validation-read-complete", new { scope.Path, scope.Recursive, fresh.FileCount,
+                            fresh.Backend, fresh.FallbackReason, ElapsedMs = fresh.Metrics.Acquisition.TotalMilliseconds });
+                    }
+                }
+                catch (Exception error) when (IsScopeFailure(error))
+                {
+                    lock (reportGate)
+                    {
+                        failures[scope.Path] = error.Message;
+                        diagnostic?.Invoke("opportunity-validation-read-excluded", new { scope.Path, scope.Recursive, Error = error.ToString() });
+                    }
+                }
+                finally
+                {
+                    lock (reportGate)
+                    {
+                        completed++;
+                        if (progressTimer.ElapsedMilliseconds >= 150)
+                        { progress?.Report(new(completed, scopes.Length, scope.Path)); progressTimer.Restart(); }
+                    }
                 }
             }).ConfigureAwait(false);
         }
+        // A subtree cannot rely on a failed parent check. Keep its earlier
+        // inventory too, rather than joining fresh data to an unchecked parent.
+        var replacements = reads.OfType<ScanRechecker.Replacement>()
+            .Where(source => !TryFindAncestor(source.Path, failures, token, out _)).ToArray();
         var sourceIndex = new Dictionary<string, ScanRechecker.Replacement>(StringComparer.Ordinal);
         var childIndexes = new Dictionary<string, ChildNameIndex>(StringComparer.Ordinal);
         foreach (var source in replacements)
@@ -104,8 +137,16 @@ public static class OpportunityReviewValidator
             token.ThrowIfCancellationRequested(); sourceIndex.Add(source.Path, source);
             if (!source.Recursive) childIndexes.Add(source.Path, new(source.Fresh, token));
         }
-        CheckFreshNamespace(replacements, sourceIndex, childIndexes, token);
-        var uncheckedDirectories = scan.HasAllocationData ? UncheckedDirectories(scan, replacements, scopes, token) : new UncheckedDirectorySet([], []);
+        foreach (string changed in ChangedNamespaces(replacements, sourceIndex, childIndexes, token))
+        {
+            failures[changed] = "Folder changed between its parent and subtree checks. Review it again.";
+            sourceIndex.Remove(changed); childIndexes.Remove(changed);
+        }
+        replacements = replacements.Where(source => !TryFindAncestor(source.Path, failures, token, out _)).ToArray();
+        foreach (string rejected in sourceIndex.Keys.Except(replacements.Select(source => source.Path)).ToArray())
+        { sourceIndex.Remove(rejected); childIndexes.Remove(rejected); }
+        var rechecked = replacements.Select(source => new ScanRecheckRequest(source.Path, source.Recursive)).ToArray();
+        var uncheckedDirectories = scan.HasAllocationData ? UncheckedDirectories(scan, replacements, rechecked, token) : new UncheckedDirectorySet([], []);
         ScanSnapshot updated = scan.HasAllocationData
             ? ScanRechecker.Merge(scan, replacements, token, uncheckedDirectories.Identities)
             : BuildLogicalSelection(scan, replacements, sourceIndex, childIndexes, token, timer.Elapsed);
@@ -116,10 +157,18 @@ public static class OpportunityReviewValidator
             token.ThrowIfCancellationRequested();
             findingIndex.TryAdd((finding.DirectoryIndex, finding.ProviderId, finding.RuleId, finding.Title, finding.Category), finding);
         }
-        var validated = new List<Opportunity>(); var excluded = new List<string>();
+        var validated = new List<Opportunity>(); var excluded = new List<CleanupBlockedLocation>();
         foreach (var choice in choices)
         {
             token.ThrowIfCancellationRequested();
+            string? failure = choice.Failure;
+            foreach (var request in choice.RequiredScopes)
+                if (TryFindAncestor(request.Path, failures, token, out string reason)) { failure = reason; break; }
+            if (failure is not null)
+            {
+                excluded.Add(new(choice.Original, failure));
+                continue;
+            }
             int? link = choice.Available ? updated.FindEntry(choice.Path) : null;
             if (link is { } current && updated.Entry(current).IsDirectory
                 && (!scan.HasAllocationData || updated.Records[updated.Entry(current).FileIndex].Identity == choice.Identity))
@@ -127,11 +176,16 @@ public static class OpportunityReviewValidator
                 if (findingIndex.TryGetValue((updated.Entry(current).FileIndex, choice.Original.ProviderId, choice.Original.RuleId, choice.Original.Title, choice.Original.Category), out var finding))
                 { validated.Add(finding); continue; }
             }
-            excluded.Add(choice.Original.Path);
+            excluded.Add(new(choice.Original, "Folder is missing, replaced or no longer matches its original detection rule."));
         }
+        var uncheckedScopes = uncheckedDirectories.Scopes.Concat(scopes.Where(scope => !sourceIndex.ContainsKey(scope.Path)))
+            .Concat(choices.Where(choice => choice.Failure is not null).Select(choice => new ScanRecheckRequest(choice.Path)))
+            .Distinct().ToArray();
         diagnostic?.Invoke("opportunity-validation-complete", new { Validated = validated.Count, Excluded = excluded.Count,
-            Unchecked = uncheckedDirectories.Scopes.Count, CanMergeInventory = scan.HasAllocationData, ElapsedMs = timer.Elapsed.TotalMilliseconds });
-        return new(updated, findings, validated, excluded, scopes, scan.HasAllocationData, uncheckedDirectories.Scopes);
+            Unchecked = uncheckedScopes.Length, CanMergeInventory = scan.HasAllocationData, ElapsedMs = timer.Elapsed.TotalMilliseconds,
+            ExcludedLocations = excluded });
+        return new(updated, findings, validated, excluded.Select(item => item.Opportunity.Path).ToArray(), rechecked, scan.HasAllocationData, uncheckedScopes)
+        { ExcludedLocations = excluded.AsReadOnly() };
 
         void AddRequest(string path, bool recursive)
         { path = Normalize(path); requests[path] = recursive || requests.GetValueOrDefault(path); }
@@ -169,7 +223,7 @@ public static class OpportunityReviewValidator
         return result.ToArray();
     }
 
-    private static void CheckFreshNamespace(IReadOnlyList<ScanRechecker.Replacement> replacements,
+    private static IEnumerable<string> ChangedNamespaces(IReadOnlyList<ScanRechecker.Replacement> replacements,
         IReadOnlyDictionary<string, ScanRechecker.Replacement> sourceIndex,
         IReadOnlyDictionary<string, ChildNameIndex> childIndexes, CancellationToken token)
     {
@@ -182,7 +236,7 @@ public static class OpportunityReviewValidator
                 || !parent.Fresh.HasAllocationData || !scope.Fresh.HasAllocationData) continue;
             int? found = childIndexes[path].Find(Path.GetFileName(scope.Path));
             if (found is null || parent.Fresh.Records[parent.Fresh.Entry(found.Value).FileIndex].Identity != scope.Fresh.Records[scope.Fresh.RootIndex].Identity)
-                throw new IOException("A selected folder changed between its parent and subtree checks. Validate the selection again.");
+                yield return scope.Path;
         }
     }
 
@@ -292,7 +346,10 @@ public static class OpportunityReviewValidator
         root = Normalize(root); path = Normalize(path);
         return path == root || path.StartsWith(root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
-    private sealed record Choice(Opportunity Original, string Path, FileIdentity Identity, bool Available);
+    private static bool IsScopeFailure(Exception error) => error is IOException or UnauthorizedAccessException or Win32Exception
+        or InvalidDataException or InvalidOperationException or ArgumentException or NotSupportedException or OverflowException;
+    private sealed record Choice(Opportunity Original, string Path, FileIdentity Identity, bool Available,
+        IReadOnlyList<ScanRecheckRequest> RequiredScopes, string? Failure);
     private sealed record UncheckedDirectorySet(IReadOnlyList<ScanRecheckRequest> Scopes, IReadOnlyCollection<FileIdentity> Identities);
 
     private static bool TryFindAncestor<T>(string path, IReadOnlyDictionary<string, T> index, CancellationToken token,

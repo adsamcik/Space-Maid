@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 using Xunit;
@@ -7,6 +8,162 @@ namespace SpaceMaid.Tests;
 
 public sealed class OpportunityReviewValidatorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JunctionWarningExcludesOnlyItsScopeAndKeepsIndependentSelectionsUsable(bool logical)
+    {
+        using var fixture = new TestDirectory(); using var outside = new TestDirectory();
+        var bad = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "bad")).FullName);
+        var good = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "good")).FullName);
+        var native = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var scan = logical ? AsLogical(native) : native;
+        var selected = DeveloperOpportunityFixture.Find(scan);
+        File.WriteAllText(Path.Join(outside.Path, "untouched.txt"), "outside contents");
+        string junction = Path.Join(bad.Output, "linked");
+        await CreateJunctionAsync(junction, outside.Path);
+        try
+        {
+            File.WriteAllBytes(bad.File, new byte[12345]);
+            File.WriteAllBytes(good.File, new byte[23456]);
+            var result = await OpportunityReviewValidator.ValidateAsync(scan, selected, discover: DeveloperOpportunityFixture.Find);
+            Assert.Equal(good.Output, Assert.Single(result.ValidatedLocations).Path);
+            Assert.Equal(23456, Assert.Single(result.ValidatedLocations).LogicalBytes);
+            var excluded = Assert.Single(result.ExcludedLocations);
+            Assert.Equal(bad.Output, excluded.Opportunity.Path); Assert.Contains("not followed", excluded.Reason);
+            Assert.Equal(bad.Output, Assert.Single(result.ExcludedPaths));
+            Assert.Contains(result.UncheckedScopes, scope => scope.Path == bad.Output && scope.Recursive);
+            Assert.DoesNotContain(result.RecheckedScopes, scope => scope.Path == bad.Output);
+            Assert.Null(result.Snapshot.FindEntry(Path.Join(junction, "untouched.txt")));
+            if (!logical)
+                Assert.Equal(4096, result.Snapshot.Entry(result.Snapshot.FindEntry(bad.File)!.Value).LogicalBytes);
+            Assert.Equal("outside contents", File.ReadAllText(Path.Join(outside.Path, "untouched.txt")));
+            Assert.Equal(12345, new FileInfo(bad.File).Length);
+        }
+        finally { Directory.Delete(junction); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedParentOrSubtreeCheckDoesNotAbortOtherProjects(bool failParent)
+    {
+        using var fixture = new TestDirectory();
+        var bad = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "bad")).FullName);
+        var good = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "good")).FullName);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        string failedPath = failParent ? bad.Root : bad.Output;
+        bool moved = false;
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, DeveloperOpportunityFixture.Find(scan),
+            diagnostic: (name, data) =>
+            {
+                if (name == "opportunity-validation-read-start" && DiagnosticPath(data) == failedPath)
+                { Directory.Move(failedPath, failedPath + "-held"); moved = true; }
+            }, discover: DeveloperOpportunityFixture.Find);
+        Assert.True(moved);
+        Assert.Equal(good.Output, Assert.Single(result.ValidatedLocations).Path);
+        Assert.Equal(bad.Output, Assert.Single(result.ExcludedLocations).Opportunity.Path);
+        Assert.Contains(result.UncheckedScopes, scope => scope.Path == failedPath);
+        Assert.DoesNotContain(result.RecheckedScopes, scope => scope.Path == bad.Output);
+        Assert.NotNull(result.Snapshot.FindEntry(bad.File));
+        Assert.Equal(4096, new FileInfo(failParent ? Path.Join(bad.Root + "-held", "bin", "result.dll")
+            : Path.Join(bad.Output + "-held", "result.dll")).Length);
+    }
+
+    [Fact]
+    public async Task NamespaceChangeBetweenReadsExcludesThatSubtreeWithoutAbortingTheSelection()
+    {
+        using var fixture = new TestDirectory();
+        var bad = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "bad")).FullName);
+        var good = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "good")).FullName);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        bool moved = false;
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, DeveloperOpportunityFixture.Find(scan),
+            diagnostic: (name, data) =>
+            {
+                if (name != "opportunity-validation-read-complete" || DiagnosticPath(data) != bad.Root) return;
+                Directory.Move(bad.Output, bad.Output + "-held"); Directory.CreateDirectory(bad.Output);
+                File.WriteAllBytes(bad.File, new byte[8192]); moved = true;
+            }, discover: DeveloperOpportunityFixture.Find);
+        Assert.True(moved); Assert.Equal(good.Output, Assert.Single(result.ValidatedLocations).Path);
+        Assert.Contains("changed between", Assert.Single(result.ExcludedLocations).Reason);
+        Assert.DoesNotContain(result.RecheckedScopes, scope => scope.Path == bad.Output);
+        Assert.Contains(result.UncheckedScopes, scope => scope.Path == bad.Output);
+        Assert.Equal(8192, new FileInfo(bad.File).Length);
+        Assert.Equal(4096, new FileInfo(Path.Join(bad.Output + "-held", "result.dll")).Length);
+    }
+
+    [Fact]
+    public async Task ChangedNestedNamespacesKeepUncheckedDescendantsOutOfTheRefresh()
+    {
+        using var fixture = new TestDirectory();
+        var outer = CreateProject(fixture.Path); var nested = CreateProject(outer.Root);
+        var good = CreateProject(Directory.CreateDirectory(Path.Join(fixture.Path, "good")).FullName);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        Directory.Delete(outer.Output, recursive: true);
+        var result = await OpportunityReviewValidator.ValidateAsync(scan, DeveloperOpportunityFixture.Find(scan),
+            diagnostic: (name, data) =>
+            {
+                if (name != "opportunity-validation-read-complete" || DiagnosticPath(data) != outer.Root) return;
+                Directory.Move(nested.Root, nested.Root + "-held");
+                Directory.CreateDirectory(nested.Output); File.WriteAllText(nested.Marker, "<Project />");
+                File.WriteAllBytes(nested.File, new byte[8192]);
+            }, discover: DeveloperOpportunityFixture.Find);
+        Assert.Equal(good.Output, Assert.Single(result.ValidatedLocations).Path);
+        Assert.Equal(2, result.ExcludedLocations.Count);
+        Assert.Contains(result.ExcludedLocations, item => item.Opportunity.Path == nested.Output && item.Reason.Contains("changed between"));
+        // Shallow reads run in parallel: the nested parent may have captured
+        // either identity. Its unchecked subtree must be retained in both cases.
+        Assert.DoesNotContain(result.RecheckedScopes, scope => scope.Path == nested.Output);
+        Assert.Contains(result.UncheckedScopes, scope => scope.Path == nested.Output);
+        Assert.Equal(4096, result.Snapshot.Entry(result.Snapshot.FindEntry(nested.File)!.Value).LogicalBytes);
+        Assert.Equal(8192, new FileInfo(nested.File).Length);
+    }
+
+    [Fact]
+    public async Task AllScopesFailingReturnsExclusionsAndCancellationStillPropagates()
+    {
+        using var fixture = new TestDirectory(); var project = CreateProject(fixture.Path);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var selected = DeveloperOpportunityFixture.Find(scan);
+        string held = project.Root + "-held";
+        using var cancellation = new CancellationTokenSource();
+        foreach (bool cancel in new[] { false, true })
+        {
+            Task<OpportunityReviewValidation> Validate() => OpportunityReviewValidator.ValidateAsync(scan, selected, cancellation.Token,
+                (name, data) =>
+                {
+                    if (name == "opportunity-validation-read-start" && DiagnosticPath(data) == project.Root)
+                        Directory.Move(project.Root, held);
+                    if (cancel && name == "opportunity-validation-read-excluded") cancellation.Cancel();
+                }, discover: DeveloperOpportunityFixture.Find);
+            try
+            {
+                if (cancel) await Assert.ThrowsAnyAsync<OperationCanceledException>(Validate);
+                else
+                {
+                    var result = await Validate();
+                    Assert.Empty(result.ValidatedLocations); Assert.Single(result.ExcludedLocations);
+                    Assert.Empty(result.RecheckedScopes); Assert.NotEmpty(result.UncheckedScopes);
+                }
+            }
+            finally { Directory.Move(held, project.Root); }
+        }
+        Assert.Null(scan.LastRecheckUtc); Assert.Equal(4096, new FileInfo(project.File).Length);
+    }
+
+    internal static string DiagnosticPath(object data) => (string)data.GetType().GetProperty("Path")!.GetValue(data)!;
+
+    internal static async Task CreateJunctionAsync(string junction, string target)
+    {
+        var start = new ProcessStartInfo("cmd.exe")
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            Arguments = $"/c mklink /J \"{junction}\" \"{target}\"" };
+        using var process = Process.Start(start)!;
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, await process.StandardError.ReadToEndAsync());
+    }
+
     [Fact]
     public async Task SelectedScopeGetsCurrentSizeWithoutReadingFileContentOrExpandingSiblingFolders()
     {

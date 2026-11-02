@@ -114,6 +114,13 @@ public sealed partial class DesktopTests
                     CheckOpportunityCleanup(window, app, artifactRoot: FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-review")
+                {
+                    BeginWorkflow("Resilient cleanup review");
+                    CheckOpportunityValidation(window, app, artifactRoot: FindRepository());
+                    CheckResilientCleanupReview(window, app, artifactRoot: FindRepository());
+                    return;
+                }
                 // Run just these existing workflows when inspecting cleanup UI.
                 // The default desktop gate still exercises every workflow below.
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "opportunities")
@@ -976,6 +983,7 @@ public sealed partial class DesktopTests
                 BeginWorkflow("Cleanup review and execution");
                 SetStage("validating stale selections before cleanup review");
                 CheckOpportunityValidation(window, app, artifactRoot);
+                CheckResilientCleanupReview(window, app, artifactRoot);
                 SetStage("reviewing a thousand cleanup folders with bounded pages and bulk exclusions");
                 CheckBulkCleanupReview(app, artifactRoot);
                 SetStage("confirming batch cleanup and refreshing its affected folders");

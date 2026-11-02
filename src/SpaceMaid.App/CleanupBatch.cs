@@ -39,6 +39,7 @@ internal static class CleanupBatch
             CleanupOutcome.Skipped, item.Reason)).ToList();
         OpportunityReviewValidation? validation;
         Dictionary<(string ProviderId, string Path, string RuleId), Opportunity> current;
+        Dictionary<(string ProviderId, string Path, string RuleId), string> exclusions;
         IReadOnlyDictionary<int, BuildCleanupAssessment> currentAssessments;
         var buildsByTarget = new Dictionary<string, List<Opportunity>>(StringComparer.Ordinal);
         try
@@ -47,6 +48,8 @@ internal static class CleanupBatch
             validation = await operations.ReviewCleanupAsync(plan.Snapshot, plan.Preview.Locations, token, diagnostic, discover,
                 new InlineValidationProgress(update => progress.Report(new(update.Completed, update.Total, "", "Checking confirmed folders…"))));
             current = validation.ValidatedLocations.ToDictionary(location => (location.ProviderId, location.Path, location.RuleId));
+            exclusions = validation.ExcludedLocations.DistinctBy(item => (item.Opportunity.ProviderId, item.Opportunity.Path, item.Opportunity.RuleId))
+                .ToDictionary(item => (item.Opportunity.ProviderId, item.Opportunity.Path, item.Opportunity.RuleId), item => item.Reason);
             currentAssessments = await operations.AssessBuildCleanupAsync(validation.Snapshot, validation.Findings, plan.BuildPolicy, token);
             var selectedDirectories = validation.ValidatedLocations.DistinctBy(location => location.DirectoryIndex)
                 .ToDictionary(location => location.DirectoryIndex, location => location.Path);
@@ -84,7 +87,8 @@ internal static class CleanupBatch
             if (token.IsCancellationRequested)
                 result = new(location, CleanupOutcome.NotProcessed, "Not started because cleanup was cancelled.");
             else if (!current.ContainsKey((location.ProviderId, location.Path, location.RuleId)))
-                result = new(location, CleanupOutcome.Skipped, "Folder is missing, replaced or no longer matches its original detection rule.");
+                result = new(location, CleanupOutcome.Skipped, exclusions.GetValueOrDefault((location.ProviderId, location.Path, location.RuleId))
+                    ?? "Folder is missing, replaced or no longer matches its original detection rule.");
             else
             {
                 bool attempted = false;
