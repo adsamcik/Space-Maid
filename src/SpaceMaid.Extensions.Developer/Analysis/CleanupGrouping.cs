@@ -31,7 +31,7 @@ public static class CleanupGrouping
             ("checkpoints", "Agent file checkpoints", "Keep recovery copies", "File snapshots used to undo agent edits. Preserve unique and untracked work before removing rollback history."),
             ("models", "AI models & data", "Review complete repositories", "Review whole Hugging Face and LM Studio repositories for recycling; keep offline copies and companion files together. Use the AI models workflow for individual Ollama models."),
             ("containers", "Containers & virtual disks", "Manage in Docker or WSL", "Host folders holding virtual disks and engine data. Sizes include live data and free guest blocks, not guaranteed savings. Open the Containers & WSL extension for inspection and safe cleanup guidance."),
-            ("worktrees", "Other worktrees", "Outside this rule or not checked", "These checkouts do not yet match the chosen cleanup rule. Check worktrees or view folders for activity, upstream status and reasons."),
+            ("worktrees", "Other worktrees", "Outside this rule or not checked", "Select checkouts for review. Cleanup rechecks Git state and the selected worktree rule. Check worktrees to preview matches, or view folders for individual reasons."),
             ("other", "Other development folders", "Review first", "Other detected development folders. Inspect their contents before cleanup.")
         };
         var buckets = locations.GroupBy(location => Key(location)).ToDictionary(group => group.Key, group => group.ToArray());
@@ -62,7 +62,7 @@ public static class CleanupGrouping
                 Caption = Caption(key),
                 Glyph = Glyph(key),
                 StatusLabel = Status(key, kind),
-                CanSelectGroup = key != "worktrees" && findings.Any(item => item.CleanupBlockReason.Length == 0),
+                CanSelectGroup = findings.Any(item => item.CleanupBlockReason.Length == 0),
                 Role = key switch
                 {
                     "worktrees" => OpportunityGroupRole.Worktrees,
@@ -129,6 +129,6 @@ public static class CleanupGrouping
         "environments" => "Keep dependency records", "agent" => "Keep recovery history",
         "checkpoints" => "Keep recovery copies", "models" => "Review full repositories",
         "containers" => "Manage in Docker or WSL",
-        "worktrees" => "Check before selecting", _ => kind
+        "worktrees" => "Checked before cleanup", _ => kind
     };
 }

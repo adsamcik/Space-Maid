@@ -411,6 +411,14 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
     public void RefreshGroups() { RebuildWorktreeGroups(); ApplyOpportunityFilters(); }
     private async void Review_Click(object sender, RoutedEventArgs e) => await _host.ReviewSelectionAsync();
     private async void CheckWorktrees_Click(object sender, RoutedEventArgs e) => await _host.CheckWorktreesAsync();
+    private async void CheckWorktreeGroup_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || sender is not Button { DataContext: OpportunityGroupRow group }
+            || group.Group.Role != OpportunityGroupRole.Worktrees) return;
+        ViewOptionsToggle.IsChecked = BuildRulesToggle.IsChecked = false;
+        WorktreeOptionsToggle.IsChecked = true;
+        await _host.CheckWorktreesAsync();
+    }
     private void OpenFolder_Click(object sender, RoutedEventArgs e) { if (Detail is { } row) _host.OpenFolder(row.Path); }
     private async void ShowInTree_Click(object sender, RoutedEventArgs e) { if (Detail is { } row) await _host.ShowInTreeAsync(row.Item); }
     private void BuildRetention_KeyDown(object sender, KeyEventArgs e)

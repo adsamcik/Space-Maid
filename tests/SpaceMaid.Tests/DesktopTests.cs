@@ -136,6 +136,12 @@ public sealed partial class DesktopTests
                     CheckRuleCleanupRun(window, app, artifactRoot: FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "worktree-selection")
+                {
+                    BeginWorkflow("Worktree group selection and Git checks");
+                    CheckWorktreeGroupSelection(window, app, FindRepository());
+                    return;
+                }
                 // Run just these existing workflows when inspecting cleanup UI.
                 // The default desktop gate still exercises every workflow below.
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "opportunities")
@@ -978,6 +984,7 @@ public sealed partial class DesktopTests
                 SetStage("keeping the initial sort visible after column changes and basic scanning");
                 CheckVisibleInitialSort(window);
                 BeginWorkflow("Opportunities browsing and selection");
+                CheckWorktreeGroupSelection(window, app, artifactRoot);
                 SetStage("browsing thousands of grouped opportunities and retaining hidden selections");
                 CheckOpportunityBrowser(window, app, artifactRoot);
                 SetStage("inspecting ecosystem-specific build contents and scanned folder sizes");

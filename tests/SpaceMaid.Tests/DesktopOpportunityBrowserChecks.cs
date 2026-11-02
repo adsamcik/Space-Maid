@@ -246,7 +246,7 @@ public sealed partial class DesktopTests
         Assert.Equal(4, cards.Items.Count); Assert.Empty(list.Items);
         Assert.Equal(100, cards.Items.Cast<OpportunityGroupRow>().Max(group => group.RelativeSize));
         Assert.All(cards.Items.Cast<OpportunityGroupRow>(), group => Assert.InRange(group.RelativeSize, 0, 100));
-        Assert.False(cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Other worktrees").CanSelectGroup);
+        Assert.True(cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Other worktrees").CanSelectGroup);
         Assert.Equal(1000, cards.Items.Cast<OpportunityGroupRow>().Single(group => group.Name == "Build files").Matches.Count);
         window.UpdateLayout();
         var firstCard = cards.ItemContainerGenerator.ContainerFromIndex(0);

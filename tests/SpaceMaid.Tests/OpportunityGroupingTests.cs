@@ -286,7 +286,10 @@ public sealed class OpportunityGroupingTests
         var groups = CleanupGrouping.Build(scan, findings, checkedPaths);
         Assert.Equal(7, groups.Count); Assert.Equal(1200, groups.Sum(group => group.Locations.Count));
         Assert.Equal(50, Assert.Single(groups, group => group.Name == "Old integrated worktrees").Locations.Count);
-        Assert.Equal(150, Assert.Single(groups, group => group.Name == "Other worktrees").Locations.Count);
+        var otherWorktrees = Assert.Single(groups, group => group.Name == "Other worktrees");
+        Assert.Equal(150, otherWorktrees.Locations.Count);
+        Assert.True(otherWorktrees.CanSelectGroup);
+        Assert.Equal("Checked before cleanup", otherWorktrees.StatusLabel);
         Assert.Equal(scan.AllocatedBytes, groups.Sum(group => group.ObservedBytes));
         var ageGroup = Assert.Single(CleanupGrouping.Build(scan, findings, checkedPaths, worktreePolicy: new(WorktreeCleanupMode.Old, 60)), group => group.Name == "Old clean worktrees");
         Assert.Contains("60 days", ageGroup.Summary); Assert.Contains("Unmerged commits", ageGroup.Summary);
