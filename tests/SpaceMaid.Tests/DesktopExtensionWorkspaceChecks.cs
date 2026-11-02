@@ -68,7 +68,7 @@ public sealed partial class DesktopTests
                 {
                     Render(window, Path.Join(output, $"extensions-workspace-{theme}-{size.Item1}.png"), size.Item1, size.Item2);
                     Assert.True(list.ActualHeight > 400);
-                    Assert.True(((FrameworkElement)window.FindName("ExtensionManagerContent")).ActualWidth > 780);
+                    Assert.True(((FrameworkElement)window.FindName("ExtensionManagerContent")).ActualWidth > 750);
                     Assert.True(((Button)manager.FindName("AddButton")).IsVisible);
                 }
             }

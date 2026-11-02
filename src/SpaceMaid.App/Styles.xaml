@@ -1,5 +1,36 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:local="clr-namespace:SpaceMaid.App">
+    <BitmapImage x:Key="NavigationExplore" UriSource="/SpaceMaid.App;component/Assets/Navigation/explore.png" />
+    <BitmapImage x:Key="NavigationCleanup" UriSource="/SpaceMaid.App;component/Assets/Navigation/cleanup.png" />
+    <BitmapImage x:Key="NavigationPhotos" UriSource="/SpaceMaid.App;component/Assets/Navigation/photos.png" />
+    <BitmapImage x:Key="NavigationApps" UriSource="/SpaceMaid.App;component/Assets/Navigation/apps.png" />
+    <BitmapImage x:Key="NavigationExtensions" UriSource="/SpaceMaid.App;component/Assets/Navigation/extensions.png" />
+    <BitmapImage x:Key="NavigationOptimize" UriSource="/SpaceMaid.App;component/Assets/Navigation/optimize.png" />
+    <BitmapImage x:Key="NavigationMore" UriSource="/SpaceMaid.App;component/Assets/Navigation/more.png" />
+    <BitmapImage x:Key="NavigationSidebar" UriSource="/SpaceMaid.App;component/Assets/Navigation/sidebar.png" />
+    <BitmapImage x:Key="NavigationUpdates" UriSource="/SpaceMaid.App;component/Assets/Navigation/updates.png" />
+    <DataTemplate x:Key="SidebarContent">
+        <DockPanel LastChildFill="True">
+            <Rectangle Width="22" Height="22" VerticalAlignment="Center" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Control}}" RenderOptions.BitmapScalingMode="HighQuality" IsHitTestVisible="False">
+                <Rectangle.OpacityMask><ImageBrush ImageSource="{Binding Path=(local:SidebarNavigation.Icon), RelativeSource={RelativeSource AncestorType=Control}}" Stretch="Uniform" /></Rectangle.OpacityMask>
+                <Rectangle.Style><Style TargetType="Rectangle"><Setter Property="Margin" Value="0,0,10,0" /><Style.Triggers><DataTrigger Binding="{Binding Path=(local:SidebarNavigation.IsCollapsed), RelativeSource={RelativeSource AncestorType=Control}}" Value="True"><Setter Property="Margin" Value="0" /></DataTrigger></Style.Triggers></Style></Rectangle.Style>
+            </Rectangle>
+            <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Path=(local:SidebarNavigation.IsCollapsed), RelativeSource={RelativeSource AncestorType=Control}}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+            </TextBlock>
+        </DockPanel>
+    </DataTemplate>
+    <Style x:Key="SidebarAction" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="ContentTemplate" Value="{StaticResource SidebarContent}" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+        <Setter Property="ToolTip" Value="{Binding Content, RelativeSource={RelativeSource Self}}" />
+        <Setter Property="AutomationProperties.Name" Value="{Binding Content, RelativeSource={RelativeSource Self}}" />
+        <Style.Triggers><Trigger Property="local:SidebarNavigation.IsCollapsed" Value="True"><Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="HorizontalContentAlignment" Value="Center" /><Setter Property="Padding" Value="8,7" /></Trigger></Style.Triggers>
+    </Style>
     <Style x:Key="Card" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
@@ -22,17 +53,20 @@
         <Setter Property="Foreground" Value="{DynamicResource WindowForeground}"/>
         <Setter Property="Padding" Value="12,10"/><Setter Property="Margin" Value="0,2"/>
         <Setter Property="ToolTip" Value="{Binding Content, RelativeSource={RelativeSource Self}}"/>
-        <Setter Property="ContentTemplate"><Setter.Value><DataTemplate><TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis"/></DataTemplate></Setter.Value></Setter>
+        <Setter Property="ContentTemplate" Value="{StaticResource SidebarContent}" />
+        <Setter Property="AutomationProperties.Name" Value="{Binding Content, RelativeSource={RelativeSource Self}}" />
+        <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
         <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
             <Border x:Name="Surface" Background="Transparent" CornerRadius="5" BorderThickness="1" BorderBrush="Transparent">
                 <Grid><Border x:Name="Indicator" Width="3" Height="18" CornerRadius="2" HorizontalAlignment="Left" Background="{DynamicResource AccentButtonBackground}" Visibility="Collapsed"/>
-                <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" RecognizesAccessKey="True"/></Grid>
+                <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" RecognizesAccessKey="True"/></Grid>
             </Border>
             <ControlTemplate.Triggers>
                 <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/></Trigger>
                 <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/><Setter TargetName="Indicator" Property="Visibility" Value="Visible"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
                 <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource WindowForeground}"/></Trigger>
+                <Trigger Property="local:SidebarNavigation.IsCollapsed" Value="True"><Setter Property="HorizontalContentAlignment" Value="Center" /><Setter Property="Padding" Value="10,10" /></Trigger>
             </ControlTemplate.Triggers>
         </ControlTemplate></Setter.Value></Setter>
     </Style>

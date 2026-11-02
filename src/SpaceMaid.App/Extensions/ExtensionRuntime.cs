@@ -5,6 +5,7 @@ using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 using SpaceMaid.Extensions.Contracts;
@@ -12,11 +13,17 @@ using SpaceMaid.Extensions.Contracts;
 namespace SpaceMaid.App.Extensions;
 
 internal sealed record ExtensionManifest(string Id, string Name, string Version, int ContractVersion,
-    string EntryAssembly, string EntryType, string[]? Tools = null);
+    string EntryAssembly, string EntryType, string[]? Tools = null)
+{
+    public string? NavigationIcon { get; init; }
+}
 internal sealed record ExtensionLocation(string Directory, bool Enabled = true);
 internal sealed record ExtensionSettings(List<ExtensionLocation> Directories, List<string> DisabledIds);
 internal sealed record LoadedExtension(string Id, string Name, string Directory, string Status,
-    FrameworkElement? View = null, string? Error = null, string? Version = null, bool SupportsOpportunities = false);
+    FrameworkElement? View = null, string? Error = null, string? Version = null, bool SupportsOpportunities = false)
+{
+    public BitmapSource? NavigationIcon { get; init; }
+}
 
 internal sealed partial class ExtensionRuntime : IAsyncDisposable
 {
@@ -132,7 +139,11 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                 if (instance is IOpportunityExtension opportunities) Opportunities.Register(id, opportunities);
                 bool supportsOpportunities = instance is IOpportunityExtension;
                 _loaded.Add(instance); instance = null;
-                _entries.Add(new(id, name, directory, "Loaded", view, Version: manifest.Version, SupportsOpportunities: supportsOpportunities));
+                _entries.Add(new(id, name, directory, "Loaded", view, Version: manifest.Version, SupportsOpportunities: supportsOpportunities)
+                {
+                    NavigationIcon = ReadNavigationIcon(_files, directory, manifest.NavigationIcon,
+                        reason => _diagnostics.Record("extension-navigation-icon-unavailable", new { Id = id, manifest.NavigationIcon, Reason = reason }))
+                });
                 _diagnostics.Record("extension-loaded", new { Id = id, manifest.Version, manifest.ContractVersion });
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { if (instance is not null) await instance.DisposeAsync(); throw; }

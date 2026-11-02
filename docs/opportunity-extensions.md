@@ -17,11 +17,14 @@ Ship `extension.json`, the entry DLL, its `.deps.json` and private dependencies.
   "version": "1.0.0",
   "contractVersion": 1,
   "entryAssembly": "Personal.PreviewCache.dll",
-  "entryType": "Personal.PreviewCache.Extension"
+  "entryType": "Personal.PreviewCache.Extension",
+  "navigationIcon": "Assets/Navigation.png"
 }
 ```
 
 Add the built directory through **Extensions → Add extension**, then restart. Enabling/disabling takes effect after restart. Bundled Opportunities, Developer, Photos and Apps use the same loader. Packages run trusted local code with the user's permissions; dependency isolation is not a security sandbox. The elevated scan helper loads no plugins.
+
+The optional `navigationIcon` is a package-relative PNG path. Include the file in the extension's output and publish directories. The host uses its transparency as a monochrome mask tinted with the navigation foreground, so provide a clear silhouette with a transparent background. Files are limited to 1 MiB and 1024×1024 pixels. Rooted, remote, parent-traversing, linked and offline paths are rejected. A missing or invalid image logs a diagnostic and uses the host's fallback icon without disabling the extension. API v1 manifests without this property remain supported.
 
 ## Metadata analysis
 

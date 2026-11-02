@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using SpaceMaid.App.Extensions;
 using SpaceMaid.Extensions.Contracts;
 
@@ -35,6 +36,8 @@ public partial class MainWindow
                 link.Tag = page;
                 ExtensionNavigation.Children.Add(link);
             }
+            SidebarNavigation.SetIcon(link, entry.NavigationIcon ?? SidebarNavigation.GetIcon(link)
+                ?? (ImageSource)FindResource("NavigationExtensions"));
             _extensionLinks[entry.Id] = link;
         }
         _extensionManager = new ExtensionsView(_extensions, entry => OpenExtension(entry.Id));

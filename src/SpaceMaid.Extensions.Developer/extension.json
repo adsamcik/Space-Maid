@@ -3,6 +3,7 @@
   "name": "Developer",
   "version": "1.0.0",
   "contractVersion": 1,
+  "navigationIcon": "Assets/Navigation.png",
   "entryAssembly": "SpaceMaid.Extensions.Developer.dll",
   "entryType": "SpaceMaid.Extensions.Developer.DeveloperExtension",
   "tools": []

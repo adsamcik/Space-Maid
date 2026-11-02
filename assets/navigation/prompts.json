@@ -1,0 +1,99 @@
+{
+  "generator": "built-in image_gen",
+  "generated": "2026-11-02",
+  "transparent_background": true,
+  "preparation": "tools/Build-NavigationIcons.ps1: ImageMagick alpha-preserving trim, proportional resize to 56px bounds, centered on a transparent 64x64 canvas. Runtime uses the alpha as a monochrome foreground mask.",
+  "icons": [
+    {
+      "key": "explore",
+      "source": "sources/explore.png",
+      "prompt": "Use case: logo-brand. Asset type: a single production monochrome navigation icon for a Windows desktop disk-cleanup app. Subject: Explore space — a simple front-facing storage drive outline with a large magnifying-glass symbol integrated at the lower right, instantly readable as storage inspection. Style: clean flat monochrome Fluent-adjacent pictogram, one solid white ink color only, balanced rounded geometric shapes and thick uniform strokes, restrained negative-space cutouts, no fine detail. Composition: exactly ONE centered isolated icon on a square transparent canvas, symbol occupies about 78% of the canvas, generous balanced margins. Must remain unmistakable and crisp when displayed at 22×22 pixels. Genuine transparent background including all empty areas; white opaque glyph with antialiased alpha edges. No colors, no gray shading, no gradient, no shadow, no glow, no background panel, no text, letters, labels, watermark, mockup, border or multiple variants. This will establish a coordinated sidebar icon family.",
+      "generated_file": "exec-bba0b497-ac0d-4ef9-be72-b57bc34ff91f.png"
+    },
+    {
+      "key": "cleanup",
+      "source": "sources/cleanup.png",
+      "prompt": "Use case: logo-brand. Asset type: production 22px sidebar pictogram. Draw exactly one CLEAN SOLID BLACK minimalist broom icon with a small four-point sparkle beside its bristles, representing Cleanup. Flat monochrome geometric UI glyph, broad uniform rounded strokes and solid shapes, simple negative space. Crisp smooth edges, absolutely no texture, brush texture, speckles, grain, roughness, gradient or shadows. One centered glyph only, balanced square proportions, occupying the central 76% of square canvas with clear margins. Genuine fully transparent background. The glyph itself must be fully opaque pure black. At 22px it must clearly read as a broom sweeping with a single sparkle. No color, gray, lettering, text, number, logo, frame, background shape, checkerboard or extra objects. Match a restrained clean Fluent-style navigation icon family.",
+      "generated_file": "exec-a36e3844-3f9d-4c15-917f-b36974523769.png"
+    },
+    {
+      "key": "photos",
+      "source": "sources/photos.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a simple framed photo with one mountain silhouette and one small sun inside, representing Photos; the frame is part of the pictogram. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-fde73d08-1ae8-4ae5-a519-da944157086d.png"
+    },
+    {
+      "key": "apps",
+      "source": "sources/apps.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: four equally sized rounded square application tiles arranged in a clean two-by-two grid, representing Apps. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-a06d2581-516a-4732-b49d-2f1a62bd8175.png"
+    },
+    {
+      "key": "agents",
+      "source": "sources/agents.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a simple friendly robot head, a rounded rectangular head with two large clear eye cutouts and one short central antenna, representing agent cleanup; no face detail beyond eyes. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-4ac83e31-f76e-4d7d-b040-d66a320d0fd7.png"
+    },
+    {
+      "key": "assistant",
+      "source": "sources/assistant.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a single rounded chat bubble with one simple four-point sparkle cutout in its center, representing a local assistant. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-4e0d5226-9ddb-4b07-b263-91afd7d7dab9.png"
+    },
+    {
+      "key": "cloud",
+      "source": "sources/cloud.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a bold simple cloud with a single downward arrow cutout, representing cloud drives. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-b5add15d-593f-4ea2-9f36-1e4563e172c6.png"
+    },
+    {
+      "key": "containers",
+      "source": "sources/containers.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: three simple cubic container boxes in a compact stacked cluster, two below and one centered above, representing Containers and WSL; no fine grid or labels. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-fa17af49-bddb-4cf3-af32-5e41c54ce1d0.png"
+    },
+    {
+      "key": "models",
+      "source": "sources/models.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a simple square microchip with broad outer pins and a minimal three-node connected network cutout inside, representing AI models. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-9ec18d91-0ea9-47e7-8c62-793698e9fb61.png"
+    },
+    {
+      "key": "extensions",
+      "source": "sources/extensions.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: one bold jigsaw puzzle piece with broad rounded tabs and cutouts, representing Extensions and the generic extension fallback. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-3af2720e-b7c2-464c-8e25-097f2d5851d4.png"
+    },
+    {
+      "key": "optimize",
+      "source": "sources/optimize.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a simple front-facing storage drive with a large lightning-bolt cutout integrated into it, representing Optimize space. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-377fcee2-c28a-458c-9561-da188f5bc671.png"
+    },
+    {
+      "key": "more",
+      "source": "sources/more.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: three equally sized solid circular dots arranged horizontally with even spacing, representing More options. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-87c1cb30-db85-40ab-b2e6-73be25c62497.png"
+    },
+    {
+      "key": "sidebar",
+      "source": "sources/sidebar.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: three equally long broad horizontal rounded lines arranged vertically with even spacing, a standard hamburger menu icon used to collapse or expand a sidebar. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-5cd14681-6b63-4138-bd43-0426a1540955.png"
+    },
+    {
+      "key": "updates",
+      "source": "sources/updates.png",
+      "prompt": "Create a single simple software-update icon for a desktop app: one bold circular clockwise arrow. Flat solid black rounded geometric pictogram, transparent background, no text, no scene, no decoration, no gradients, no shadows, no texture. Center the symbol on a square canvas with clear margins. Smooth opaque black shape with transparent negative space and antialiased edges. The icon must read clearly at 22 pixels.",
+      "generation_note": "Initial output was rejected by image_gen moderation; a simpler description of the same ordinary UI symbol succeeded.",
+      "generated_file": "exec-3cd515ff-a335-4526-b0c4-923b50f02c71.png"
+    },
+    {
+      "key": "developer",
+      "source": "sources/developer.png",
+      "prompt": "Use case: logo-brand. Asset type: a production 22px navigation pictogram in a coordinated monochrome Windows desktop sidebar family. Draw exactly ONE icon: a pair of bold angle brackets with a short diagonal slash between them, a standard code/developer symbol; punctuation symbol shapes only, no words or letters. Style: CLEAN SOLID BLACK flat minimalist Fluent-adjacent UI glyph; broad uniform rounded strokes and filled geometric shapes with simple transparent negative space. Crisp smooth silhouette, balanced proportions, no fine detail. Absolutely no brush texture, speckles, grain, roughness, gray shading, gradient, lighting effects, shadows, glow or colors. Composition: one centered glyph only, balanced square proportions, occupying the central 76% of the square canvas with generous clear margins. Genuine fully transparent background and transparent holes; the glyph is fully opaque pure black with clean antialiased edges. It must remain unmistakable at 22x22 pixels. No letters, words, labels, numbers, watermark, background panel, frame around the whole canvas, checkerboard, scene, mockup, decorative objects or extra variants.",
+      "generated_file": "exec-f5dd8c2b-4ee2-4d17-a596-f8772fb87c3c.png"
+    }
+  ]
+}

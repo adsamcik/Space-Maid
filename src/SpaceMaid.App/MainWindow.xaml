@@ -7,17 +7,17 @@
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PathKeyDown">
     <Grid Margin="16">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="164"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="192"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <DockPanel Grid.RowSpan="3" Margin="0,0,14,0">
+        <DockPanel x:Name="SidebarPanel" Grid.RowSpan="3" Margin="0,0,14,0">
             <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
-                <RadioButton x:Name="ExtensionsTab" Content="Extensions" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
-                <Button x:Name="OptimizationButton" Content="Optimize space" Click="Optimization_Click" Padding="10,5" Margin="0,10,0,0" IsEnabled="False" ToolTipService.ShowOnDisabled="True"/>
-                <TextBlock x:Name="OptimizationHint" Text="Scan first" FontSize="11" Margin="0,3,0,8" HorizontalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
-                <Button x:Name="UpdateButton" Content="Update available" Click="Updates_Click" Padding="10,5" Margin="0,0,0,8" Visibility="Collapsed"/>
-                <Button x:Name="MoreButton" Content="More" Click="More_Click" Padding="10,5" AutomationProperties.Name="More options">
+                <RadioButton x:Name="ExtensionsTab" Content="Extensions" local:SidebarNavigation.Icon="{StaticResource NavigationExtensions}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
+                <Button x:Name="OptimizationButton" Content="Optimize space" local:SidebarNavigation.Icon="{StaticResource NavigationOptimize}" Style="{StaticResource SidebarAction}" Click="Optimization_Click" Margin="0,10,0,4" IsEnabled="False"/>
+                <Grid><Grid.Style><Style TargetType="Grid"><Style.Triggers><Trigger Property="local:SidebarNavigation.IsCollapsed" Value="True"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></Grid.Style><TextBlock x:Name="OptimizationHint" Text="Scan first" FontSize="11" Margin="0,3,0,8" HorizontalAlignment="Center" AutomationProperties.LiveSetting="Polite"/></Grid>
+                <Button x:Name="UpdateButton" Content="Update available" local:SidebarNavigation.Icon="{StaticResource NavigationUpdates}" Style="{StaticResource SidebarAction}" Click="Updates_Click" Margin="0,0,0,8" Visibility="Collapsed"/>
+                <Button x:Name="MoreButton" Content="More" local:SidebarNavigation.Icon="{StaticResource NavigationMore}" Style="{StaticResource SidebarAction}" Click="More_Click" AutomationProperties.Name="More options">
                     <Button.ContextMenu><ContextMenu FontFamily="Segoe UI">
                         <MenuItem Header="Find duplicates and preserve storage…" Click="Duplicates_Click"/>
                         <MenuItem Header="Worktrees…" Click="WorktreeLifecycle_Click"/>
@@ -26,13 +26,13 @@
                     </ContextMenu></Button.ContextMenu>
                 </Button>
             </StackPanel>
+            <Button x:Name="SidebarToggle" DockPanel.Dock="Top" Content="Sidebar" local:SidebarNavigation.Icon="{StaticResource NavigationSidebar}" local:SidebarNavigation.IsCollapsed="True" Style="{StaticResource SidebarAction}" Width="50" HorizontalAlignment="Left" Margin="0,0,0,8" Click="SidebarToggle_Click" ToolTip="Collapse sidebar" AutomationProperties.Name="Collapse sidebar" />
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
-                    <TextBlock Text="Space Maid" FontWeight="SemiBold" FontSize="16" Margin="12,10,0,20"/>
-                    <RadioButton x:Name="ExploreTab" Content="Explore space" Style="{StaticResource WorkspaceNavigation}" GroupName="View" IsChecked="True" Checked="View_Changed"/>
-                    <RadioButton x:Name="OpportunitiesTab" Content="Cleanup" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
-                    <RadioButton x:Name="PhotosTab" Content="Photos" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
-                    <RadioButton x:Name="AppsTab" Content="Apps" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
+                    <RadioButton x:Name="ExploreTab" Content="Explore space" local:SidebarNavigation.Icon="{StaticResource NavigationExplore}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" IsChecked="True" Checked="View_Changed"/>
+                    <RadioButton x:Name="OpportunitiesTab" Content="Cleanup" local:SidebarNavigation.Icon="{StaticResource NavigationCleanup}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
+                    <RadioButton x:Name="PhotosTab" Content="Photos" local:SidebarNavigation.Icon="{StaticResource NavigationPhotos}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
+                    <RadioButton x:Name="AppsTab" Content="Apps" local:SidebarNavigation.Icon="{StaticResource NavigationApps}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
                     <StackPanel x:Name="ExtensionNavigation"/>
                 </StackPanel>
             </ScrollViewer>

@@ -3,6 +3,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="SpaceMaid.Tests" />
     <ProjectReference Include="../SpaceMaid.Extensions.Contracts/SpaceMaid.Extensions.Contracts.csproj" />
+    <Content Include="../../assets/navigation/cleanup.png" Link="Assets/Navigation.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

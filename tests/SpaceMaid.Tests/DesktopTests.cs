@@ -107,6 +107,12 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "sidebar")
+                {
+                    BeginWorkflow("Sidebar navigation and extension icons");
+                    CheckSidebar(window, app, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-results")
                 {
                     BeginWorkflow("Cleanup results and affected-folder estimates");
@@ -1015,6 +1021,7 @@ public sealed partial class DesktopTests
                     Assert.True(appHelper.IsAvailable); Assert.False(appHelper.Exit.IsCompleted);
                 }
                 BeginWorkflow("Extension workspaces");
+                CheckSidebar(window, app, FindRepository());
                 CheckExtensionWorkspace(window, app, FindRepository(), extensionFiles);
                 BeginWorkflow("Cloud drive browsing and online-only review");
                 CheckCloudDrives(window, app, FindRepository());

@@ -3,6 +3,7 @@
   "name": "Apps",
   "version": "1.0.0",
   "contractVersion": 1,
+  "navigationIcon": "Assets/Navigation.png",
   "entryAssembly": "SpaceMaid.Extensions.Apps.dll",
   "entryType": "SpaceMaid.Extensions.Apps.AppsExtension"
 }
