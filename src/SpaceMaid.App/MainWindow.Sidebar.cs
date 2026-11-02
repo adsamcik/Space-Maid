@@ -12,7 +12,7 @@ public partial class MainWindow
     internal void SetSidebarCollapsed(bool collapsed)
     {
         _sidebarCollapsed = collapsed;
-        SidebarColumn.Width = new GridLength(collapsed ? 64 : 192);
+        SidebarColumn.Width = new GridLength(collapsed ? 50 : 180);
         SidebarNavigation.SetIsCollapsed(SidebarPanel, collapsed);
         string action = collapsed ? "Expand sidebar" : "Collapse sidebar";
         SidebarToggle.ToolTip = action;

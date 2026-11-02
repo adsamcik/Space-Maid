@@ -14,7 +14,7 @@
         <DockPanel LastChildFill="True">
             <Rectangle Width="22" Height="22" VerticalAlignment="Center" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Control}}" RenderOptions.BitmapScalingMode="HighQuality" IsHitTestVisible="False">
                 <Rectangle.OpacityMask><ImageBrush ImageSource="{Binding Path=(local:SidebarNavigation.Icon), RelativeSource={RelativeSource AncestorType=Control}}" Stretch="Uniform" /></Rectangle.OpacityMask>
-                <Rectangle.Style><Style TargetType="Rectangle"><Setter Property="Margin" Value="0,0,10,0" /><Style.Triggers><DataTrigger Binding="{Binding Path=(local:SidebarNavigation.IsCollapsed), RelativeSource={RelativeSource AncestorType=Control}}" Value="True"><Setter Property="Margin" Value="0" /></DataTrigger></Style.Triggers></Style></Rectangle.Style>
+                <Rectangle.Style><Style TargetType="Rectangle"><Setter Property="Margin" Value="0,0,8,0" /><Style.Triggers><DataTrigger Binding="{Binding Path=(local:SidebarNavigation.IsCollapsed), RelativeSource={RelativeSource AncestorType=Control}}" Value="True"><Setter Property="Margin" Value="0" /></DataTrigger></Style.Triggers></Style></Rectangle.Style>
             </Rectangle>
             <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
                 <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Path=(local:SidebarNavigation.IsCollapsed), RelativeSource={RelativeSource AncestorType=Control}}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
@@ -51,7 +51,7 @@
     </Style>
     <Style x:Key="WorkspaceNavigation" TargetType="RadioButton">
         <Setter Property="Foreground" Value="{DynamicResource WindowForeground}"/>
-        <Setter Property="Padding" Value="12,10"/><Setter Property="Margin" Value="0,2"/>
+        <Setter Property="Padding" Value="10,10"/><Setter Property="Margin" Value="0,2"/>
         <Setter Property="ToolTip" Value="{Binding Content, RelativeSource={RelativeSource Self}}"/>
         <Setter Property="ContentTemplate" Value="{StaticResource SidebarContent}" />
         <Setter Property="AutomationProperties.Name" Value="{Binding Content, RelativeSource={RelativeSource Self}}" />
@@ -66,7 +66,7 @@
                 <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/></Trigger>
                 <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/><Setter TargetName="Indicator" Property="Visibility" Value="Visible"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
                 <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource WindowForeground}"/></Trigger>
-                <Trigger Property="local:SidebarNavigation.IsCollapsed" Value="True"><Setter Property="HorizontalContentAlignment" Value="Center" /><Setter Property="Padding" Value="10,10" /></Trigger>
+                <Trigger Property="local:SidebarNavigation.IsCollapsed" Value="True"><Setter Property="HorizontalContentAlignment" Value="Center" /><Setter Property="Padding" Value="8,10" /></Trigger>
             </ControlTemplate.Triggers>
         </ControlTemplate></Setter.Value></Setter>
     </Style>
