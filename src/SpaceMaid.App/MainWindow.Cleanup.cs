@@ -37,7 +37,8 @@ public partial class MainWindow
             {
                 string path = item.Location.Path;
                 changedScopes.Add(new(Path.GetDirectoryName(path)!, false));
-                if (DiskAccess.Default.DirectoryExists(path)) changedScopes.Add(new(path));
+                if (Operations.Files.DirectoryExists(path)) changedScopes.Add(new(path));
+                if (item.Outcome == CleanupOutcome.PermanentlyDeleted) continue;
                 string root = Path.GetPathRoot(path)!, recycleRoot = Path.Combine(root, "$Recycle.Bin");
                 if (displayed.FindEntry(recycleRoot) is not null || displayed.FindEntry(root) is not null)
                 {
@@ -51,7 +52,7 @@ public partial class MainWindow
             }
             // Deleted paths must not be recursively enumerated. Their live
             // parent check removes the old subtree from the inventory instead.
-            changedScopes.RemoveAll(request => !DiskAccess.Default.DirectoryExists(request.Path));
+            changedScopes.RemoveAll(request => !Operations.Files.DirectoryExists(request.Path));
             requests.AddRange(changedScopes);
             work.Token.ThrowIfCancellationRequested();
             if (validation.CanMergeInventory)
@@ -71,7 +72,7 @@ public partial class MainWindow
                 RefreshPathDriveSpace();
                 result = result with { RefreshNote = "Full logical-only inventory remains out of date; rescan to refresh it." };
             }
-            var uncheck = result.Locations.Where(item => item.Outcome is CleanupOutcome.Recycled or CleanupOutcome.Skipped)
+            var uncheck = result.Locations.Where(item => item.Outcome is CleanupOutcome.Recycled or CleanupOutcome.PermanentlyDeleted or CleanupOutcome.Skipped)
                 .Select(item => item.Location.Path).Concat(validation.ExcludedPaths).ToHashSet(StringComparer.Ordinal);
             _changingOpportunitySelection = true;
             try { foreach (var row in _rows) if (uncheck.Contains(row.Path)) row.Selected = false; }

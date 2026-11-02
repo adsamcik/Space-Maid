@@ -51,26 +51,8 @@ public partial class ReviewWindow : Window
         IReadOnlyList<CleanupBlockedLocation> excludedLocations) : this(plan.Preview, validationNote)
     {
         _operations = operations ?? _operations;
-        _plan = plan; _execute = execute; _locations.Clear();
-        foreach (var location in plan.Preview.Locations)
-        {
-            var assessment = plan.BuildAssessments.TryGetValue(location.DirectoryIndex, out var checkedAssessment)
-                ? checkedAssessment : new BuildCleanupAssessment(CleanupReadiness.NeedsReview, null, "Review contents");
-            _locations.Add(new(location, !plan.Preview.UsesLogicalSize, assessment,
-                assessment.State == CleanupReadiness.Ready, true, RowSelection_Changed));
-        }
-        var present = _locations.Select(row => row.Identity).ToHashSet();
-        var excluded = excludedLocations.ToHashSet();
-        foreach (var blocked in plan.BlockedLocations.Concat(excludedLocations))
-        {
-            if (!present.Add((blocked.Opportunity.ProviderId, blocked.Opportunity.RuleId, blocked.Opportunity.Path))) continue;
-            // Excluded locations refer to the earlier inventory; its indexes
-            // must not pick up another folder's freshly calculated activity.
-            DateTime? activity = !excluded.Contains(blocked)
-                && plan.BuildAssessments.TryGetValue(blocked.Opportunity.DirectoryIndex, out var assessment) ? assessment.LastActivityUtc : null;
-            _locations.Add(new(blocked.Opportunity, !plan.Preview.UsesLogicalSize,
-                new(CleanupReadiness.Protected, activity, blocked.Reason), false, false));
-        }
+        _plan = plan; _execute = execute; _reviewGroups = groups; _reviewExclusions = excludedLocations;
+        PopulatePlanRows(plan);
         BuildGroups(groups); SelectInitialFilter(); ApplyFilters(true); UpdateCounts();
         if (_locations.Count(row => row.Selected) == plan.Preview.Locations.Count)
         { _selectedPlan = plan; CleanupButton.IsEnabled = plan.CanExecute; SetPreview(plan.Preview); }
@@ -93,9 +75,10 @@ public partial class ReviewWindow : Window
     private void UpdateSelectionHint()
     {
         if (_plan is null || _hasResults || Execution is not null) return;
+        UpdatePermanentWarning();
         ResultText.Text = _locations.Any(row => row.Selected && row.CanSelect)
-            ? "Empty the Recycle Bin to free space. Synced folders also affect cloud copies."
-            : _locations.Any(row => row.CanSelect) ? "Choose folders to include."
+            ? "One approval for this run. Unavailable or changed folders are kept."
+            : _locations.Any(row => row.CanSelect) ? (_ruleReview ? "Choose cleanup rules to include." : "Choose folders to include.")
             : "These folders are kept. Nothing can be moved to the Recycle Bin.";
     }
 
@@ -124,7 +107,8 @@ public partial class ReviewWindow : Window
     {
         if (!_initialized) return;
         string query = SearchBox.Text.Trim();
-        bool Matches(CleanupReviewRow row) => row.DisplayState == _filter && (query.Length == 0
+        bool Matches(CleanupReviewRow row) => (_inspectedRule is null || RuleKey(row.Location) == _inspectedRule)
+            && row.DisplayState == _filter && (query.Length == 0
             || row.Path.Contains(query, StringComparison.OrdinalIgnoreCase) || row.FolderName.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
             || row.Location.Category.Contains(query, StringComparison.OrdinalIgnoreCase));
         var matching = _locations.Where(Matches).ToHashSet();
@@ -158,7 +142,7 @@ public partial class ReviewWindow : Window
 
     private void UpdateCounts()
     {
-        ReadyFilter.Content = $"{(_hasResults ? "Moved" : "Ready")} · {_locations.Count(row => row.DisplayState == CleanupReadiness.Ready):N0}";
+        ReadyFilter.Content = $"{(_hasResults ? "Removed" : "Ready")} · {_locations.Count(row => row.DisplayState == CleanupReadiness.Ready):N0}";
         ManualFilter.Content = $"{(_hasResults ? "Not completed" : "Needs review")} · {_locations.Count(row => row.DisplayState == CleanupReadiness.NeedsReview):N0}";
         KeptFilter.Content = $"Kept · {_locations.Count(row => row.DisplayState == CleanupReadiness.Protected):N0}";
     }
@@ -174,14 +158,37 @@ public partial class ReviewWindow : Window
     }
 
     private void RowSelection_Changed(CleanupReviewRow row)
-    { if (_selectionBatch) return; UpdateSelectionIndicators(); ScheduleEstimate(); }
+    {
+        if (_selectionBatch) return;
+        if (_ruleReview)
+        {
+            if (row.Selected) _ruleExclusions.Remove(row.Identity); else _ruleExclusions.Add(row.Identity);
+            if (row.Selected) _enabledRules.Add(RuleKey(row.Location));
+            ApplyRuleExclusions();
+            UpdateRuleSummary();
+        }
+        UpdateSelectionIndicators(); ScheduleEstimate();
+    }
     private void GroupSelection_Changed(CleanupReviewGroup group, bool selected) => SetSelection(group.Matches, selected);
     private void SetSelection(IEnumerable<CleanupReviewRow> rows, bool selected)
     {
         if (_execute is null || Execution is not null) return;
         _selectionBatch = true;
-        try { foreach (var row in rows) row.Selected = selected; }
+        try
+        {
+            foreach (var row in rows.Where(row => row.CanSelect))
+            {
+                if (_ruleReview)
+                {
+                    if (selected) { _ruleExclusions.Remove(row.Identity); _enabledRules.Add(RuleKey(row.Location)); }
+                    else _ruleExclusions.Add(row.Identity);
+                }
+                row.Selected = selected;
+            }
+        }
         finally { _selectionBatch = false; }
+        ApplyRuleExclusions();
+        UpdateRuleSummary();
         UpdateSelectionIndicators(); ScheduleEstimate();
     }
 
@@ -205,8 +212,7 @@ public partial class ReviewWindow : Window
         using var cancellation = new CancellationTokenSource();
         _estimateCancellation = cancellation;
         int version = _selectionVersion;
-        var choices = _locations.Where(row => row.Selected && row.CanSelect).Select(row => row.Location).ToArray();
-        var calculation = _operations.RestrictCleanupAsync(_plan, choices, cancellation.Token);
+        var calculation = CalculateSelectionAsync(cancellation.Token, version);
         SelectionCalculation = calculation;
         try
         {
@@ -216,12 +222,13 @@ public partial class ReviewWindow : Window
         }
         catch (OperationCanceledException) { }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
-        { if (!_closed && version == _selectionVersion) { EstimateText.Text = "—"; ResultText.Text = "Could not update the estimate."; ResultDetailText.Text = error.Message; } }
+        { if (!_closed && version == _selectionVersion) { EstimateText.Text = "—"; ResultText.Text = "Could not update the plan. " + error.Message; ResultDetailText.Text = error.Message; } }
         finally { if (ReferenceEquals(_estimateCancellation, cancellation)) _estimateCancellation = null; }
     }
 
     private void SetPreview(CleanupPreview preview)
     {
+        preview = CleanupPlanner.WithBuildAction(preview, _executingPlan?.BuildAction ?? _plan?.BuildAction ?? BuildCleanupAction.Recycle);
         EstimateText.Text = SizeText.Format(preview.EstimatedBytes);
         EstimateCaption.Text = $"{preview.Locations.Count:N0} {(preview.Locations.Count == 1 ? "folder" : "folders")} {(_executingPlan is null ? "selected" : "remaining")} · {(preview.UsesLogicalSize ? "Logical size" : "Estimated space")}";
         if (_remainingEstimateUncertain && preview.Locations.Count > 0) EstimateCaption.Text += " · Previous estimate";
@@ -229,11 +236,17 @@ public partial class ReviewWindow : Window
             + (preview.ExcludedSharedBytes > 0 ? $" · {SizeText.Format(preview.ExcludedSharedBytes)} shared allocation excluded" : "");
         EstimateText.ToolTip = preview.UsesLogicalSize ? "Logical size; physical saving unknown." : "Selected estimate; shared files may remain in use.";
         CautionText.Text = string.Join("\n\n", preview.Cautions);
+        if (_ruleReview && _executingPlan is null)
+        {
+            int rules = _locations.Where(row => row.Selected && row.CanSelect).Select(row => RuleKey(row.Location)).Distinct().Count();
+            EstimateCaption.Text = $"{rules:N0} {(rules == 1 ? "rule" : "rules")} · " + EstimateCaption.Text;
+        }
     }
 
     private void Filter_Checked(object sender, RoutedEventArgs e)
     {
         if (!_initialized || sender is not RadioButton { Tag: string state } || !Enum.TryParse(state, out CleanupReadiness parsed)) return;
+        if (_ruleReview) ShowFolderBrowser();
         _filter = parsed; ApplyFilters(true);
     }
     private void Search_Changed(object sender, TextChangedEventArgs e) => ApplyFilters(true);
@@ -250,10 +263,12 @@ public partial class ReviewWindow : Window
     {
         if (_execute is null || _selectedPlan is null || !CleanupButton.IsEnabled || Execution is not null) return;
         var chosen = _selectedPlan;
+        _includedAtApproval = _locations.Where(row => row.Selected && row.CanSelect || row.IncludedByParent).Select(row => row.Identity).ToHashSet();
         _executingPlan = chosen;
         _estimateTimer.Stop(); _estimateCancellation?.Cancel(); _selectionVersion++;
         using var cleanup = new CancellationTokenSource(); _cleanup = cleanup;
         CleanupButton.IsEnabled = false; SelectionControls.IsEnabled = GroupList.IsEnabled = LocationList.IsEnabled = VisibleSelection.IsEnabled = false;
+        RulesScroll.IsEnabled = false;
         foreach (var row in _locations) row.DisableSelection();
         CloseButton.Content = "Cancel cleanup";
         CleanupProgressBar.Visibility = Visibility.Visible; CleanupProgressBar.IsIndeterminate = true;
@@ -289,6 +304,7 @@ public partial class ReviewWindow : Window
         {
             _cleanup = null; CleanupProgressBar.Visibility = ProgressPath.Visibility = Visibility.Collapsed;
             SelectionControls.IsEnabled = GroupList.IsEnabled = LocationList.IsEnabled = true;
+            RulesScroll.IsEnabled = true;
             UpdateSelectionIndicators(); CloseButton.Content = "Close";
             if (_closeWhenFinished) Close();
         }
@@ -297,6 +313,7 @@ public partial class ReviewWindow : Window
     private void ShowResults()
     {
         _hasResults = true;
+        UpdateRuleSummary();
         if (_filter == CleanupReadiness.Ready && !_locations.Any(row => row.DisplayState == CleanupReadiness.Ready)
             && _locations.Any(row => row.DisplayState == CleanupReadiness.NeedsReview))
         { _filter = CleanupReadiness.NeedsReview; ManualFilter.IsChecked = true; }

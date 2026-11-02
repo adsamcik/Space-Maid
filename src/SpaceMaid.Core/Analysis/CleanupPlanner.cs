@@ -25,6 +25,14 @@ public static class CleanupPlanner
 {
     public static CleanupPlan Prepare(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default,
         IReadOnlyDictionary<string, string>? blockedPaths = null, OpportunityDiscovery? discover = null, BuildCleanupPolicy? buildPolicy = null)
+        => PrepareCore(scan, selected, token, blockedPaths, discover, buildPolicy, preserveNested: false);
+
+    public static CleanupPlan PrepareRuleCandidates(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token = default,
+        IReadOnlyDictionary<string, string>? blockedPaths = null, OpportunityDiscovery? discover = null)
+        => PrepareCore(scan, selected, token, blockedPaths, discover, new BuildCleanupPolicy(1), preserveNested: true);
+
+    private static CleanupPlan PrepareCore(ScanSnapshot scan, IEnumerable<Opportunity> selected, CancellationToken token,
+        IReadOnlyDictionary<string, string>? blockedPaths, OpportunityDiscovery? discover, BuildCleanupPolicy? buildPolicy, bool preserveNested)
     {
         ArgumentNullException.ThrowIfNull(scan); ArgumentNullException.ThrowIfNull(selected);
         ArgumentNullException.ThrowIfNull(discover);
@@ -67,7 +75,7 @@ public static class CleanupPlanner
         }
         var collapsed = Create(scan, valid, token);
         var targets = new List<FolderDeletionTarget>(); var eligible = new List<Opportunity>();
-        foreach (var location in collapsed.Locations)
+        foreach (var location in preserveNested ? valid.DistinctBy(item => item.DirectoryIndex) : collapsed.Locations)
         {
             token.ThrowIfCancellationRequested();
             try
@@ -80,8 +88,10 @@ public static class CleanupPlanner
             { blocked.Add(new(originals[location.DirectoryIndex], ex.Message)); }
         }
         token.ThrowIfCancellationRequested();
-        var preview = eligible.Count == collapsed.Locations.Count ? collapsed : Create(scan, eligible, token);
-        return new(scan, preview, targets, blocked, policy, assessments);
+        var preview = preserveNested ? CandidatePreview(scan, eligible, token)
+            : eligible.Count == collapsed.Locations.Count ? collapsed : Create(scan, eligible, token);
+        return new(scan, preview, targets, blocked, policy, assessments)
+        { CapturedBuilds = Array.AsReadOnly(actual.Values.Where(item => item.IsBuildOutput).ToArray()) };
     }
 
     // A review can narrow consent, never add a target or recapture a replacement.
@@ -100,9 +110,76 @@ public static class CleanupPlanner
         }
         // Preserve original execution order and exact captured native targets.
         var ordered = plan.Preview.Locations.Where(item => keys.Contains((item.ProviderId, item.Path, item.RuleId))).ToArray();
-        return new(plan.Snapshot, Create(plan.Snapshot, ordered, token),
-            ordered.Select(item => allowed[(item.ProviderId, item.Path, item.RuleId)].Target),
-            plan.BlockedLocations, plan.BuildPolicy, plan.BuildAssessments);
+        var preview = WithBuildAction(Create(plan.Snapshot, ordered, token), plan.BuildAction);
+        return new(plan.Snapshot, preview,
+            preview.Locations.Select(item => allowed[(item.ProviderId, item.Path, item.RuleId)].Target),
+            plan.BlockedLocations, plan.BuildPolicy, plan.BuildAssessments)
+        { BuildAction = plan.BuildAction, RequiresVerifiedBuilds = plan.RequiresVerifiedBuilds, CapturedBuilds = plan.CapturedBuilds };
+    }
+
+    // Rule edits narrow a captured candidate set. They never recapture a
+    // replacement at the same path, including for logical-only inventories.
+    public static CleanupPlan ReviewRules(CleanupPlan basis, BuildCleanupPolicy policy, BuildCleanupAction action,
+        OpportunityDiscovery discover, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(basis); ArgumentNullException.ThrowIfNull(discover);
+        if (policy.KeepRecentDays < basis.BuildPolicy.KeepRecentDays)
+            throw new ArgumentException("A rule cannot widen the initially checked activity window.", nameof(policy));
+        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        var findings = discover(basis.Snapshot, token);
+        var actual = findings.ToLookup(item => (item.DirectoryIndex, item.ProviderId, item.RuleId, item.Title, item.Category, item.Path));
+        var assessments = BuildCleanupProtection.Assess(basis.Snapshot, findings, policy, token);
+        var unverifiedBuildAncestors = new HashSet<int>();
+        var unsafeBuilds = findings.Where(item => item.IsBuildOutput
+            && (!item.IsRegeneratable || assessments[item.DirectoryIndex].State != CleanupReadiness.Ready)).ToList();
+        foreach (var captured in basis.CapturedBuilds)
+        {
+            var match = actual[(captured.DirectoryIndex, captured.ProviderId, captured.RuleId, captured.Title, captured.Category, captured.Path)].FirstOrDefault();
+            if (match is null || !match.IsBuildOutput) unsafeBuilds.Add(captured);
+        }
+        foreach (var build in unsafeBuilds)
+        {
+            int directory = build.DirectoryIndex, remaining = basis.Snapshot.FileCount;
+            while (remaining-- > 0)
+            {
+                token.ThrowIfCancellationRequested(); unverifiedBuildAncestors.Add(directory);
+                int link = basis.Snapshot.PrimaryLink(directory);
+                if (link < 0 || (directory = basis.Snapshot.Links[link].ParentIndex) < 0) break;
+            }
+        }
+        var eligible = new List<Opportunity>(); var targets = new List<FolderDeletionTarget>();
+        var blocked = basis.BlockedLocations.ToList();
+        for (int index = 0; index < basis.Preview.Locations.Count; index++)
+        {
+            token.ThrowIfCancellationRequested();
+            var original = basis.Preview.Locations[index];
+            var location = actual[(original.DirectoryIndex, original.ProviderId, original.RuleId, original.Title, original.Category, original.Path)].FirstOrDefault();
+            if (location is null)
+            { blocked.Add(new(original, "This location no longer matches its cleanup rule · Kept")); continue; }
+            var assessment = assessments[location.DirectoryIndex];
+            string? reason = assessment.State == CleanupReadiness.Protected ? assessment.Reason
+                : location.IsBuildOutput && (!location.IsRegeneratable || assessment.State != CleanupReadiness.Ready)
+                    ? "Build output could not be verified as rebuildable · Kept"
+                : unverifiedBuildAncestors.Contains(location.DirectoryIndex) ? "Contains unverified build output · Kept" : null;
+            if (reason is not null) { blocked.Add(new(location, reason)); continue; }
+            eligible.Add(location); targets.Add(basis.Targets[index]);
+        }
+        return new(basis.Snapshot, WithBuildAction(CandidatePreview(basis.Snapshot, eligible, token), action), targets, blocked, policy, assessments)
+        { BuildAction = action, RequiresVerifiedBuilds = true, CapturedBuilds = basis.CapturedBuilds };
+    }
+
+    private static CleanupPreview CandidatePreview(ScanSnapshot scan, IReadOnlyList<Opportunity> locations, CancellationToken token)
+    {
+        var totals = Create(scan, locations, token);
+        return new(locations, totals.EstimatedBytes, totals.ExcludedSharedBytes, totals.FileCount, totals.UsesLogicalSize, totals.Cautions);
+    }
+
+    public static CleanupPreview WithBuildAction(CleanupPreview preview, BuildCleanupAction action)
+    {
+        if (action != BuildCleanupAction.PermanentlyDelete || !preview.Locations.Any(item => item.IsBuildOutput)) return preview;
+        return new(preview.Locations, preview.EstimatedBytes, preview.ExcludedSharedBytes, preview.FileCount, preview.UsesLogicalSize,
+            ["Approved verified builds are permanently deleted and cannot be restored from the Recycle Bin. Other included folders are recycled.",
+                .. preview.Cautions.Skip(2)]);
     }
 
     public static CleanupPreview Create(ScanSnapshot scan, IEnumerable<Opportunity> selected,

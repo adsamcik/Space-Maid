@@ -324,7 +324,7 @@
             </Border>
             <StackPanel x:Name="FolderActionsBar" Grid.Row="2" Grid.ColumnSpan="5" Margin="0,10,0,0">
                 <DockPanel>
-                    <Button x:Name="ReviewButton" Content="Review cleanup" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" Style="{DynamicResource AccentButtonStyle}" ToolTip="Recheck selected locations, then confirm moving eligible folders to the Recycle Bin." />
+                    <Button x:Name="ReviewButton" Content="Cleanup plan" Click="Review_Click" DockPanel.Dock="Right" IsEnabled="False" Style="{DynamicResource AccentButtonStyle}" ToolTip="Review cleanup rules and their effects, then approve the run once. Uses selected locations when present; otherwise all discovered locations." />
                     <Button x:Name="ClearOpportunitySelectionButton" Content="Clear all" Click="ClearOpportunitySelection_Click" DockPanel.Dock="Right" Margin="0,0,8,0" AutomationProperties.Name="Clear all cleanup selections, including hidden folders" />
                     <Button x:Name="SelectListedButton" Content="Select listed" Click="SelectListedOpportunities_Click" DockPanel.Dock="Left" Margin="0,0,12,0" Visibility="Collapsed" ToolTip="Select all locations in the current group and filters to review cleanup." AutomationProperties.Name="Select all listed folders for cleanup review" />
                     <ToggleButton x:Name="SelectedOnlyToggle" Content="Show selected" Click="ShowSelected_Click" DockPanel.Dock="Right" Margin="0,0,12,0" Padding="8,5" Visibility="Collapsed" AutomationProperties.Name="Show selected folders across all groups" />

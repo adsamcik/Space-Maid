@@ -119,6 +119,9 @@ public sealed partial class DesktopTests
                     BeginWorkflow("Resilient cleanup review");
                     CheckOpportunityValidation(window, app, artifactRoot: FindRepository());
                     CheckResilientCleanupReview(window, app, artifactRoot: FindRepository());
+                    CheckRuleCleanupRun(window, app, artifactRoot: FindRepository());
+                    CheckNestedRuleExclusions(app);
+                    CheckManyCleanupRules(artifactRoot: FindRepository());
                     return;
                 }
                 // Run just these existing workflows when inspecting cleanup UI.

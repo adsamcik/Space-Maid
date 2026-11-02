@@ -10,13 +10,13 @@ namespace SpaceMaid.App;
 
 internal sealed record RecycleResult(bool Cancelled, string? RecycledPath);
 
-// Windows owns the Recycle Bin and its progress dialog. Run its COM operation
-// on a dedicated STA so the WPF dispatcher stays responsive.
+// Windows owns the Recycle Bin. Run its silent COM operation on a dedicated
+// STA; the cleanup run owns progress, cancellation and error presentation.
 internal static class FolderRecycler
 {
     internal const int CancelledHResult = unchecked((int)0x800704C7);
     internal const int CannotRecycleHResult = unchecked((int)0x80070032);
-    private const uint OperationFlags = 0x00080000 | 0x20000000 | 0x00000400 | 0x00100000 | 0x00000010 | 0x00004000;
+    private const uint OperationFlags = 0x00080000 | 0x20000000 | 0x00100000 | 0x00000614;
 
     public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null, Action? validateContents = null)
@@ -47,9 +47,9 @@ internal static class FolderRecycler
             var type = Type.GetTypeFromCLSID(new("3AD05575-8857-4850-9277-11B85BDB8E09"), throwOnError: true)!;
             operation = (IFileOperation)Activator.CreateInstance(type)!;
             operation.SetOwnerWindow(owner);
-            // Recycle + session undo. Errors stop the operation and are shown
-            // by the app. Keep native progress/cancellation and nuke warnings;
-            // never silently authorize permanent deletion.
+            // Recycle + session undo + FOF_NO_UI. Errors stop this root only
+            // and are reported by the app. The live callback still refuses a
+            // permanent-delete transfer; UI suppression is not extra consent.
             operation.SetOperationFlags(OperationFlags);
             operation.Advise(sink, out cookie);
             Guid shellItemId = typeof(IShellItem).GUID;

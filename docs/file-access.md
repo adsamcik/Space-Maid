@@ -1,5 +1,7 @@
 # File access
 
+Cleanup rule reviews use scan estimates and captured root identities. Only the approved subset is recursively revalidated at execution. Rule edits retain captured targets, and execution can narrow the approved set but cannot add replacements or newly discovered matches. Recycle-only execution suppresses native dialogs and rejects permanent-delete transfers. Explicit permanent build cleanup enters through the configured `DiskAccess`: it pins ancestors and the complete fresh subtree, checks identities, timestamps, membership and streams, then deletes exact handles in postorder. Links, offline content, locks, protected files, hard links, named streams and acquisitions above 100,000 entries keep the affected root. Failed checks or mutations never retry through a weaker path.
+
 `SpaceMaid.Core.IO.DiskAccess` is the runtime boundary for file access. Use it for file/directory probes, content streams, enumeration, settings/cache writes, moves, deletes, drive information and native file handles. The host's `FileOperations` composes it with confirmation, inventory caching, Shell recycling and sync-provider workflows. Extensions receive the same configured instance as `IExtensionHost.Files`, including the host's current NTFS helper. Use that service for extension file access; keep inventory references and cached measurements on `host.Inventory`.
 
 ```csharp
@@ -18,7 +20,7 @@ Backend selection follows the operation:
 | --- | --- |
 | Whole local NTFS volume inventory | NTFS layout query, falling back to Windows directory metadata and then logical-size enumeration where identities/allocation are unsupported |
 | Folder scan or stream-size measurement | Fresh directory membership and identities, scoped NTFS stream metadata when available, otherwise attribute-only Windows stream metadata |
-| Recheck or cleanup review | The same scoped reader, with journal reuse only when its existing identity and continuity checks pass |
+| Recheck or approved cleanup execution | The same scoped reader, with journal reuse only when its existing identity and continuity checks pass |
 | Name/attribute discovery | Bounded directory metadata batches; no content reads or drive-sized NTFS inventory |
 | Content, settings, cache files and namespace changes | Ordinary filesystem APIs with the requested sharing, creation and overwrite semantics |
 | Recycling, online-only state, compression, block sharing and virtual-disk maintenance | The existing specialized Shell/provider/native implementations, retaining their consent, identity, activity and scope checks |

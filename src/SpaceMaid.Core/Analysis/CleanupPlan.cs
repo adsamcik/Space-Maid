@@ -3,6 +3,7 @@ using SpaceMaid.Core.Scanning;
 namespace SpaceMaid.Core.Analysis;
 
 public sealed record CleanupBlockedLocation(Opportunity Opportunity, string Reason);
+public enum BuildCleanupAction { Recycle, PermanentlyDelete }
 
 public sealed record CleanupPlan
 {
@@ -12,6 +13,9 @@ public sealed record CleanupPlan
     public IReadOnlyList<CleanupBlockedLocation> BlockedLocations { get; }
     public BuildCleanupPolicy BuildPolicy { get; }
     public IReadOnlyDictionary<int, BuildCleanupAssessment> BuildAssessments { get; }
+    public BuildCleanupAction BuildAction { get; init; } = BuildCleanupAction.Recycle;
+    public bool RequiresVerifiedBuilds { get; init; }
+    public IReadOnlyList<Opportunity> CapturedBuilds { get; init; } = [];
     public bool CanExecute => Targets.Count > 0;
 
     internal CleanupPlan(ScanSnapshot snapshot, CleanupPreview preview,

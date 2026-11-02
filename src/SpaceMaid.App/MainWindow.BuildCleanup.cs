@@ -41,14 +41,18 @@ public partial class MainWindow
             return false;
         }
         if (!_cleanupSettingsUnavailable && days == CurrentBuildPolicy.KeepRecentDays) return true;
+        return StoreBuildPolicy(new(days));
+    }
+
+    private bool StoreBuildPolicy(BuildCleanupPolicy policy)
+    {
         try
         {
-            var policy = new BuildCleanupPolicy(days);
             BuildCleanupSettings.Save(CleanupSettingsPath, policy);
             CurrentBuildPolicy = policy;
             _cleanupSettingsUnavailable = false;
-            OpportunityBrowser?.SetBuildRetention(days.ToString(CultureInfo.InvariantCulture), false);
-            StatusText.Text = $"Builds active within {days} days are kept.";
+            OpportunityBrowser?.SetBuildRetention(policy.KeepRecentDays.ToString(CultureInfo.InvariantCulture), false);
+            StatusText.Text = $"Builds active within {policy.KeepRecentDays} days are kept.";
             return true;
         }
         catch (Exception error) when (SettingsError(error))

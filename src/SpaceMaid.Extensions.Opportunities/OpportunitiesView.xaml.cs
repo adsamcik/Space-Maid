@@ -357,7 +357,7 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
             SelectionText.Text = selected > 0 ? $"{groups:N0} {(groups == 1 ? "group" : "groups")} selected · {selected:N0} {(selected == 1 ? "folder" : "folders")}"
                 : "";
         }
-        ReviewButton.IsEnabled = selected > 0 && !_busy;
+        ReviewButton.IsEnabled = _rows.Count > 0 && !_busy;
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Any(row => row.CanSelect) && !_busy;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && !_busy;
         ClearOpportunitySelectionButton.Visibility = selected > 0 ? Visibility.Visible : Visibility.Collapsed;

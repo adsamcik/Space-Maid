@@ -27,7 +27,9 @@ The same helper accelerates folder scans, cleanup review, rechecks and app-size 
 
 The host's shared `FileOperations` API chooses the available metadata backend per request. Scanning, folder measurement, cleanup review/planning, worktree and build-activity checks, refreshes and extension metadata discovery use that service. Photo discovery streams bounded batches of current directory metadata; size measurements can use scoped NTFS queries. Recycling, emptying the bin and making files online-only use their Windows Shell or sync-provider APIs through the same entrypoint, retaining confirmation and live identity checks. Callers do not select backends or request elevation themselves.
 
-Folder and agent-file cleanup move the confirmed items to the Recycle Bin. Space is released when the bin is emptied; emptying it is a separate, permanent action. Recent build output is protected by default. Cleanup of original photos is currently disabled.
+Cleanup plans review rules and their estimated effects, with an activity cutoff for builds and optional folder exclusions. One approval starts the run; included folders are checked again before mutation, and problematic folders are kept while others continue without per-folder dialogs.
+
+Folder and agent-file cleanup use the Recycle Bin by default. Space is released when the bin is emptied; emptying it is a separate, permanent action. Each cleanup run also offers explicit permanent deletion for verified rebuildable builds, with identity, activity and complete-content checks. That choice is never an automatic fallback when recycling fails. Recent and unverified builds stay kept. Cleanup of original photos is currently disabled.
 
 ## Build from source
 

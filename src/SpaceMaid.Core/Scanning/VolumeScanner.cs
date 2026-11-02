@@ -373,6 +373,17 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                         if (!DiskAccess.Default.ReadHandleInformation(handle, 18, pointer, 24)) throw new Win32Exception(Marshal.GetLastPInvokeError());
                     if (new FileIdentity(LayoutParser.U64(idBuffer, 8), LayoutParser.U64(idBuffer, 16)) != directory.Id)
                         throw new IOException("A folder moved or was replaced during the recheck. Recheck its parents again.");
+                    // A parent's directory entry can retain an earlier write
+                    // timestamp. Current activity checks need this directory's
+                    // own metadata, under the same identity-checked handle.
+                    fixed (byte* pointer = basicInfo)
+                        if (!DiskAccess.Default.ReadHandleInformation(handle, 0, pointer, 40))
+                            throw new Win32Exception(Marshal.GetLastPInvokeError());
+                    var attributes = (FileAttributes)LayoutParser.U32(basicInfo, 32);
+                    if ((attributes & FileAttributes.Directory) == 0)
+                        throw new IOException("A rechecked folder is no longer a directory.");
+                    builder.ReplaceMetadata(new(directory.Id, attributes, 0, 0,
+                        LayoutParser.I64(basicInfo, 16), LayoutParser.I64(basicInfo, 0)));
                 }
                 while (true)
                 {

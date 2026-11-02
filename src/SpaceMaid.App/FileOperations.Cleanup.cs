@@ -21,6 +21,14 @@ internal sealed partial class FileOperations
     public Task<CleanupPlan> RestrictCleanupAsync(CleanupPlan plan, IReadOnlyList<Opportunity> selected,
         CancellationToken token = default) => Task.Run(() => CleanupPlanner.Restrict(plan, selected, token), token);
 
+    public Task<CleanupPlan> ReviewCleanupRulesAsync(CleanupPlan basis, BuildCleanupPolicy policy, BuildCleanupAction action,
+        OpportunityDiscovery discover, CancellationToken token = default)
+        => Task.Run(() => CleanupPlanner.ReviewRules(basis, policy, action, discover, token), token);
+
+    public Task<CleanupPlan> PrepareCleanupRuleCandidatesAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
+        CancellationToken token, IReadOnlyDictionary<string, string> blockedPaths, OpportunityDiscovery discover)
+        => Task.Run(() => CleanupPlanner.PrepareRuleCandidates(scan, selected, token, blockedPaths, discover), token);
+
     public CleanupPreview EstimateCleanup(ScanSnapshot scan, IReadOnlyList<Opportunity> locations,
         CancellationToken token = default) => CleanupPlanner.Create(scan, locations, token);
 

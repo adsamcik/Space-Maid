@@ -6,7 +6,8 @@ using SpaceMaid.Core.Scanning;
 namespace SpaceMaid.Core.Analysis;
 
 // A resolved directory with a captured live identity, validated again before
-// recycling. It exposes no permanent-deletion path.
+// cleanup. Permanent removal additionally requires the caller's explicit build
+// action and a fresh native snapshot of the complete target subtree.
 public sealed class FolderDeletionTarget
 {
     public string Path { get; }
@@ -83,6 +84,14 @@ public sealed class FolderDeletionTarget
         var live = ReadIdentity(Path);
         if (live.Identity != _identity || live.Volume != _volume)
             throw new InvalidOperationException("This folder has been replaced since confirmation. Rescan before deleting it.");
+    }
+
+    public void DeletePermanently(DiskAccess files, ScanSnapshot current, CancellationToken token = default,
+        Action? mutationStarted = null)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        ArgumentNullException.ThrowIfNull(current);
+        files.DeleteConfirmedDirectoryTree(ValidatePath(Path), _identity, _volume, current, token, mutationStarted);
     }
 
     // Check only the exact destination reported by Windows. No Recycle Bin

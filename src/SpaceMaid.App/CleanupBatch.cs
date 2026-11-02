@@ -6,7 +6,7 @@ using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
 
-internal enum CleanupOutcome { Recycled, Skipped, Failed, Cancelled, NotProcessed }
+internal enum CleanupOutcome { Recycled, Skipped, Failed, Cancelled, NotProcessed, PermanentlyDeleted }
 internal sealed record CleanupLocationResult(Opportunity Location, CleanupOutcome Outcome,
     string Message, bool Attempted = false, RecycleResult? Recycle = null);
 internal sealed record CleanupProgress(int Completed, int Total, string Path, string Message,
@@ -17,11 +17,12 @@ internal sealed record CleanupBatchResult(IReadOnlyList<CleanupLocationResult> L
     public ScanSnapshot? RefreshedSnapshot { get; init; }
     public IReadOnlyList<Opportunity>? RefreshedFindings { get; init; }
     public int RecycledCount => Locations.Count(item => item.Outcome == CleanupOutcome.Recycled);
+    public int DeletedCount => Locations.Count(item => item.Outcome == CleanupOutcome.PermanentlyDeleted);
     public bool Cancelled => Locations.Any(item => item.Outcome is CleanupOutcome.Cancelled or CleanupOutcome.NotProcessed);
-    public string Summary => $"{RecycledCount:N0} moved · {Locations.Count(item => item.Outcome == CleanupOutcome.Skipped):N0} skipped"
+    public string Summary => $"{RecycledCount:N0} recycled · {DeletedCount:N0} permanently deleted · {Locations.Count(item => item.Outcome == CleanupOutcome.Skipped):N0} skipped"
         + $" · {Locations.Count(item => item.Outcome == CleanupOutcome.Failed):N0} failed"
-        + (Cancelled ? " · Cancelled; some contents may already have moved." : ".")
-        + " Space stays occupied until the Recycle Bin is emptied.";
+        + (Cancelled ? " · Cancelled; some contents may already have been removed." : ".")
+        + (RecycledCount > 0 ? " Space stays occupied until the Recycle Bin is emptied." : "");
 }
 
 // Confirmation authorizes only these captured directory identities. Fresh
@@ -42,6 +43,7 @@ internal static class CleanupBatch
         Dictionary<(string ProviderId, string Path, string RuleId), string> exclusions;
         IReadOnlyDictionary<int, BuildCleanupAssessment> currentAssessments;
         var buildsByTarget = new Dictionary<string, List<Opportunity>>(StringComparer.Ordinal);
+        var knownBuildBlocks = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
             progress.Report(new(0, plan.Targets.Count, "", "Checking confirmed folders again…"));
@@ -53,6 +55,24 @@ internal static class CleanupBatch
             currentAssessments = await operations.AssessBuildCleanupAsync(validation.Snapshot, validation.Findings, plan.BuildPolicy, token);
             var selectedDirectories = validation.ValidatedLocations.DistinctBy(location => location.DirectoryIndex)
                 .ToDictionary(location => location.DirectoryIndex, location => location.Path);
+            if (plan.RequiresVerifiedBuilds)
+            {
+                var selectedPaths = validation.ValidatedLocations.Select(item => item.Path).ToHashSet(StringComparer.Ordinal);
+                var matches = validation.Findings.ToLookup(item => (item.ProviderId, item.RuleId, item.Title, item.Category, item.Path));
+                foreach (var known in plan.CapturedBuilds)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var covered = new List<string>();
+                    for (string? path = known.Path; path is not null; path = Path.GetDirectoryName(path))
+                        if (selectedPaths.Contains(path)) covered.Add(path);
+                    if (covered.Count == 0) continue;
+                    var match = matches[(known.ProviderId, known.RuleId, known.Title, known.Category, known.Path)].FirstOrDefault();
+                    if (match is not null && match.IsBuildOutput && match.IsRegeneratable
+                        && currentAssessments[match.DirectoryIndex].State == CleanupReadiness.Ready) continue;
+                    if (validation.Snapshot.FindEntry(known.Path) is null) continue;
+                    foreach (string path in covered) knownBuildBlocks[path] = "A previously detected build could not be verified under its original rule · Kept";
+                }
+            }
             IOpportunityInventory inventory = validation.Snapshot;
             foreach (var build in validation.Findings.Where(location => location.IsBuildOutput || location.CleanupBlockReason.Length > 0))
             {
@@ -96,9 +116,15 @@ internal static class CleanupBatch
                 {
                     // Retain the pre-confirmation native identity even for a
                     // logical-only scan; never capture a replacement's identity.
+                    if (knownBuildBlocks.TryGetValue(target.Path, out string? knownBlock)) throw new InvalidOperationException(knownBlock);
                     await Task.Run(target.ValidateCurrent, token);
                     var freshLocation = current[(location.ProviderId, location.Path, location.RuleId)];
                     var freshAssessment = currentAssessments[freshLocation.DirectoryIndex];
+                    bool permanent = plan.BuildAction == BuildCleanupAction.PermanentlyDelete && location.IsBuildOutput;
+                    if (permanent && (!location.IsRegeneratable || !freshLocation.IsBuildOutput || !freshLocation.IsRegeneratable
+                        || freshAssessment.State != CleanupReadiness.Ready
+                        || plan.BuildAssessments[location.DirectoryIndex].State != CleanupReadiness.Ready))
+                        throw new InvalidOperationException("Permanent deletion requires verified rebuildable build output with no recent activity.");
                     if (freshAssessment.State == CleanupReadiness.Protected
                         || freshAssessment.State == CleanupReadiness.NeedsReview
                         && plan.BuildAssessments[location.DirectoryIndex].State == CleanupReadiness.Ready)
@@ -115,6 +141,9 @@ internal static class CleanupBatch
                         {
                             var assessment = currentAssessments[build.DirectoryIndex];
                             if (assessment.State == CleanupReadiness.Protected) throw new InvalidOperationException(assessment.Reason);
+                            if (plan.RequiresVerifiedBuilds && build.IsBuildOutput
+                                && (!build.IsRegeneratable || assessment.State != CleanupReadiness.Ready))
+                                throw new InvalidOperationException("Contains build output whose rebuildability could not be verified · Kept");
                             if (!build.IsBuildOutput) continue;
                             var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token, validation.Snapshot);
                             if (live.State == CleanupReadiness.Protected
@@ -124,12 +153,31 @@ internal static class CleanupBatch
                     }
                     await Task.Run(target.ValidateCurrent, token);
                     token.ThrowIfCancellationRequested();
-                    progress.Report(new(completed, plan.Targets.Count, target.Path, "Moving to Recycle Bin…"));
-                    attempted = true;
-                    var recycled = await operations.RecycleAsync(target, owner, token, diagnostic);
-                    result = new(location, recycled.Cancelled ? CleanupOutcome.Cancelled : CleanupOutcome.Recycled,
-                        recycled.Cancelled ? "Cancelled; some contents may already have moved." : "Moved to Recycle Bin.", true, recycled);
-                    if (recycled.Cancelled)
+                    if (permanent)
+                    {
+                        progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking permanent deletion…"));
+                        var fresh = await operations.Files.MeasureFolderAsync(target.Path, token, diagnostic, validation.Snapshot);
+                        if (!fresh.HasAllocationData || fresh.WarningCount > 0 || fresh.RootEntry.IsIncomplete)
+                            throw new IOException("Build contents could not be fully verified for permanent deletion · Kept");
+                        var build = freshLocation with { DirectoryIndex = fresh.RootIndex };
+                        var assessment = BuildCleanupProtection.Assess(fresh, [build], plan.BuildPolicy, token)[fresh.RootIndex];
+                        if (assessment.State != CleanupReadiness.Ready)
+                            throw new InvalidOperationException(assessment.Reason);
+                        var live = await operations.CheckBuildActivityAsync(freshLocation, plan.BuildPolicy, token, fresh);
+                        if (live.State != CleanupReadiness.Ready) throw new InvalidOperationException(live.Reason);
+                        progress.Report(new(completed, plan.Targets.Count, target.Path, "Permanently deleting verified build output…"));
+                        await Task.Run(() => target.DeletePermanently(operations.Files, fresh, token, () => attempted = true), token);
+                        result = new(location, CleanupOutcome.PermanentlyDeleted, "Permanently deleted verified rebuildable build output.", true);
+                    }
+                    else
+                    {
+                        progress.Report(new(completed, plan.Targets.Count, target.Path, "Moving to Recycle Bin…"));
+                        attempted = true;
+                        var recycled = await operations.RecycleAsync(target, owner, token, diagnostic);
+                        result = new(location, recycled.Cancelled ? CleanupOutcome.Cancelled : CleanupOutcome.Recycled,
+                            recycled.Cancelled ? "Cancelled; some contents may already have moved." : "Moved to Recycle Bin.", true, recycled);
+                    }
+                    if (result.Outcome == CleanupOutcome.Cancelled)
                     {
                         results.Add(result); completed++;
                         diagnostic("cleanup-location-result", result);

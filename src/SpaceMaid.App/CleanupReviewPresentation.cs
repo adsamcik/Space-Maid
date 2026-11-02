@@ -14,6 +14,8 @@ internal sealed class CleanupReviewRow : INotifyPropertyChanged
     public Opportunity Location { get; private set; }
     public CleanupLocationResult? Result { get; private set; }
     public bool IsRecycled => Result?.Outcome == CleanupOutcome.Recycled;
+    public bool IsRemoved => Result?.Outcome is CleanupOutcome.Recycled or CleanupOutcome.PermanentlyDeleted;
+    public bool IncludedByParent { get; set; }
     public BuildCleanupAssessment Assessment { get; }
     public CleanupReadiness DisplayState => _resultState ?? Assessment.State;
     public (string Provider, string Rule, string Path) Identity => (Location.ProviderId, Location.RuleId, Location.Path);
@@ -30,8 +32,8 @@ internal sealed class CleanupReviewRow : INotifyPropertyChanged
             return project.Length > 0 ? project + " / " + name : name.Length > 0 ? name : Location.Path;
         }
     }
-    public string Size => IsRecycled ? "—" : SizeText.Format(Bytes);
-    public long Bytes => IsRecycled ? 0 : Location.DisplayBytes(_hasAllocation);
+    public string Size => IsRemoved ? "—" : SizeText.Format(Bytes);
+    public long Bytes => IsRemoved ? 0 : Location.DisplayBytes(_hasAllocation);
     public string Path => Location.Path;
     public string Reason => Location.Reason;
     public string Caution => Location.Caution;
@@ -70,10 +72,11 @@ internal sealed class CleanupReviewRow : INotifyPropertyChanged
     public void SetResult(CleanupLocationResult? result)
     {
         Result = result;
-        _resultState = result?.Outcome == CleanupOutcome.Recycled ? CleanupReadiness.Ready
+        _resultState = IsRemoved ? CleanupReadiness.Ready
             : result is null || Assessment.State == CleanupReadiness.Protected ? CleanupReadiness.Protected : CleanupReadiness.NeedsReview;
         Status = result is null ? "Kept · Not selected"
             : result.Outcome == CleanupOutcome.Recycled ? "Moved to Recycle Bin"
+            : result.Outcome == CleanupOutcome.PermanentlyDeleted ? "Permanently deleted"
             : result.Outcome switch
             {
                 CleanupOutcome.Skipped => "Skipped · " + result.Message,
@@ -81,7 +84,7 @@ internal sealed class CleanupReviewRow : INotifyPropertyChanged
                 _ => result.Outcome + " · " + result.Message
             };
         _selected = false;
-        foreach (string property in new[] { nameof(IsRecycled), nameof(Bytes), nameof(Size), nameof(DisplayState), nameof(Selected) })
+        foreach (string property in new[] { nameof(IsRecycled), nameof(IsRemoved), nameof(Bytes), nameof(Size), nameof(DisplayState), nameof(Selected) })
             PropertyChanged?.Invoke(this, new(property));
     }
     public void UpdateEstimate(Opportunity location)
