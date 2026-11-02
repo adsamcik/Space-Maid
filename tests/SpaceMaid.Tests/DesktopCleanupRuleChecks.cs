@@ -64,10 +64,22 @@ public sealed partial class DesktopTests
                 foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {
                     app.ThemeMode = theme; string suffix = theme == ThemeMode.Light ? "light" : "dark";
-                    Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-rules-{suffix}.png"), 980, 720);
-                    Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-rules-compact-{suffix}.png"), 760, 520);
+                    foreach (var size in new[] { (980, 720), (760, 520) })
+                    {
+                        dialog.UpdateLayout();
+                        days = Descendants(rules).OfType<TextBox>().Single();
+                        foreach (string value in new[] { "3", "30", "365" })
+                        {
+                            days.Text = value; WaitForPlan(requireIncluded: value != "365");
+                            Assert.True(days.Focus(), $"Retention field could not focus (loaded={days.IsLoaded}, visible={days.IsVisible}, enabled={days.IsEnabled}).");
+                            days.CaretIndex = days.Text.Length;
+                            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-rules-edit-{suffix}-{size.Item1}-{value}.png"), size.Item1, size.Item2);
+                            AssertRetentionDigitsVisible(days);
+                        }
+                    }
                 }
 #pragma warning restore WPF0001
+                days.Text = "30"; WaitForPlan();
                 action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => dialog.Result is not null, TimeSpan.FromSeconds(20)); result = dialog.Result;
                 Assert.Equal(1, result!.DeletedCount); Assert.Equal(0, result.RecycledCount);
@@ -75,7 +87,8 @@ public sealed partial class DesktopTests
                 Assert.Contains("1 deleted", rule.Effect);
                 Assert.Equal(Visibility.Visible, ((ScrollViewer)dialog.FindName("RulesScroll")).Visibility);
                 Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-rule-results.png"), 980, 720);
-                void WaitForPlan() => PumpUntil(() => action.IsEnabled && ((TextBlock)dialog.FindName("EstimateText")).Text != "…", TimeSpan.FromSeconds(5));
+                void WaitForPlan(bool requireIncluded = true) => PumpUntil(() => (!requireIncluded || action.IsEnabled)
+                    && ((TextBlock)dialog.FindName("EstimateText")).Text is not ("…" or "—"), TimeSpan.FromSeconds(5));
             }
             catch (Exception error) { failure = error; }
             finally { dialog.Close(); }
@@ -84,7 +97,7 @@ public sealed partial class DesktopTests
         {
             var review = window.ReviewSelectionAsync();
             PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(40)); review.GetAwaiter().GetResult();
-            if (failure is not null) throw failure;
+            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
             Assert.True(inspected); Assert.NotNull(result);
             foreach (var project in new[] { old, newer, recent }) Assert.Equal("authored source", File.ReadAllText(project.Source));
             string log = File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip));
@@ -92,6 +105,23 @@ public sealed partial class DesktopTests
             Assert.Equal(30, window.CurrentBuildPolicy.KeepRecentDays);
         }
         finally { timer.Stop(); }
+    }
+
+    private static void AssertRetentionDigitsVisible(TextBox field)
+    {
+        Assert.True(field.IsKeyboardFocusWithin);
+        var host = Assert.IsAssignableFrom<FrameworkElement>(field.Template.FindName("PART_ContentHost", field));
+        var first = field.GetRectFromCharacterIndex(0);
+        var last = field.GetRectFromCharacterIndex(field.Text.Length - 1, trailingEdge: true);
+        Assert.False(first.IsEmpty); Assert.False(last.IsEmpty);
+        var viewport = new Rect(host.TranslatePoint(new Point(), field), host.RenderSize);
+        Assert.InRange(first.Left, viewport.Left - 1, viewport.Right);
+        Assert.InRange(last.Right, first.Left, viewport.Right + 1);
+        foreach (var clear in Descendants(field).OfType<System.Windows.Controls.Primitives.ButtonBase>().Where(button => button.IsVisible))
+        {
+            var bounds = new Rect(clear.TranslatePoint(new Point(), field), clear.RenderSize);
+            Assert.True(last.Right <= bounds.Left, "The retention digits overlap the clear button.");
+        }
     }
 
     private static void CheckNestedRuleExclusions(Application app)

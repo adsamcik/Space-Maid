@@ -59,7 +59,7 @@
                     <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=BuildRulesToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
                     <StackPanel Orientation="Horizontal" ToolTip="Keeps outputs with recent file changes or creation, including direct project files. Actual last use is not tracked. Unknown activity is kept. Stop builds before cleanup.">
                         <TextBlock Text="Keep builds active within" VerticalAlignment="Center" Margin="0,0,10,0" />
-                        <TextBox x:Name="BuildKeepRecentDaysBox" Text="3" Width="64" MaxLength="3" KeyDown="BuildRetention_KeyDown" LostFocus="BuildRetention_LostFocus" AutomationProperties.Name="Keep builds active within this many days" />
+                        <TextBox x:Name="BuildKeepRecentDaysBox" Text="3" Width="96" MaxLength="3" KeyDown="BuildRetention_KeyDown" LostFocus="BuildRetention_LostFocus" AutomationProperties.Name="Keep builds active within this many days" />
                         <TextBlock Text="days" VerticalAlignment="Center" Margin="8,0,0,0" />
                     </StackPanel>
                 </Border>

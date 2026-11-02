@@ -130,6 +130,12 @@ public sealed partial class DesktopTests
                     CheckManyCleanupRules(artifactRoot: FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-rules")
+                {
+                    BeginWorkflow("Cleanup rule editing");
+                    CheckRuleCleanupRun(window, app, artifactRoot: FindRepository());
+                    return;
+                }
                 // Run just these existing workflows when inspecting cleanup UI.
                 // The default desktop gate still exercises every workflow below.
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "opportunities")

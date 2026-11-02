@@ -58,7 +58,7 @@
                                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
                                 <WrapPanel Visibility="{Binding BuildOptionsVisibility}" IsEnabled="{Binding CanEdit}" Margin="0,8,0,0" VerticalAlignment="Center">
                                     <TextBlock Text="No activity for" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <TextBox Text="{Binding KeepDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="54" MaxLength="3" AutomationProperties.Name="Build inactivity in days" Margin="0,0,6,6" />
+                                    <TextBox Text="{Binding KeepDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="96" MaxLength="3" AutomationProperties.Name="Build inactivity in days" Margin="0,0,6,6" />
                                     <TextBlock Text="days" VerticalAlignment="Center" Margin="0,0,16,6" />
                                     <ComboBox ItemsSource="{Binding BuildActions}" SelectedIndex="{Binding BuildActionIndex, Mode=TwoWay}" MinWidth="180" MaxWidth="270" AutomationProperties.Name="Build cleanup action" Margin="0,0,0,6" />
                                 </WrapPanel>
