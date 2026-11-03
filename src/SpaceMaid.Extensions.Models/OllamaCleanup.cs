@@ -77,6 +77,13 @@ internal static class OllamaCleanup
     }
     internal static async Task<OllamaCleanupResult> ExecuteAsync(HttpClient client, OllamaCleanupPlan plan, CancellationToken token, TimeSpan? timeout = null)
     {
+        try { return await SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(client, plan, token, timeout), token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        { return new(false, false, "No deletion started. Cleanup was cancelled while waiting.", null); }
+    }
+
+    private static async Task<OllamaCleanupResult> ExecuteCapturedAsync(HttpClient client, OllamaCleanupPlan plan, CancellationToken token, TimeSpan? timeout)
+    {
         using var deadline = Deadline(token, timeout);
         bool attempted = false;
         try

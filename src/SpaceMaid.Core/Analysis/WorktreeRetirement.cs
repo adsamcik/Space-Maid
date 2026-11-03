@@ -116,7 +116,10 @@ public sealed partial class WorktreeRetirement
         finally { _gate.Release(); }
     }
 
-    public async Task<WorktreeRetirementRecord> QuarantineAsync(ManagedWorktreePolicy policy, CancellationToken token = default)
+    public Task<WorktreeRetirementRecord> QuarantineAsync(ManagedWorktreePolicy policy, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => QuarantineCapturedAsync(policy, token), token);
+
+    private async Task<WorktreeRetirementRecord> QuarantineCapturedAsync(ManagedWorktreePolicy policy, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
@@ -163,7 +166,10 @@ public sealed partial class WorktreeRetirement
         finally { _gate.Release(); }
     }
 
-    public async Task<WorktreeRetirementRecord> RestoreAsync(Guid id, CancellationToken token = default)
+    public Task<WorktreeRetirementRecord> RestoreAsync(Guid id, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => RestoreCapturedAsync(id, token), token);
+
+    private async Task<WorktreeRetirementRecord> RestoreCapturedAsync(Guid id, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
@@ -186,7 +192,10 @@ public sealed partial class WorktreeRetirement
         finally { _gate.Release(); }
     }
 
-    public async Task<WorktreeRetirementRecord> FinalizeAsync(Guid id, CancellationToken token = default)
+    public Task<WorktreeRetirementRecord> FinalizeAsync(Guid id, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => FinalizeCapturedAsync(id, token), token);
+
+    private async Task<WorktreeRetirementRecord> FinalizeCapturedAsync(Guid id, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try

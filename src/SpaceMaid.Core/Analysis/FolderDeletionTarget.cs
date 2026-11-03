@@ -5,6 +5,11 @@ using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.Core.Analysis;
 
+// Serializable proof of the identity that was actually reviewed. Restoration
+// validates this proof; it must never capture a replacement's current identity.
+public sealed record FolderDeletionIdentity(string Path, FileIdentity Identity, ulong VolumeSerialNumber,
+    long LogicalBytes = 0, long AllocatedBytes = 0, bool HasAllocationData = false, bool IsIncomplete = false);
+
 // A resolved directory with a captured live identity, validated again before
 // cleanup. Permanent removal additionally requires the caller's explicit build
 // action and a fresh native snapshot of the complete target subtree.
@@ -17,6 +22,7 @@ public sealed class FolderDeletionTarget
     public bool IsIncomplete { get; }
     private readonly FileIdentity _identity;
     private readonly ulong _volume;
+    private readonly DiskAccess _files = DiskAccess.Default;
 
     private FolderDeletionTarget(string path, ScanEntry entry, bool allocation, FileIdentity identity, ulong volume)
     {
@@ -28,6 +34,55 @@ public sealed class FolderDeletionTarget
     private FolderDeletionTarget(string path, long logicalBytes, FileIdentity identity, ulong volume)
     {
         Path = path; LogicalBytes = logicalBytes; _identity = identity; _volume = volume;
+    }
+
+    private FolderDeletionTarget(FolderDeletionIdentity identity, DiskAccess files)
+    {
+        Path = identity.Path; LogicalBytes = identity.LogicalBytes; AllocatedBytes = identity.AllocatedBytes;
+        HasAllocationData = identity.HasAllocationData; IsIncomplete = identity.IsIncomplete;
+        _identity = identity.Identity; _volume = identity.VolumeSerialNumber; _files = files;
+    }
+
+    public FolderDeletionIdentity ExportCapturedIdentity()
+        => new(Path, _identity, _volume, LogicalBytes, AllocatedBytes, HasAllocationData, IsIncomplete);
+
+    public static FolderDeletionTarget RestoreCapturedIdentity(FolderDeletionIdentity identity, DiskAccess files)
+    {
+        ArgumentNullException.ThrowIfNull(identity); ArgumentNullException.ThrowIfNull(files);
+        string path = ValidatePath(identity.Path);
+        if (identity.Identity == default || identity.LogicalBytes < 0 || identity.AllocatedBytes < 0)
+            throw new InvalidDataException("The captured cleanup identity is invalid.");
+        var target = new FolderDeletionTarget(identity with { Path = path }, files);
+        target.ValidateCurrent();
+        return target;
+    }
+
+    public static FolderDeletionIdentity CaptureScopeIdentity(string path, DiskAccess files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        path = ScopePath(path);
+        var identity = ReadIdentityUsing(path, files);
+        return new(path, identity.Identity, identity.Volume);
+    }
+
+    public static void ValidateScopeIdentity(FolderDeletionIdentity identity, DiskAccess files)
+    {
+        ArgumentNullException.ThrowIfNull(identity); ArgumentNullException.ThrowIfNull(files);
+        string path = ScopePath(identity.Path);
+        var current = ReadIdentityUsing(path, files);
+        if (identity.Identity == default || current.Identity != identity.Identity || current.Volume != identity.VolumeSerialNumber)
+            throw new InvalidOperationException("The cleanup location has changed. Review its scope before using it again.");
+    }
+
+    private static string ScopePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !System.IO.Path.IsPathFullyQualified(path) || path.StartsWith('\\')
+            || path.Length < 3 || path[1] != ':' || path[2] is not ('\\' or '/'))
+            throw new ArgumentException("Choose an absolute local cleanup location.");
+        if (path[3..].Split(['\\', '/']).Any(segment => segment is "." or ".." || segment.EndsWith('.') || segment.EndsWith(' ')
+            || segment.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0))
+            throw new ArgumentException("The cleanup location is not a safe local path.");
+        return System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(path));
     }
 
     // Explicit, bounded extension inspections capture their complete contents
@@ -81,7 +136,7 @@ public sealed class FolderDeletionTarget
     public void ValidateCurrent()
     {
         ValidatePath(Path);
-        var live = ReadIdentity(Path);
+        var live = ReadIdentityUsing(Path, _files);
         if (live.Identity != _identity || live.Volume != _volume)
             throw new InvalidOperationException("This folder has been replaced since confirmation. Rescan before deleting it.");
     }
@@ -110,10 +165,10 @@ public sealed class FolderDeletionTarget
             || parts.Any(p => p is "." or ".." || p.Contains('/') || p.EndsWith('.') || p.EndsWith(' ')))
             throw new IOException("Windows returned an unexpected Recycle Bin destination.");
 
-        var live = ReadIdentity(recycledPath);
+        var live = ReadIdentityUsing(recycledPath, _files);
         if (live.Identity != _identity || live.Volume != _volume)
             throw new IOException("Windows did not recycle the confirmed folder. Recheck this folder before trying again.");
-        try { DiskAccess.Default.GetAttributes(Path); }
+        try { _files.GetAttributes(Path); }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
         throw new IOException("The original folder is still present. Recheck this folder before trying again.");
     }
@@ -138,23 +193,25 @@ public sealed class FolderDeletionTarget
         return full;
     }
 
-    private static unsafe (FileIdentity Identity, ulong Volume) ReadIdentity(string path)
+    private static (FileIdentity Identity, ulong Volume) ReadIdentity(string path) => ReadIdentityUsing(path, DiskAccess.Default);
+
+    private static unsafe (FileIdentity Identity, ulong Volume) ReadIdentityUsing(string path, DiskAccess files)
     {
         // Reject a reparse ancestor too: lexical paths must not redirect the
         // confirmed location onto a different drive or protected namespace.
         for (string? part = path; part is not null; part = System.IO.Path.GetDirectoryName(part))
         {
-            var attributes = DiskAccess.Default.GetAttributes(part);
+            var attributes = files.GetAttributes(part);
             if ((attributes & FileAttributes.Directory) == 0)
                 throw new IOException("The selected folder is no longer a directory.");
             if ((attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException("A linked or reparse path cannot be recycled here.");
         }
-        using var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 7, 0, 3,
+        using var handle = files.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 7, 0, 3,
             NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
         byte* buffer = stackalloc byte[24];
-        if (!DiskAccess.Default.ReadHandleInformation(handle, 18, buffer, 24))
+        if (!files.ReadHandleInformation(handle, 18, buffer, 24))
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Windows could not verify this folder's identity. Deletion was blocked.");
         var data = new ReadOnlySpan<byte>(buffer, 24);
         var identity = new FileIdentity(LayoutParser.U64(data, 8), LayoutParser.U64(data, 16));

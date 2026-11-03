@@ -31,10 +31,12 @@ public partial class MainWindow
         }
         OpportunityBrowser?.Publish(new(_rows.ToArray(), groups, scan.RootPath, scan.HasAllocationData, _currentPath, _scanStale,
             _worktreeAssessments), detailPath, preserveScope);
+        _cleanupWorkspace?.SetSource(scan, locations, CurrentBuildPolicy.KeepRecentDays);
     }
     private bool RevealRecommendedGroup(DriveRecommendation recommendation)
     {
         OpportunitiesTab.IsChecked = true;
+        ShowCleanupBrowser();
         if (OpportunityBrowser is { } browser) return browser.ShowGroup(recommendation.GroupKey, recommendation.Name);
         StatusText.Text = "Opportunities unavailable · Check Extensions"; return false;
     }

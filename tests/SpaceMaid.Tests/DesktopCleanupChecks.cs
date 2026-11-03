@@ -47,44 +47,41 @@ public sealed partial class DesktopTests
         var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         PumpUntil(() => list.Items.Count == 2, TimeSpan.FromSeconds(3));
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
-        Exception? failure = null; bool reviewed = false;
-        var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
-        {
-            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-            if (dialog is null || reviewed) return;
-            try
-            {
-                reviewed = true;
-                PumpUntil(() => ((Button)dialog.FindName("CleanupButton")).IsEnabled, TimeSpan.FromSeconds(5));
-                var locations = (ListBox)dialog.FindName("LocationList");
-                Assert.Equal(good, Assert.IsType<CleanupReviewRow>(Assert.Single(locations.Items.Cast<object>())).Path);
-                Assert.True(((Button)dialog.FindName("CleanupButton")).IsEnabled);
-                Assert.Contains("Included folders are checked again", ((TextBlock)dialog.FindName("ValidationText")).Text);
-                ((RadioButton)dialog.FindName("KeptFilter")).IsChecked = true;
-                var kept = Assert.IsType<CleanupReviewRow>(Assert.Single(locations.Items.Cast<object>()));
-                Assert.Equal(bad, kept.Path); Assert.False(kept.Selected); Assert.False(kept.CanSelect);
-                Assert.Contains("Kept", kept.DecisionReason);
-                locations.SelectedItem = kept;
-                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-skipped-link.png"), 980, 720);
-                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-skipped-link-compact.png"), 760, 520);
-            }
-            catch (Exception error) { failure = error; }
-            finally { dialog.Close(); }
-        }, Dispatcher.CurrentDispatcher);
+        CleanupBatchResult? result = null; CleanupWorkspace? workspace = null;
         try
         {
-            var review = window.ReviewSelectionAsync();
-            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(15)); review.GetAwaiter().GetResult();
-            if (failure is not null) throw failure;
-            Assert.True(reviewed, ((TextBlock)window.FindName("StatusText")).Text);
+            workspace = OpenWorkspaceReview(window, 3);
+            Assert.DoesNotContain(app.Windows.OfType<ReviewWindow>(), candidate => candidate.IsVisible);
+            Assert.Equal(good, Assert.Single(workspace.Prepared!.Plan.Preview.Locations).Path);
+            Assert.Contains(workspace.Prepared.Plan.BlockedLocations, item => item.Opportunity.Path == bad);
+            ((Button)workspace.FindName("KeptButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var inspector = Assert.IsType<CleanupInspector>(((Border)workspace.FindName("InspectorHost")).Child);
+            Assert.True(((RadioButton)inspector.FindName("SummaryTab")).IsChecked);
+            ((RadioButton)inspector.FindName("ListTab")).IsChecked = true;
+            var locations = (ListBox)inspector.FindName("FolderList");
+            var kept = Assert.IsType<CleanupInspectionEntry>(Assert.Single(locations.Items.Cast<object>()));
+            Assert.Equal(bad, kept.Location.Path); Assert.False(kept.Included); Assert.False(kept.CanChoose);
+            Assert.Equal(CleanupInspectionDecision.Kept, kept.Decision);
+            locations.SelectedItem = kept;
+            ((Border)workspace.FindName("InspectorHost")).BringIntoView();
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-skipped-link.png"), 1220, 940);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-skipped-link-compact.png"), 1020, 820);
+            ((Button)workspace.FindName("CleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => workspace.Result is not null && workspace.RunTask is null, TimeSpan.FromSeconds(25)); result = workspace.Result;
+            Assert.Equal(1, result!.RecycledCount); Assert.False(result.Cancelled);
+            Assert.Contains(result.Locations, item => item.Location.Path == bad && item.Outcome == CleanupOutcome.Skipped && !item.Attempted);
+            Assert.False(Directory.Exists(good)); Assert.True(Directory.Exists(bad));
             Assert.DoesNotContain("could not be checked:", ((TextBlock)window.FindName("StatusText")).Text);
-            Assert.True(list.Items.Cast<OpportunityRow>().Single(row => row.Path == good).Selected);
-            Assert.True(list.Items.Cast<OpportunityRow>().Single(row => row.Path == bad).Selected);
-            Assert.Equal(2, list.Items.Count);
             Assert.Equal("outside contents", File.ReadAllText(Path.Join(outside.Path, "keep.txt")));
-            Assert.Equal(8192, new FileInfo(Path.Join(good, "good.dll")).Length);
+            Assert.Equal(4096, new FileInfo(Path.Join(bad, "bad.o")).Length);
         }
-        finally { timer.Stop(); Directory.Delete(junction); }
+        finally
+        {
+            result ??= workspace?.Result;
+            Directory.Delete(junction);
+            if (result is not null) foreach (var item in result.Locations)
+                if (item.Recycle?.RecycledPath is { } destination) DeletionTests.RestoreFixture(destination, item.Location.Path);
+        }
     }
 
     private static void CheckOpportunityValidation(MainWindow window, Application app, string artifactRoot)
@@ -112,42 +109,23 @@ public sealed partial class DesktopTests
         File.WriteAllBytes(output, new byte[16384]); Directory.Delete(obj, recursive: true);
         File.WriteAllText(window.CleanupSettingsPath, "{invalid"); window.LoadBuildCleanupSettings();
         window.MarkScanStale("Owned inventory has changed.");
-        Exception? failure = null; bool reviewed = false;
-        var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
-        {
-            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-            if (dialog is null || reviewed) return;
-            try
-            {
-                reviewed = true;
-                PumpUntil(() => ((Button)dialog.FindName("CleanupButton")).IsEnabled, TimeSpan.FromSeconds(5));
-                Assert.Equal(Visibility.Visible, ((ScrollViewer)dialog.FindName("RulesScroll")).Visibility);
-                Assert.Single(((ItemsControl)dialog.FindName("RuleList")).Items);
-                Assert.Contains("All discovered locations", ((TextBlock)dialog.FindName("ScopeText")).Text);
-                Assert.Contains("Estimates from the scan", ((TextBlock)dialog.FindName("ValidationText")).Text);
-                Assert.Equal("4 KiB", ((TextBlock)dialog.FindName("EstimateText")).Text);
-                ((RadioButton)dialog.FindName("KeptFilter")).IsChecked = true;
-                var kept = Assert.IsType<CleanupReviewRow>(Assert.Single(((ListBox)dialog.FindName("LocationList")).Items.Cast<object>()));
-                Assert.Equal(obj, kept.Path); Assert.False(kept.CanSelect);
-                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-rule-kept.png"), 980, 720);
-            }
-            catch (Exception error) { failure = error; }
-            finally { dialog.Close(); }
-        }, Dispatcher.CurrentDispatcher);
-        try
-        {
-            var review = window.ReviewSelectionAsync();
-            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(15)); review.GetAwaiter().GetResult();
-            if (failure is not null) throw failure;
-            Assert.True(reviewed, ((TextBlock)window.FindName("StatusText")).Text);
-            Assert.Same(scan, Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan);
-            Assert.Equal(16384, new FileInfo(output).Length);
-            Assert.Equal("{invalid", File.ReadAllText(window.CleanupSettingsPath));
-            string log = File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip));
-            Assert.DoesNotContain("opportunity-validation-read-start", log);
-            ((TextBox)OpportunityControl(window, "BuildKeepRecentDaysBox")).Text = "3"; Assert.True(window.SaveBuildRetention());
-        }
-        finally { timer.Stop(); }
+        var workspace = OpenWorkspaceReview(window, 3);
+        Assert.DoesNotContain(app.Windows.OfType<ReviewWindow>(), candidate => candidate.IsVisible);
+        Assert.Equal("4 KiB", ((TextBlock)workspace.FindName("EstimateText")).Text);
+        Assert.Contains("Scan from", ((TextBlock)workspace.FindName("FreshnessText")).Text);
+        Assert.Equal(fixture.Path, workspace.Prepared!.Definition.DiscoveryRootPath);
+        Assert.Same(scan, workspace.Prepared.Plan.Snapshot);
+        Assert.Equal(obj, Assert.Single(workspace.Prepared.Plan.BlockedLocations).Opportunity.Path);
+        ((Button)workspace.FindName("KeptButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var inspector = Assert.IsType<CleanupInspector>(((Border)workspace.FindName("InspectorHost")).Child);
+        ((RadioButton)inspector.FindName("ListTab")).IsChecked = true;
+        var kept = Assert.IsType<CleanupInspectionEntry>(Assert.Single(((ListBox)inspector.FindName("FolderList")).Items.Cast<object>()));
+        Assert.Equal(obj, kept.Location.Path); Assert.False(kept.CanChoose);
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-rule-kept.png"), 1220, 940);
+        Assert.Same(scan, Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan);
+        Assert.Equal(16384, new FileInfo(output).Length);
+        Assert.Equal("{invalid", File.ReadAllText(window.CleanupSettingsPath));
+        ((TextBox)OpportunityControl(window, "BuildKeepRecentDaysBox")).Text = "3"; Assert.True(window.SaveBuildRetention());
     }
     private static void CheckOpportunityCleanup(MainWindow window, Application app, string artifactRoot)
     {
@@ -177,65 +155,34 @@ public sealed partial class DesktopTests
         var list = (ListBox)OpportunityControl(window, "OpportunityGrid");
         Assert.Equal(3, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
-        Exception? failure = null; CleanupBatchResult? result = null;
-        bool kept = false, confirmed = false, checking = false;
-        var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(10) };
-        timer.Tick += (_, _) =>
-        {
-            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-            if (dialog is null || checking) return;
-            checking = true;
-            try
-            {
-                if (!kept)
-                {
-                    kept = true;
-                    PumpUntil(() => ((Button)dialog.FindName("CleanupButton")).IsEnabled, TimeSpan.FromSeconds(5));
-                    Assert.True(((Button)dialog.FindName("CloseButton")).IsDefault);
-                    Assert.True(((Button)dialog.FindName("CleanupButton")).IsEnabled);
-                    Assert.Equal(new[] { bin, obj, retained }.Order(), ((ListBox)dialog.FindName("LocationList")).Items.Cast<CleanupReviewRow>().Select(row => row.Path).Order());
-                    ((Button)dialog.FindName("CloseButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                }
-                else if (!confirmed)
-                {
-                    confirmed = true;
-                    PumpUntil(() => ((Button)dialog.FindName("CleanupButton")).IsEnabled, TimeSpan.FromSeconds(5));
-                    Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-confirmation.png"), 860, 740);
-                    // Activity after review protects this target. Its fresh
-                    // metadata should be reused rather than read yet again.
-                    File.WriteAllText(retainedFile, "recent build output preserved after confirmation");
-                    ((Button)dialog.FindName("CleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                    Assert.False(((Button)dialog.FindName("CleanupButton")).IsEnabled);
-                    Assert.Equal("Cancel cleanup", ((Button)dialog.FindName("CloseButton")).Content);
-                }
-                else if (dialog.Result is { } completed)
-                {
-                    result = completed;
-                    Assert.Equal(2, result.RecycledCount); Assert.False(result.Cancelled);
-                    Assert.Equal(retained, Assert.Single(result.Locations, item => item.Outcome == CleanupOutcome.Skipped).Location.Path);
-                    Assert.Equal(2, result.Locations.Count(item => item.Outcome == CleanupOutcome.Recycled));
-                    Assert.Contains("Affected folders refreshed", ((TextBlock)dialog.FindName("ResultDetailText")).Text);
-                    Assert.Contains("Space stays occupied", ((TextBlock)dialog.FindName("ResultText")).Text);
-                    var movedRows = ((ListBox)dialog.FindName("LocationList")).Items.Cast<CleanupReviewRow>().ToArray();
-                    Assert.Equal(2, movedRows.Length); Assert.All(movedRows, row => Assert.True(row.IsRecycled));
-                    PumpUntil(() => ((TextBlock)dialog.FindName("EstimateText")).Text != "…", TimeSpan.FromSeconds(5));
-                    Assert.StartsWith("1 folder remaining", ((TextBlock)dialog.FindName("EstimateCaption")).Text);
-                    Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-results.png"), 860, 740);
-                    dialog.Close();
-                }
-            }
-            catch (Exception error) { failure = error; result ??= dialog.Result; dialog.Close(); }
-            finally { checking = false; }
-        };
-        timer.Start();
+        CleanupBatchResult? result = null;
         try
         {
-            var keep = window.ReviewSelectionAsync(); PumpUntil(() => keep.IsCompleted, TimeSpan.FromSeconds(10)); keep.GetAwaiter().GetResult();
-            if (failure is not null) throw failure;
-            Assert.True(kept, ((TextBlock)window.FindName("StatusText")).Text); Assert.True(Directory.Exists(bin)); Assert.True(Directory.Exists(obj));
-            var clean = window.ReviewSelectionAsync(); PumpUntil(() => clean.IsCompleted, TimeSpan.FromSeconds(15)); clean.GetAwaiter().GetResult();
-            if (failure is not null) throw failure;
-            Assert.True(confirmed); Assert.NotNull(result);
+            var workspace = OpenWorkspaceReview(window, 3);
+            Assert.DoesNotContain(app.Windows.OfType<ReviewWindow>(), candidate => candidate.IsVisible);
+            Assert.Equal(new[] { bin, obj, retained }.Order(), workspace.Prepared!.Plan.Preview.Locations.Select(row => row.Path).Order());
+            Assert.True(Directory.Exists(bin)); Assert.True(Directory.Exists(obj));
+            Assert.DoesNotContain(workspace.Store.LoadRuns(), record => record.Definition.DiscoveryRootPath == fixture.Path);
+            var action = (Button)workspace.FindName("CleanupButton"); Assert.True(action.IsEnabled);
+            Assert.False(action.IsDefault); // Enter while editing must not authorize deletion.
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-confirmation.png"), 1220, 940);
+            File.WriteAllText(retainedFile, "recent build output preserved after confirmation");
+            action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Visible, ((StackPanel)workspace.FindName("RunningPanel")).Visibility);
+            Assert.True(((Button)workspace.FindName("StopButton")).IsEnabled);
+            PumpUntil(() => workspace.Result is not null && workspace.RunTask is null, TimeSpan.FromSeconds(25)); result = workspace.Result;
+            Assert.NotNull(result); Assert.Equal(2, result.RecycledCount); Assert.False(result.Cancelled);
+            Assert.Equal(retained, Assert.Single(result.Locations, item => item.Outcome == CleanupOutcome.Skipped).Location.Path);
+            Assert.Equal(2, result.Locations.Count(item => item.Outcome == CleanupOutcome.Recycled));
+            Assert.Contains("Affected folders refreshed", result.RefreshNote);
+            Assert.Contains("Recycled data still uses drive space", ((TextBlock)workspace.FindName("ResultSummary")).Text);
+            ((Button)workspace.FindName("InspectResultsButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var inspector = Assert.IsType<CleanupInspector>(((Border)workspace.FindName("InspectorHost")).Child);
+            ((ComboBox)inspector.FindName("OutcomePicker")).SelectedIndex = 3;
+            ((RadioButton)inspector.FindName("ListTab")).IsChecked = true;
+            var movedRows = ((ListBox)inspector.FindName("FolderList")).Items.Cast<CleanupInspectionEntry>().ToArray();
+            Assert.Equal(2, movedRows.Length); Assert.All(movedRows, row => Assert.Equal(CleanupInspectionDecision.Removed, row.Decision));
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-results.png"), 1220, 940);
             Assert.False(Directory.Exists(bin)); Assert.False(Directory.Exists(obj)); Assert.Equal("<Project />", File.ReadAllText(source));
             var updated = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource).Scan;
             Assert.Null(updated.FindEntry(bin)); Assert.Null(updated.FindEntry(obj)); Assert.NotNull(updated.FindEntry(source));
@@ -256,12 +203,26 @@ public sealed partial class DesktopTests
         }
         finally
         {
-            timer.Stop();
             if (result is not null)
                 foreach (var item in result.Locations)
                     if (item.Recycle?.RecycledPath is { } destination) DeletionTests.RestoreFixture(destination, item.Location.Path);
         }
     }
+
+    private static CleanupWorkspace OpenWorkspaceReview(MainWindow window, int days)
+    {
+        var review = window.ReviewSelectionAsync();
+        PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10)); review.GetAwaiter().GetResult();
+        var workspace = Assert.IsType<CleanupWorkspace>(window.CleanupWorkspaceView);
+        ((TextBox)workspace.FindName("DaysBox")).Text = days.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        WaitForWorkspacePlan(workspace, days);
+        return workspace;
+    }
+
+    private static void WaitForWorkspacePlan(CleanupWorkspace workspace, int days, bool requireIncluded = true, BuildCleanupAction? action = null)
+        => PumpUntil(() => workspace.PreviewTask is { IsCompleted: true } && workspace.Prepared is { } prepared
+            && prepared.Definition.InactiveDays == days && (action is null || prepared.Definition.BuildAction == action)
+            && (!requireIncluded || ((Button)workspace.FindName("CleanupButton")).IsEnabled), TimeSpan.FromSeconds(15));
 
     private static void CheckBulkCleanupReview(Application app, string artifactRoot)
     {

@@ -285,8 +285,11 @@
               </Grid>
           </Border>
           <Grid x:Name="OpportunitiesPanel" Grid.Row="1" Visibility="Collapsed">
-            <ContentControl x:Name="OpportunitiesContent" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
-            <StackPanel x:Name="OpportunitiesPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <Button x:Name="CleanupBrowserBack" Content="Back to cleanup" Click="CleanupBrowserBack_Click" HorizontalAlignment="Left" Margin="0,0,0,10" Visibility="Collapsed" />
+            <ContentControl x:Name="OpportunitiesContent" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+            <ContentControl x:Name="CleanupWorkspaceContent" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Visibility="Collapsed" />
+            <StackPanel x:Name="OpportunitiesPlaceholder" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
               <TextBlock x:Name="OpportunitiesStatusText" Text="Loading Opportunities…" TextWrapping="Wrap" TextAlignment="Center" />
               <Button Content="Extensions" Click="Extensions_Click" HorizontalAlignment="Center" Margin="0,12,0,0" />
             </StackPanel>

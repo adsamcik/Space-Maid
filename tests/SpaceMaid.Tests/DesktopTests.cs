@@ -120,6 +120,16 @@ public sealed partial class DesktopTests
                     CheckOpportunityCleanup(window, app, artifactRoot: FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-workspace")
+                {
+                    BeginWorkflow("Unified cleanup workspace");
+                    CheckCleanupWorkspaceState(window, app, artifactRoot: FindRepository());
+                    CheckOpportunityValidation(window, app, artifactRoot: FindRepository());
+                    CheckResilientCleanupReview(window, app, artifactRoot: FindRepository());
+                    CheckRuleCleanupRun(window, app, artifactRoot: FindRepository());
+                    CheckOpportunityCleanup(window, app, artifactRoot: FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-review")
                 {
                     BeginWorkflow("Resilient cleanup review");

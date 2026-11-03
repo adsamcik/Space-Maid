@@ -27,84 +27,75 @@ public sealed partial class DesktopTests
             .Invoke(window, [scan, findings, OpportunityGrouping.Build(scan, findings), null, null, false]);
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
         ((TextBox)OpportunityControl(window, "BuildKeepRecentDaysBox")).Text = "3"; Assert.True(window.SaveBuildRetention());
-        Exception? failure = null; bool inspected = false; CleanupBatchResult? result = null;
-        var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
-        {
-            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-            if (dialog is null || inspected) return;
-            inspected = true;
-            try
-            {
-                var action = (Button)dialog.FindName("CleanupButton");
-                PumpUntil(() => action.IsEnabled, TimeSpan.FromSeconds(5)); dialog.UpdateLayout();
-                var rules = (ItemsControl)dialog.FindName("RuleList");
-                var rule = Assert.IsType<CleanupRuleReviewRow>(Assert.Single(rules.Items.Cast<object>()));
-                Assert.True(rule.Checked); Assert.Equal(0, rule.BuildActionIndex); Assert.Contains("2 included", rule.Effect);
-                Assert.Equal(Visibility.Collapsed, ((Grid)dialog.FindName("FolderBrowser")).Visibility);
-                var days = Descendants(rules).OfType<TextBox>().Single();
-                var mode = Descendants(rules).OfType<ComboBox>().Single();
-                days.Text = "30"; WaitForPlan(); Assert.Contains("1 included", rule.Effect);
-                mode.SelectedIndex = 1; WaitForPlan();
-                Assert.Equal(Visibility.Visible, ((TextBlock)dialog.FindName("PermanentWarning")).Visibility);
-                Assert.Contains("permanently", action.Content.ToString());
-                Assert.DoesNotContain("Folders are moved to the Recycle Bin only", ((TextBlock)dialog.FindName("CautionText")).Text);
-                ((Button)dialog.FindName("InspectFoldersButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                var list = (ListBox)dialog.FindName("LocationList");
-                Assert.IsType<CleanupReviewRow>(Assert.Single(list.Items.Cast<object>())).Selected = false;
-                ((Button)dialog.FindName("BackToRulesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                days.Text = "7"; WaitForPlan(); Assert.Contains("1 included", rule.Effect);
-                ((Button)dialog.FindName("InspectFoldersButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                Assert.False(list.Items.Cast<CleanupReviewRow>().Single(row => row.Path == old.Output).Selected);
-                list.Items.Cast<CleanupReviewRow>().Single(row => row.Path == old.Output).Selected = true;
-                ((Button)dialog.FindName("BackToRulesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                days.Text = "0"; PumpUntil(() => ((TextBlock)dialog.FindName("ResultText")).Text.Contains("1–365"), TimeSpan.FromSeconds(5));
-                Assert.False(action.IsEnabled);
-                days.Text = "30"; WaitForPlan();
+        var workspace = OpenWorkspaceReview(window, 3);
+        Assert.DoesNotContain(app.Windows.OfType<ReviewWindow>(), candidate => candidate.IsVisible);
+        var action = (Button)workspace.FindName("CleanupButton");
+        var days = (TextBox)workspace.FindName("DaysBox");
+        var mode = (ComboBox)workspace.FindName("ActionBox");
+        Assert.Equal(2, workspace.Prepared!.Plan.Preview.Locations.Count);
+        Assert.Equal(Visibility.Collapsed, ((Border)workspace.FindName("InspectorHost")).Visibility);
+        days.Text = "30"; WaitForWorkspacePlan(workspace, 30);
+        Assert.Single(workspace.Prepared!.Plan.Preview.Locations);
+        mode.SelectedIndex = 1; WaitForWorkspacePlan(workspace, 30, action: BuildCleanupAction.PermanentlyDelete);
+        Assert.Equal(Visibility.Visible, ((TextBlock)workspace.FindName("PermanentText")).Visibility);
+        Assert.Contains("permanent", action.Content.ToString());
+        ((Button)workspace.FindName("InspectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var inspector = Assert.IsType<CleanupInspector>(((Border)workspace.FindName("InspectorHost")).Child);
+        Assert.True(((RadioButton)inspector.FindName("SummaryTab")).IsChecked);
+        ((RadioButton)inspector.FindName("ListTab")).IsChecked = true;
+        var list = (ListBox)inspector.FindName("FolderList");
+        list.SelectedItem = list.Items.Cast<CleanupInspectionEntry>().Single(row => row.Location.Path == old.Output);
+        ((Button)inspector.FindName("IncludeButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.False(action.IsEnabled);
+        ((Button)workspace.FindName("InspectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        days.Text = "7"; WaitForWorkspacePlan(workspace, 7, action: BuildCleanupAction.PermanentlyDelete);
+        Assert.StartsWith("Delete 1 ", action.Content.ToString());
+        ((Button)workspace.FindName("InspectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((RadioButton)inspector.FindName("ListTab")).IsChecked = true;
+        var omitted = list.Items.Cast<CleanupInspectionEntry>().Single(row => row.Location.Path == old.Output);
+        Assert.False(omitted.Included); list.SelectedItem = omitted;
+        ((Button)inspector.FindName("IncludeButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(action.IsEnabled);
+        ((Button)workspace.FindName("InspectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        days.Text = "0";
+        PumpUntil(() => ((TextBlock)workspace.FindName("NoticeText")).Text.Contains("1–365"), TimeSpan.FromSeconds(5));
+        Assert.False(action.IsEnabled);
+        days.Text = "30"; WaitForWorkspacePlan(workspace, 30, action: BuildCleanupAction.PermanentlyDelete);
 #pragma warning disable WPF0001
-                foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
-                {
-                    app.ThemeMode = theme; string suffix = theme == ThemeMode.Light ? "light" : "dark";
-                    foreach (var size in new[] { (980, 720), (760, 520) })
-                    {
-                        dialog.UpdateLayout();
-                        days = Descendants(rules).OfType<TextBox>().Single();
-                        foreach (string value in new[] { "3", "30", "365" })
-                        {
-                            days.Text = value; WaitForPlan(requireIncluded: value != "365");
-                            Assert.True(days.Focus(), $"Retention field could not focus (loaded={days.IsLoaded}, visible={days.IsVisible}, enabled={days.IsEnabled}).");
-                            days.CaretIndex = days.Text.Length;
-                            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-rules-edit-{suffix}-{size.Item1}-{value}.png"), size.Item1, size.Item2);
-                            AssertRetentionDigitsVisible(days);
-                        }
-                    }
-                }
-#pragma warning restore WPF0001
-                days.Text = "30"; WaitForPlan();
-                action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                PumpUntil(() => dialog.Result is not null, TimeSpan.FromSeconds(20)); result = dialog.Result;
-                Assert.Equal(1, result!.DeletedCount); Assert.Equal(0, result.RecycledCount);
-                Assert.False(Directory.Exists(old.Output)); Assert.True(Directory.Exists(newer.Output)); Assert.True(Directory.Exists(recent.Output));
-                Assert.Contains("1 deleted", rule.Effect);
-                Assert.Equal(Visibility.Visible, ((ScrollViewer)dialog.FindName("RulesScroll")).Visibility);
-                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-rule-results.png"), 980, 720);
-                void WaitForPlan(bool requireIncluded = true) => PumpUntil(() => (!requireIncluded || action.IsEnabled)
-                    && ((TextBlock)dialog.FindName("EstimateText")).Text is not ("…" or "—"), TimeSpan.FromSeconds(5));
-            }
-            catch (Exception error) { failure = error; }
-            finally { dialog.Close(); }
-        }, Dispatcher.CurrentDispatcher);
-        try
+        foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
         {
-            var review = window.ReviewSelectionAsync();
-            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(40)); review.GetAwaiter().GetResult();
-            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
-            Assert.True(inspected); Assert.NotNull(result);
-            foreach (var project in new[] { old, newer, recent }) Assert.Equal("authored source", File.ReadAllText(project.Source));
-            string log = File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip));
-            Assert.Equal(1, log.Split('\n').Count(line => line.Contains("\"Event\":\"cleanup-confirmed\"")));
-            Assert.Equal(30, window.CurrentBuildPolicy.KeepRecentDays);
+            app.ThemeMode = theme; string suffix = theme == ThemeMode.Light ? "light" : "dark";
+            foreach (var size in new[] { (1220, 940), (1020, 820) })
+            {
+                foreach (string value in new[] { "3", "30", "365" })
+                {
+                    days.Text = value; WaitForWorkspacePlan(workspace, int.Parse(value, System.Globalization.CultureInfo.InvariantCulture), requireIncluded: value != "365", action: BuildCleanupAction.PermanentlyDelete);
+                    days.BringIntoView(); window.UpdateLayout();
+                    Assert.True(days.Focus(), $"Retention field could not focus (loaded={days.IsLoaded}, visible={days.IsVisible}, enabled={days.IsEnabled}).");
+                    days.CaretIndex = days.Text.Length;
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cleanup-rules-edit-{suffix}-{size.Item1}-{value}.png"), size.Item1, size.Item2);
+                    AssertRetentionDigitsVisible(days);
+                }
+            }
         }
-        finally { timer.Stop(); }
+#pragma warning restore WPF0001
+        days.Text = "30"; WaitForWorkspacePlan(workspace, 30, action: BuildCleanupAction.PermanentlyDelete);
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => workspace.Result is not null && workspace.RunTask is null, TimeSpan.FromSeconds(25));
+        var result = Assert.IsType<CleanupBatchResult>(workspace.Result);
+        Assert.Equal(1, result.DeletedCount); Assert.Equal(0, result.RecycledCount);
+        Assert.False(Directory.Exists(old.Output)); Assert.True(Directory.Exists(newer.Output)); Assert.True(Directory.Exists(recent.Output));
+        Assert.Equal(Visibility.Visible, ((StackPanel)workspace.FindName("ResultPanel")).Visibility);
+        Assert.Equal(Visibility.Collapsed, ((Button)workspace.FindName("ReviewRemainingButton")).Visibility);
+        Assert.Contains("deleted permanently", ((TextBlock)workspace.FindName("ResultHeadline")).Text);
+        Assert.Contains("2 kept", ((TextBlock)window.FindName("StatusText")).Text);
+        Assert.DoesNotContain("skipped", ((TextBlock)window.FindName("StatusText")).Text);
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-rule-results.png"), 1220, 940);
+        foreach (var project in new[] { old, newer, recent }) Assert.Equal("authored source", File.ReadAllText(project.Source));
+        string log = File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip));
+        Assert.Equal(1, log.Split('\n').Count(line => line.Contains("\"Event\":\"cleanup-confirmed\"")));
+        Assert.Equal(30, Assert.Single(workspace.Store.LoadRuns(), record => record.Definition.DiscoveryRootPath == fixture.Path).Definition.InactiveDays);
+        Assert.Equal("30", days.Text); Assert.Equal(3, window.CurrentBuildPolicy.KeepRecentDays);
     }
 
     private static void AssertRetentionDigitsVisible(TextBox field)

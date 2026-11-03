@@ -13,6 +13,12 @@ public partial class MainWindow
     private async Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, ScanSnapshot displayed,
         IProgress<CleanupProgress> progress, CancellationToken token, CancellationTokenSource reviewWork, ScanLog log,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null)
+        => await ExecuteCleanupWithRefreshAsync(plan, displayed, progress, token, reviewWork, log,
+            current => Operations.ExecuteCleanupAsync(plan, new WindowInteropHelper(this).Handle, progress, current, log.Record, checkedWorktrees, DiscoverOpportunities));
+
+    private async Task<CleanupBatchResult> ExecuteCleanupWithRefreshAsync(CleanupPlan plan, ScanSnapshot displayed,
+        IProgress<CleanupProgress> progress, CancellationToken token, CancellationTokenSource reviewWork, ScanLog log,
+        Func<CancellationToken, Task<CleanupBatchResult>> execute)
     {
         using var work = CancellationTokenSource.CreateLinkedTokenSource(token, reviewWork.Token);
         _work = work;
@@ -21,7 +27,7 @@ public partial class MainWindow
         try
         {
             log.Record("cleanup-confirmed", new { Locations = plan.Preview.Locations.Select(location => location.Path).ToArray(), Blocked = plan.BlockedLocations.Count });
-            result = await Operations.ExecuteCleanupAsync(plan, new WindowInteropHelper(this).Handle, progress, work.Token, log.Record, checkedWorktrees, DiscoverOpportunities);
+            result = await execute(work.Token);
             if (_closing || !ReferenceEquals(_snapshot, displayed)) return result;
             if (result.Validation is not { } validation)
             {

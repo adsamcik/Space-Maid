@@ -82,14 +82,22 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
         _settings = ReadSettings();
     }
     internal Task InitializeAsync(CancellationToken token = default)
+        => InitializeOnceAsync(createViews: true, token);
+
+    // Scheduled cleanup loads classifiers without creating views or starting
+    // unrelated UI-owned services. This runtime has its own process lifetime.
+    internal Task InitializeDiscoveryAsync(CancellationToken token = default)
+        => InitializeOnceAsync(createViews: false, token);
+
+    private Task InitializeOnceAsync(bool createViews, CancellationToken token)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_initialized) return _initializing ?? Task.CompletedTask;
         _initialized = true;
-        _initializing = InitializeCoreAsync(token);
+        _initializing = InitializeCoreAsync(createViews, token);
         return _initializing;
     }
-    private async Task InitializeCoreAsync(CancellationToken callerToken)
+    private async Task InitializeCoreAsync(bool createViews, CancellationToken callerToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, _lifetime.Token);
         CancellationToken token = linked.Token;
@@ -126,6 +134,11 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                 Type type = assembly.GetType(manifest.EntryType, throwOnError: true)!;
                 if (!type.IsPublic || type.IsAbstract || !typeof(ISpaceMaidExtension).IsAssignableFrom(type))
                     throw new InvalidDataException("The entry type does not implement the supported extension API.");
+                if (!createViews && !typeof(IOpportunityExtension).IsAssignableFrom(type))
+                {
+                    _entries.Add(new(id, name, directory, "Not needed for background discovery", Version: manifest.Version));
+                    continue;
+                }
                 instance = (ISpaceMaidExtension?)Activator.CreateInstance(type) ?? throw new InvalidDataException("The extension entry type could not be created.");
                 if (instance.Descriptor != new ExtensionDescriptor(manifest.Id, manifest.Name, manifest.Version, manifest.ContractVersion))
                     throw new InvalidDataException("The extension descriptor differs from its manifest.");
@@ -135,13 +148,13 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                     (eventName, value) => _diagnostics.Record("extension-" + eventName, new { Owner = id, Data = value }));
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
-                FrameworkElement? view = instance.CreateView();
+                FrameworkElement? view = createViews ? instance.CreateView() : null;
                 if (instance is IOpportunityExtension opportunities) Opportunities.Register(id, opportunities);
                 bool supportsOpportunities = instance is IOpportunityExtension;
                 _loaded.Add(instance); instance = null;
                 _entries.Add(new(id, name, directory, "Loaded", view, Version: manifest.Version, SupportsOpportunities: supportsOpportunities)
                 {
-                    NavigationIcon = ReadNavigationIcon(_files, directory, manifest.NavigationIcon,
+                    NavigationIcon = !createViews ? null : ReadNavigationIcon(_files, directory, manifest.NavigationIcon,
                         reason => _diagnostics.Record("extension-navigation-icon-unavailable", new { Id = id, manifest.NavigationIcon, Reason = reason }))
                 });
                 _diagnostics.Record("extension-loaded", new { Id = id, manifest.Version, manifest.ContractVersion });

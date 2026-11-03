@@ -70,7 +70,8 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null)
-        => CleanupBatch.ExecuteAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, this);
+        => token.IsCancellationRequested ? CleanupBatch.ExecuteAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, this)
+            : CleanupMutationLease.RunAsync(() => CleanupBatch.ExecuteAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, this), token);
 
     public Task<CloudFileState?> InspectCloudAsync(string path, CancellationToken token = default)
         => Task.Run(() => { token.ThrowIfCancellationRequested(); return CloudFiles.Inspect(path); }, token);
@@ -87,13 +88,14 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     // Execute reports partial cancellation, so it must run even if the token
     // was cancelled before scheduling, rather than returning a cancelled Task.
     public Task<OnlineOnlyResult> MakeOnlineOnlyAsync(OnlineOnlyPlan plan, IProgress<OnlineOnlyProgress>? progress,
-        CancellationToken token) => Task.Run(() => CloudFiles.Execute(plan, progress, token));
+        CancellationToken token) => token.IsCancellationRequested ? Task.Run(() => CloudFiles.Execute(plan, progress, token))
+            : CleanupMutationLease.RunAsync(() => Task.Run(() => CloudFiles.Execute(plan, progress, token)), token);
 
     public Task<RecycleBinSnapshot> QueryRecycleBinAsync(string root) => _recycleBins.QueryAsync(root);
 
     public Task<RecycleBinCleanupResult> EmptyRecycleBinAsync(RecycleBinSnapshot confirmed, nint owner,
         CancellationToken token, Action<string, object>? diagnostic = null)
-        => _recycleBins.EmptyAsync(confirmed, owner, token, diagnostic);
+        => CleanupMutationLease.RunAsync(() => _recycleBins.EmptyAsync(confirmed, owner, token, diagnostic), token);
 
     public string OpenInExplorer(string path)
     {

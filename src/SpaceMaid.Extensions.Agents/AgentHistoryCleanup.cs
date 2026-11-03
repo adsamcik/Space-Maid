@@ -211,8 +211,12 @@ internal static partial class AgentHistoryCleanup
     internal static Task<AgentHistoryResult> ExecuteAsync(AgentHistoryPlan plan, nint owner, CancellationToken token,
         Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle = null, Func<AgentTool, string?>? runningOwner = null) => ExecuteAsync(DiskAccess.Default, plan, owner, token, recycle, runningOwner);
 
-    internal static async Task<AgentHistoryResult> ExecuteAsync(DiskAccess files, AgentHistoryPlan plan, nint owner, CancellationToken token,
+    internal static Task<AgentHistoryResult> ExecuteAsync(DiskAccess files, AgentHistoryPlan plan, nint owner, CancellationToken token,
         Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle = null, Func<AgentTool, string?>? runningOwner = null)
+        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(files, plan, owner, token, recycle, runningOwner), token);
+
+    private static async Task<AgentHistoryResult> ExecuteCapturedAsync(DiskAccess files, AgentHistoryPlan plan, nint owner, CancellationToken token,
+        Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle, Func<AgentTool, string?>? runningOwner)
     {
         // Validate the complete set before starting; each file is checked once
         // more under its native write-denying lease at the Shell callback.

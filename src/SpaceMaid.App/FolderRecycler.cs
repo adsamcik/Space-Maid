@@ -20,6 +20,10 @@ internal static class FolderRecycler
 
     public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null, Action? validateContents = null)
+        => CleanupMutationLease.RunAsync(() => RecycleCapturedAsync(target, owner, token, diagnostic, validateContents), token);
+
+    private static Task<RecycleResult> RecycleCapturedAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
+        Action<string, object>? diagnostic, Action? validateContents)
     {
         var completion = new TaskCompletionSource<RecycleResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>

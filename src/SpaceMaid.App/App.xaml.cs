@@ -22,6 +22,23 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.FirstOrDefault() == "--cleanup-scheduled")
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            if (!CleanupScheduledEntrypoint.TryParse(e.Args, out Guid definitionId, out int revision)) { Shutdown(2); return; }
+            var cancellation = new CancellationTokenSource();
+            SessionEndingCancelEventHandler sessionEnding = (_, _) => cancellation.Cancel();
+            SessionEnding += sessionEnding;
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                int exitCode;
+                try { exitCode = await CleanupScheduledEntrypoint.RunAsync(definitionId, revision, cancellation.Token); }
+                catch { exitCode = 1; } // No UI or elevation prompt in an unattended invocation.
+                finally { SessionEnding -= sessionEnding; cancellation.Dispose(); }
+                Shutdown(exitCode);
+            }));
+            return;
+        }
         MainWindow = new MainWindow();
         MainWindow.Show();
     }

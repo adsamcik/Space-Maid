@@ -10,9 +10,14 @@ internal sealed partial class FileOperations
         OptimizationPolicy policy, CancellationToken token = default, int cursor = 0, IReadOnlyList<OptimizationCooldown>? cooldowns = null) => Task.Run(() =>
             OptimizationExecutor.Capture(OptimizationPlanner.Create(scan, findings, policy, token, cursor: cursor, cooldowns: cooldowns), token, policy), token);
 
-    public async Task<OptimizationResult> OptimizeAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> findings, OptimizationPreview preview,
+    public Task<OptimizationResult> OptimizeAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> findings, OptimizationPreview preview,
         OptimizationPolicy policy, OpportunityDiscovery discover, CancellationToken token, Action<string, object> diagnostic,
         IProgress<OptimizationFileResult>? progress = null)
+        => CleanupMutationLease.RunAsync(() => OptimizeCapturedAsync(scan, findings, preview, policy, discover, token, diagnostic, progress), token);
+
+    private async Task<OptimizationResult> OptimizeCapturedAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> findings, OptimizationPreview preview,
+        OptimizationPolicy policy, OpportunityDiscovery discover, CancellationToken token, Action<string, object> diagnostic,
+        IProgress<OptimizationFileResult>? progress)
     {
         policy = policy.Validate();
         if (!policy.Enabled) throw new InvalidOperationException("Optimization is disabled.");

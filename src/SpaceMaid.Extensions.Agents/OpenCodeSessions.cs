@@ -69,6 +69,14 @@ internal static class OpenCodeSessions
     internal static async Task<OpenCodeSessionResult> ExecuteAsync(HttpClient client, OpenCodeConnection connection,
         OpenCodeSessionPlan plan, CancellationToken token, TimeSpan? timeout = null)
     {
+        try { return await SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(client, connection, plan, token, timeout), token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        { return new(false, false, "No deletion started. Cleanup was cancelled while waiting."); }
+    }
+
+    private static async Task<OpenCodeSessionResult> ExecuteCapturedAsync(HttpClient client, OpenCodeConnection connection,
+        OpenCodeSessionPlan plan, CancellationToken token, TimeSpan? timeout)
+    {
         bool attempted = false; using var deadline = Deadline(token, timeout);
         try
         {

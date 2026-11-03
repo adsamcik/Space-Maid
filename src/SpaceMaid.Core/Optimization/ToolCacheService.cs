@@ -55,8 +55,12 @@ public sealed class ToolCacheService
         return new(fresh, fresh.Launcher!, arguments, scopes);
     }
 
-    public async Task<ToolCacheRunResult> ExecuteAsync(ToolCachePlan plan, CancellationToken token = default,
+    public Task<ToolCacheRunResult> ExecuteAsync(ToolCachePlan plan, CancellationToken token = default,
         Action<string, object>? diagnostic = null)
+        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(plan, token, diagnostic), token);
+
+    private async Task<ToolCacheRunResult> ExecuteCapturedAsync(ToolCachePlan plan, CancellationToken token,
+        Action<string, object>? diagnostic)
     {
         // A plan binds every affected scope and expires; native maintenance can alter
         // many records and is intentionally separate from automatic byte caps.

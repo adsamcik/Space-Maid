@@ -20,7 +20,10 @@ internal static class WslDiskClient
     internal static Task<VirtualDiskResult> ExecuteAsync(VirtualDiskRequest request, CancellationToken token)
         => ExecuteAsync(request, token, DiskAccess.Default);
 
-    internal static async Task<VirtualDiskResult> ExecuteAsync(VirtualDiskRequest request, CancellationToken token, DiskAccess files)
+    internal static Task<VirtualDiskResult> ExecuteAsync(VirtualDiskRequest request, CancellationToken token, DiskAccess files)
+        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(request, token, files), token);
+
+    private static async Task<VirtualDiskResult> ExecuteCapturedAsync(VirtualDiskRequest request, CancellationToken token, DiskAccess files)
     {
         token.ThrowIfCancellationRequested();
         VirtualDiskCleanup.RequireUnchanged(request.Target, await PreviewAsync(request.Target.Path, token, files));

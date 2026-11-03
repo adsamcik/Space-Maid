@@ -78,10 +78,11 @@ public partial class MainWindow : Window
         _explorerReturnPending = false;
         _rows.Clear();
         ResetOpportunityBrowser();
+        _cleanupWorkspace?.SetSource(null, []);
         ScannedSizeText.Text = CandidateText.Text = "—";
         ScannedSizeLabel.Text = "Scanned";
         ScannedSizeCaption.Text = "On disk";
-        OpportunitiesTab.Content = "Opportunities";
+        OpportunitiesTab.Content = "Cleanup";
         CandidateCaption.Text = "Estimate";
         DetailsButton.Visibility = Visibility.Collapsed;
         UpdateSelection();
@@ -165,6 +166,7 @@ public partial class MainWindow : Window
         bool workersStopped = true;
         try
         {
+            if (_cleanupWorkspace is not null) await _cleanupWorkspace.StopAsync();
             if (_updates is not null) await _updates.StopAsync();
             if (_duplicateWindow is not null)
                 try { await _duplicateWindow.StopAsync(); }

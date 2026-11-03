@@ -6,11 +6,16 @@ using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
 
-internal enum CleanupOutcome { Recycled, Skipped, Failed, Cancelled, NotProcessed, PermanentlyDeleted }
+internal enum CleanupOutcome { Recycled, Skipped, Failed, Cancelled, NotProcessed, PermanentlyDeleted, Partial, Uncertain }
 internal sealed record CleanupLocationResult(Opportunity Location, CleanupOutcome Outcome,
     string Message, bool Attempted = false, RecycleResult? Recycle = null);
 internal sealed record CleanupProgress(int Completed, int Total, string Path, string Message,
     CleanupLocationResult? Result = null);
+internal sealed record CleanupExecutionJournal(Action<Opportunity> Starting, Action<CleanupLocationResult> Completed,
+    Func<bool> ShouldStop)
+{
+    public Action<Opportunity>? ValidateTarget { get; init; }
+}
 internal sealed record CleanupBatchResult(IReadOnlyList<CleanupLocationResult> Locations,
     OpportunityReviewValidation? Validation, string? ValidationError = null, string? RefreshNote = null)
 {
@@ -21,6 +26,8 @@ internal sealed record CleanupBatchResult(IReadOnlyList<CleanupLocationResult> L
     public bool Cancelled => Locations.Any(item => item.Outcome is CleanupOutcome.Cancelled or CleanupOutcome.NotProcessed);
     public string Summary => $"{RecycledCount:N0} recycled · {DeletedCount:N0} permanently deleted · {Locations.Count(item => item.Outcome == CleanupOutcome.Skipped):N0} skipped"
         + $" · {Locations.Count(item => item.Outcome == CleanupOutcome.Failed):N0} failed"
+        + (Locations.Any(item => item.Outcome is CleanupOutcome.Partial or CleanupOutcome.Uncertain)
+            ? $" · {Locations.Count(item => item.Outcome is CleanupOutcome.Partial or CleanupOutcome.Uncertain):N0} need checking" : "")
         + (Cancelled ? " · Cancelled; some contents may already have been removed." : ".")
         + (RecycledCount > 0 ? " Space stays occupied until the Recycle Bin is emptied." : "");
 }
@@ -29,10 +36,22 @@ internal sealed record CleanupBatchResult(IReadOnlyList<CleanupLocationResult> L
 // classification and the recycler's live identity checks do not widen consent.
 internal static class CleanupBatch
 {
-    internal static async Task<CleanupBatchResult> ExecuteAsync(CleanupPlan plan, nint owner,
+    internal static Task<CleanupBatchResult> ExecuteAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null,
         FileOperations? operations = null)
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, null);
+
+    internal static Task<CleanupBatchResult> ExecuteJournaledAsync(CleanupPlan plan, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees, OpportunityDiscovery discover,
+        FileOperations operations, CleanupExecutionJournal journal)
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal);
+
+    private static async Task<CleanupBatchResult> ExecuteCoreAsync(CleanupPlan plan, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees, OpportunityDiscovery? discover,
+        FileOperations? operations, CleanupExecutionJournal? journal)
     {
         ArgumentNullException.ThrowIfNull(discover);
         operations ??= new();
@@ -100,11 +119,18 @@ internal static class CleanupBatch
             return new(results.AsReadOnly(), null, error.Message);
         }
         int completed = 0;
+        bool journalFailed = false;
+        void RecordStarting(Opportunity location)
+        {
+            try { journal?.Starting(location); }
+            catch (Exception error) when (IsExpected(error)) { journalFailed = error is not OperationCanceledException; throw; }
+        }
         foreach (var target in plan.Targets)
         {
             var location = plan.Preview.Locations[completed];
             CleanupLocationResult result;
-            if (token.IsCancellationRequested)
+            bool cancelRest = false;
+            if (token.IsCancellationRequested || journalFailed || journal?.ShouldStop() == true)
                 result = new(location, CleanupOutcome.NotProcessed, "Not started because cleanup was cancelled.");
             else if (!current.ContainsKey((location.ProviderId, location.Path, location.RuleId)))
                 result = new(location, CleanupOutcome.Skipped, exclusions.GetValueOrDefault((location.ProviderId, location.Path, location.RuleId))
@@ -166,39 +192,53 @@ internal static class CleanupBatch
                         var live = await operations.CheckBuildActivityAsync(freshLocation, plan.BuildPolicy, token, fresh);
                         if (live.State != CleanupReadiness.Ready) throw new InvalidOperationException(live.Reason);
                         progress.Report(new(completed, plan.Targets.Count, target.Path, "Permanently deleting verified build output…"));
+                        journal?.ValidateTarget?.Invoke(location);
+                        RecordStarting(location);
                         await Task.Run(() => target.DeletePermanently(operations.Files, fresh, token, () => attempted = true), token);
                         result = new(location, CleanupOutcome.PermanentlyDeleted, "Permanently deleted verified rebuildable build output.", true);
                     }
                     else
                     {
                         progress.Report(new(completed, plan.Targets.Count, target.Path, "Moving to Recycle Bin…"));
+                        journal?.ValidateTarget?.Invoke(location);
+                        RecordStarting(location);
                         attempted = true;
                         var recycled = await operations.RecycleAsync(target, owner, token, diagnostic);
+                        cancelRest = recycled.Cancelled;
                         result = new(location, recycled.Cancelled ? CleanupOutcome.Cancelled : CleanupOutcome.Recycled,
                             recycled.Cancelled ? "Cancelled; some contents may already have moved." : "Moved to Recycle Bin.", true, recycled);
-                    }
-                    if (result.Outcome == CleanupOutcome.Cancelled)
-                    {
-                        results.Add(result); completed++;
-                        diagnostic("cleanup-location-result", result);
-                        progress.Report(new(completed, plan.Targets.Count, target.Path, result.Message, result));
-                        results.AddRange(plan.Preview.Locations.Skip(completed).Select(remaining => new CleanupLocationResult(remaining,
-                            CleanupOutcome.NotProcessed, "Not started because cleanup was cancelled.")));
-                        break;
+                        if (recycled.Cancelled && journal is not null) result = result with { Outcome = CleanupOutcome.Uncertain };
                     }
                 }
                 catch (Exception error) when (IsExpected(error))
                 {
-                    result = new(location, error is OperationCanceledException ? CleanupOutcome.Cancelled
-                        : attempted ? CleanupOutcome.Failed : CleanupOutcome.Skipped,
+                    result = new(location, attempted && journal is not null ? CleanupOutcome.Uncertain
+                        : error is OperationCanceledException ? CleanupOutcome.Cancelled : attempted ? CleanupOutcome.Failed : CleanupOutcome.Skipped,
                         error.Message + (attempted ? " Some contents may already have moved." : ""), attempted);
                 }
             }
             results.Add(result); completed++;
+            if (journal is not null && !journalFailed)
+            {
+                try { journal.Completed(result); }
+                catch (Exception error) when (IsExpected(error))
+                {
+                    // A durable starting record remains uncertain if this write
+                    // fails. Never admit another mutation after losing the log.
+                    journalFailed = true;
+                    diagnostic("cleanup-journal-failed", new { Error = error.ToString() });
+                }
+            }
             diagnostic("cleanup-location-result", result);
             progress.Report(new(completed, plan.Targets.Count, target.Path, result.Message, result));
+            if (cancelRest)
+            {
+                results.AddRange(plan.Preview.Locations.Skip(completed).Select(remaining => new CleanupLocationResult(remaining,
+                    CleanupOutcome.NotProcessed, "Not started because cleanup was cancelled.")));
+                break;
+            }
         }
-        return new(results.AsReadOnly(), validation);
+        return new(results.AsReadOnly(), validation, journalFailed ? "Cleanup stopped because its result journal could not be saved." : null);
     }
 
     internal static bool IsExpected(Exception error) => error is IOException or InvalidDataException or OverflowException or Win32Exception

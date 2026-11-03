@@ -64,6 +64,7 @@ public partial class MainWindow
         ExtensionManagerContent.Visibility = ExtensionsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         // Scanning remains accessible while a foreground operation needs Cancel.
         ScanHeader.Visibility = extra || ExtensionsTab.IsChecked == true || PhotosTab.IsChecked == true
+            || OpportunitiesTab.IsChecked == true && !_cleanupBrowserVisible && _cleanupWorkspace?.Prepared is not null
             ? (_work is null ? Visibility.Collapsed : Visibility.Visible) : Visibility.Visible;
         PublishExtensionContext();
     }

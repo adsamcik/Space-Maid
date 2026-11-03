@@ -23,7 +23,10 @@ internal static class DockerCleanup
         return new(engine, current);
     }
 
-    internal static async Task<DockerCleanupResult> ExecuteAsync(HttpClient client, DockerCleanupPlan plan, CancellationToken token)
+    internal static Task<DockerCleanupResult> ExecuteAsync(HttpClient client, DockerCleanupPlan plan, CancellationToken token)
+        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(client, plan, token), token);
+
+    private static async Task<DockerCleanupResult> ExecuteCapturedAsync(HttpClient client, DockerCleanupPlan plan, CancellationToken token)
     {
         // No mutation is sent before both the engine and captured object have
         // been revalidated. IDs/filters are constructed here, never shell strings.

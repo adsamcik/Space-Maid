@@ -1,5 +1,23 @@
 # Optimize space
 
+## Cleanup rules and weekly runs
+
+The **Cleanup** workspace shows the selected location, cleanup rules and their estimated effect together. **Recycle folders** is the approval for that captured run; there is no second confirmation or folder-by-folder dialog. **Delete builds permanently** is a separate explicit policy for verified rebuildable output. Recycling never falls back to permanent deletion.
+
+**More cleanup options** contains caches, worktrees, exclusions and other discovered manual rules. **Inspect folders** opens a summary first, with project/type/inactivity grouping and a paged exact-path list. **Skip this run** leaves saved rules unchanged; **Always exclude** changes the draft and takes effect in future runs only after saving it. Exclusions also protect containing cleanup targets.
+
+**Save & schedule** supports manual reuse or a weekly run. **Ask me first** prepares a review of captured folders. **Clean automatically** explicitly authorizes future matching verified builds within the saved scope, retention, exclusions and run limits. Cache folders, worktrees and other manual rules require review; the separate verified generated-file optimizer below retains its existing precise producer contracts and consent.
+
+Weekly schedules use Windows Task Scheduler under the signed-in user, without elevation, stored passwords, waking the PC or catching up missed times. Space Maid need not have its main window open. A changed PC time zone or failed task registration leaves the schedule inactive with an explanation. Saving settings never immediately starts cleanup. **Pause** affects future runs; **Stop cleanup** ends the active run after any operation already in progress has reported its result.
+
+All runs use the same host-owned executor. A changed, locked, linked, unavailable or unverified folder is kept while other eligible folders continue. Fresh checks can narrow approval, but cannot add replacement folders or new matches. **Update estimate** explicitly captures a new cohort. Conflicting automatic deletion policies keep the overlapping target.
+
+Run manifests and per-target attempt receipts are stored in the app's per-user `Cleanup` data folder through `DiskAccess`. Interrupted work never resumes automatically. An attempted operation without a confirmed outcome remains **Needs checking**, and is protected from automatic retry. History remains inspectable from its frozen receipts while the original drive is offline. Diagnostic reports omit full paths unless requested.
+
+Automatic folder runs default to at most 10 GiB, 500 folders and 30 minutes; these are ceilings, not recovery promises. Existing native subtree limits and live file-safety checks remain in force. Recycled data continues using drive space until the user empties the Recycle Bin.
+
+## Generated files and native tools
+
 Choose **Optimize space** to browse actions grouped by the extension that provides them. Native tool inspection and extension workflows are available without a scan. Scan a location to add its generated-file actions; scanning pauses optimization until the results are ready.
 
 Select a generated-file action and choose **Review files**. This checks the exact files without enabling automatic cleanup. Review the files and kept results, then use **Delete previewed files** for one run. After deletion, **Scan again…** refreshes the location. Observed folder sizes are not advertised as guaranteed recovery.

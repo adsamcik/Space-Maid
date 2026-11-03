@@ -63,6 +63,7 @@ public partial class MainWindow
                 ? "Reopen Space Maid without administrator access to use Apps and extensions."
                 : apps is null ? "Apps unavailable · Check Extensions" : $"Apps · {apps.Status}\n{apps.Error}";
             InitializeExtensionWorkspace();
+            InitializeCleanupWorkspace();
             ExtensionsReady = true;
         }
         catch (OperationCanceledException) when (_extensionLifetime.IsCancellationRequested) { }

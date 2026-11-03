@@ -20,7 +20,15 @@ namespace SpaceMaid.Tests;
 public sealed partial class DesktopTests
 {
     private static object OpportunityControl(MainWindow window, string name)
-        => Assert.IsAssignableFrom<FrameworkElement>(((ContentControl)window.FindName("OpportunitiesContent")).Content).FindName(name);
+    {
+        if (((RadioButton)window.FindName("OpportunitiesTab")).IsChecked == true
+            && ((ContentControl)window.FindName("CleanupWorkspaceContent")).IsVisible && window.CleanupWorkspaceView is { } workspace)
+        {
+            ((Expander)workspace.FindName("MoreOptions")).IsExpanded = true;
+            ((Button)workspace.FindName("BrowseButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        }
+        return Assert.IsAssignableFrom<FrameworkElement>(((ContentControl)window.FindName("OpportunitiesContent")).Content).FindName(name);
+    }
 
     [ThreadStatic] private static CancellationToken _desktopCancellation;
 

@@ -27,4 +27,20 @@ public sealed record CleanupPlan
         BlockedLocations = Array.AsReadOnly(blockedLocations.ToArray());
         BuildPolicy = policy; BuildAssessments = assessments;
     }
+
+    // Runtime callers may retain captured targets across persistence or add
+    // visible keep decisions, but may not enlarge the selected preview.
+    public CleanupPlan WithCapturedTargets(IReadOnlyList<FolderDeletionTarget> targets)
+    {
+        if (targets.Count != Preview.Locations.Count || targets.Where((target, index) =>
+            !string.Equals(target.Path, Preview.Locations[index].Path, StringComparison.OrdinalIgnoreCase)).Any())
+            throw new ArgumentException("Captured targets must match the selected cleanup preview.", nameof(targets));
+        return new(Snapshot, Preview, targets, BlockedLocations, BuildPolicy, BuildAssessments)
+        { BuildAction = BuildAction, RequiresVerifiedBuilds = RequiresVerifiedBuilds, CapturedBuilds = CapturedBuilds };
+    }
+
+    public CleanupPlan WithAdditionalBlockedLocations(IEnumerable<CleanupBlockedLocation> blocked)
+        => new(Snapshot, Preview, Targets, BlockedLocations.Concat(blocked)
+            .DistinctBy(item => (item.Opportunity.ProviderId, item.Opportunity.RuleId, item.Opportunity.Path)), BuildPolicy, BuildAssessments)
+        { BuildAction = BuildAction, RequiresVerifiedBuilds = RequiresVerifiedBuilds, CapturedBuilds = CapturedBuilds };
 }
