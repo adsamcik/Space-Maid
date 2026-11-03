@@ -23,7 +23,7 @@ internal sealed partial class CleanupInspector : UserControl
     private string? _drill, _selected;
     private HashSet<string>? _undo;
     private int _page, _presentationVersion;
-    private bool _updating, _busy;
+    private bool _updating, _busy, _canExclude = true;
     private bool ReadOnly => _record is not null || _results is not null;
     internal event Action<Opportunity, bool>? InclusionChanged;
     internal event Action<Opportunity>? ExcludeRequested;
@@ -131,6 +131,7 @@ internal sealed partial class CleanupInspector : UserControl
     }
 
     internal void SetBusy(bool busy) { _busy = busy; UpdateDetails(); }
+    internal void SetCanExclude(bool canExclude) { _canExclude = canExclude; UpdateDetails(); }
     internal void ShowKept() { OutcomePicker.SelectedIndex = 2; SummaryTab.IsChecked = true; ApplyFilters(true); }
 
     private void Rebuild()
@@ -192,8 +193,8 @@ internal sealed partial class CleanupInspector : UserControl
         bool skippedContents = _entries.Any(item => item.Key != entry.Key && _omitted.Contains(item.Key) && Covers(entry.Location.Path, item.Location.Path));
         IncludeButton.Content = entry.Included ? "Skip this run" : skippedContents ? "Include folder and skipped contents" : "Include this run";
         IncludeButton.Visibility = !ReadOnly && entry.CanChoose ? Visibility.Visible : Visibility.Collapsed;
-        IncludeButton.IsEnabled = !_busy; ExcludeButton.IsEnabled = !_busy && !ReadOnly;
-        ExcludeButton.Visibility = ReadOnly ? Visibility.Collapsed : Visibility.Visible;
+        IncludeButton.IsEnabled = !_busy; ExcludeButton.IsEnabled = !_busy && !ReadOnly && _canExclude;
+        ExcludeButton.Visibility = ReadOnly || !_canExclude ? Visibility.Collapsed : Visibility.Visible;
         RevealButton.Visibility = RevealRequested is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -221,7 +222,7 @@ internal sealed partial class CleanupInspector : UserControl
     private void Include_Click(object sender, RoutedEventArgs e)
     { if (_entries.FirstOrDefault(entry => entry.Key == _selected) is { } entry) ChangeInclusion(entry, !entry.Included); }
     private void Exclude_Click(object sender, RoutedEventArgs e)
-    { if (!_busy && !ReadOnly && _entries.FirstOrDefault(entry => entry.Key == _selected) is { } entry) ExcludeRequested?.Invoke(entry.Location); }
+    { if (!_busy && !ReadOnly && _canExclude && _entries.FirstOrDefault(entry => entry.Key == _selected) is { } entry) ExcludeRequested?.Invoke(entry.Location); }
     private void Reveal_Click(object sender, RoutedEventArgs e)
     { if (_entries.FirstOrDefault(entry => entry.Key == _selected) is { } entry) RevealRequested?.Invoke(entry.Location); }
     private void Undo_Click(object sender, RoutedEventArgs e)

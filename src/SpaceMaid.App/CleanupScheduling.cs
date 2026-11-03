@@ -115,6 +115,7 @@ internal sealed class CleanupScheduleService
                     throw new InvalidOperationException("The Windows task no longer matches this cleanup. Review and enable its schedule again.");
                 RecordMissedOccurrences(definition, _clock.GetUtcNow(), token);
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception error) when (ScheduleError(error))
             {
                 var current = _store.LoadDefinitions().FirstOrDefault(item => item.Id == definition.Id);

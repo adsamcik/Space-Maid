@@ -11,6 +11,22 @@ namespace SpaceMaid.Tests;
 public sealed class CleanupSchedulingTests
 {
     [Fact]
+    public async Task CancellingMissedRunReconciliationDoesNotDisableTheVerifiedSchedule()
+    {
+        using var fixture = new TestDirectory();
+        var store = new CleanupRunStore(new FileOperations().Files, Path.Join(fixture.Path, "state"));
+        var native = new FakeScheduler(); var clock = new FixedClock(new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var service = Service(store, native, clock);
+        var saved = await service.SaveAsync(Definition(fixture.Path));
+        using var cancel = new CancellationTokenSource();
+        clock.Now = clock.Now.AddDays(15); native.OnMatch = _ => { cancel.Cancel(); return true; };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ReconcileAsync(cancel.Token));
+        var retained = Assert.Single(store.LoadDefinitions());
+        Assert.True(retained.Enabled); Assert.Equal(saved.RegisteredRevision, retained.RegisteredRevision);
+        Assert.Equal(saved.Revision, retained.Revision); Assert.Equal(saved.Schedule, retained.Schedule); Assert.Null(retained.ScheduleError);
+    }
+
+    [Fact]
     public void CacheOnlyWeeklyReviewDoesNotRequireDeveloperProviderAndReportsAvailableDiscovery()
     {
         var definition = Definition(@"G:\fixture") with { Build = false, Cache = true };

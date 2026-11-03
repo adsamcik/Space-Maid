@@ -35,12 +35,12 @@ internal partial class CleanupWorkspace : UserControl
     private CleanupRunHeader? _activeBackgroundRun;
     private DraftSession? _draftSession;
     private bool _refreshingStatus;
-    private CancellationTokenSource? _previewWork, _runWork;
+    private CancellationTokenSource? _previewWork, _runWork, _recordWork;
     private Task? _runTask;
     private bool _startingRun;
     private bool ForegroundBusy => _startingRun || _runTask is not null;
     private bool _writing = true, _stopped, _loading, _savedView, _historyView, _inspecting, _snapshotChanged;
-    private int _previewVersion;
+    private int _previewVersion, _navigationVersion;
     private string? _matchingSignature;
     private readonly HashSet<(string Provider, string Rule, string Path)> _omitted = [];
     private IReadOnlyList<string> _selectedScopes = [];
@@ -74,7 +74,7 @@ internal partial class CleanupWorkspace : UserControl
         };
         _inspector.ExcludeRequested += location =>
         {
-            if (_runTask is not null) return;
+            if (ForegroundBusy || _shownRecord is not null) return;
             string before = ExclusionsBox.Text;
             var paths = before.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             if (!paths.Contains(location.Path, StringComparer.OrdinalIgnoreCase)) paths.Add(location.Path);
@@ -127,6 +127,7 @@ internal partial class CleanupWorkspace : UserControl
     internal void ReviewSelection(ScanSnapshot scan, IReadOnlyList<Opportunity> candidates, IReadOnlyList<string> scopes)
     {
         if (ForegroundBusy) { ShowNotice("Stop the current cleanup before changing its scope."); return; }
+        BeginNavigation();
         var selectedPaths = scopes.ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool Selected(Opportunity item)
         {
@@ -246,7 +247,7 @@ internal partial class CleanupWorkspace : UserControl
 
     private void Conditions_Changed(object sender, RoutedEventArgs e)
     {
-        if (_writing || _stopped) return;
+        if (_writing || _stopped || _shownRecord is not null) return;
         _result = null; _shownRecord = null; UpdateFormState(); ScheduleDraftSave();
         _previewTimer.Stop(); _previewTimer.Start();
     }
@@ -308,7 +309,7 @@ internal partial class CleanupWorkspace : UserControl
             KeptButton.Content = $"{kept:N0} kept"; KeptButton.Visibility = kept > 0 ? Visibility.Visible : Visibility.Collapsed;
             string folders = locations.Count == 1 ? "folder" : "folders";
             CleanupButton.Content = permanent ? $"Delete {locations.Count:N0} {folders} · permanent builds" : $"Recycle {locations.Count:N0} {folders}";
-            CleanupButton.IsEnabled = !_loading && _runTask is null && locations.Count > 0 && TryReadForm(out _);
+            UpdateApprovalAvailability();
             FreshnessText.Text = _snapshotChanged ? "Scan changed · Update the estimate to include new matches." : $"Scan from {_prepared.Plan.Snapshot.ScannedAtUtc.ToLocalTime():g}";
             UpdateEstimateButton.Visibility = _snapshotChanged || locations.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             if (_shownRecord?.State == CleanupRunState.Review) UpdatePendingImpact();
@@ -352,7 +353,16 @@ internal partial class CleanupWorkspace : UserControl
         ScheduleConsent.Text = $"Every {WeekdayBox.SelectedItem}, clean verified builds in the selected scope, including future matching folders. Keep builds active within {DaysBox.Text} days. "
             + (ActionBox.SelectedIndex == 1 ? "Builds are permanently deleted, with no recovery. " : "Recycle only; permanent deletion is never a fallback. ")
             + $"Up to {LimitGiBBox.Text} GiB and {LimitTargetsBox.Text} folders per run, for at most {_definition.Limits.MaxMinutes} minutes. Exclusions remain protected.";
-        if (!_loading) CleanupButton.IsEnabled = _prepared is not null && IncludedLocations().Count > 0 && TryReadForm(out var value) && MatchingSignature(value!) == _matchingSignature && _runTask is null;
+        UpdateApprovalAvailability();
+    }
+
+    private void UpdateApprovalAvailability()
+    {
+        bool available = !_stopped && !_loading && !ForegroundBusy && _activeBackgroundRun is null;
+        CleanupButton.IsEnabled = available && _shownRecord is null && _prepared is not null && IncludedLocations().Count > 0
+            && TryReadForm(out var value) && MatchingSignature(value!) == _matchingSignature;
+        ApprovePendingButton.IsEnabled = available && _shownRecord?.State == CleanupRunState.Review
+            && _prepared?.Record.Id == _shownRecord.Id && IncludedLocations().Count > 0;
     }
 
     private bool IsSavedUnchanged()
@@ -369,10 +379,12 @@ internal partial class CleanupWorkspace : UserControl
 
     private async void Cleanup_Click(object sender, RoutedEventArgs e)
     {
-        if (ForegroundBusy || _prepared is null || _loading) return;
+        if (ForegroundBusy || _activeBackgroundRun is not null || _prepared is null || _loading) return;
         _previewTimer.Stop(); _previewWork?.Cancel();
         try
         {
+            if (_shownRecord is not null && (_shownRecord.State != CleanupRunState.Review || _prepared.Record.Id != _shownRecord.Id))
+                throw new InvalidOperationException("Reopen this captured review before approving it.");
             if (_shownRecord is null && MatchingSignature(ReadForm(false)) != _matchingSignature) { await RefreshPreviewAsync(false); return; }
             var chosen = _prepared;
             _startingRun = true; _runWork = new(); _shownRecord = chosen.Record; _result = null;
@@ -423,7 +435,12 @@ internal partial class CleanupWorkspace : UserControl
             }
             else ShowPlan();
         }
-        finally { _startingRun = false; _runTask = null; _runWork?.Dispose(); _runWork = null; RunningPanel.Visibility = Visibility.Collapsed; _inspector.SetBusy(false); UpdateFormState(); }
+        finally
+        {
+            _startingRun = false; _runTask = null; _runWork?.Dispose(); _runWork = null;
+            RunningPanel.Visibility = Visibility.Collapsed; _inspector.SetBusy(false); UpdateFormState();
+            if (_store.HasEndedWorkers && !_stopped && IsVisible) _statusTimer.Start();
+        }
     }
 
     private void Stop_Click(object sender, RoutedEventArgs e)
@@ -451,6 +468,7 @@ internal partial class CleanupWorkspace : UserControl
 
     private void UpdateInspector()
     {
+        _inspector.SetCanExclude(_shownRecord is null);
         InspectorHost.Visibility = _inspecting && (_prepared is not null || _shownRecord is not null) ? Visibility.Visible : Visibility.Collapsed;
         InspectButton.Content = InspectResultsButton.Content = _inspecting ? "Hide folder details" : _result is null && _shownRecord is null ? "Inspect folders" : "Inspect results";
         if (_inspecting && _shownRecord is not null && _shownRecord.State != CleanupRunState.Review) _inspector.ShowRecord(_shownRecord);
@@ -500,7 +518,7 @@ internal partial class CleanupWorkspace : UserControl
         if (pending && _prepared is null) ResultSummary.Text = "Reconnect the location, then reopen this review. Its captured folders remain unchanged.";
         DoneButton.Content = pending ? "Back" : "Done";
         ApprovePendingButton.Visibility = DismissPendingButton.Visibility = pending ? Visibility.Visible : Visibility.Collapsed;
-        ApprovePendingButton.IsEnabled = pending && _prepared?.Plan.CanExecute == true;
+        UpdateApprovalAvailability();
         ApprovePendingButton.Content = _prepared?.Definition.BuildAction == BuildCleanupAction.PermanentlyDelete ? "Delete approved builds permanently" : "Recycle approved folders";
         ReviewRemainingButton.Visibility = !pending && record is not null && RemainingTargets(record).Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateInspector();
@@ -518,7 +536,7 @@ internal partial class CleanupWorkspace : UserControl
             : _operations.EstimateCleanup(_prepared.Plan.Snapshot, selected).EstimatedBytes);
         int kept = entries.Count(item => item.Decision == CleanupInspectionDecision.Kept), skipped = entries.Count(item => item.Decision == CleanupInspectionDecision.Skipped);
         ResultSummary.Text = $"{selected.Count:N0} ready · {kept:N0} kept" + (skipped > 0 ? $" · {skipped:N0} skipped for this run" : "");
-        ApprovePendingButton.IsEnabled = selected.Count > 0 && _runTask is null;
+        UpdateApprovalAvailability();
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
@@ -548,6 +566,7 @@ internal partial class CleanupWorkspace : UserControl
     private int _historyLimit = 12;
     private async Task ShowLibraryAsync(bool history)
     {
+        int navigation = BeginNavigation();
         CaptureDraftSession();
         _savedView = !history; _historyView = history; PlanPanel.Visibility = ResultPanel.Visibility = Visibility.Collapsed;
         LibraryPanel.Visibility = BackButton.Visibility = Visibility.Visible; InspectorHost.Visibility = DiagnosticsPanel.Visibility = Visibility.Collapsed;
@@ -555,7 +574,7 @@ internal partial class CleanupWorkspace : UserControl
         try
         {
             var data = await Task.Run(() => (Definitions: _store.LoadDefinitions(), Runs: _store.LoadRunHeaders()));
-            if (_stopped) return; LibraryPanel.Children.Clear();
+            if (!IsCurrentNavigation(navigation)) return; LibraryPanel.Children.Clear();
             AddLibraryHeading(history ? "History" : "Saved cleanups");
             if (!history)
             {
@@ -611,25 +630,46 @@ internal partial class CleanupWorkspace : UserControl
     private async Task UseDefinitionAsync(CleanupDefinition definition)
     {
         if (ForegroundBusy) { ShowNotice("Stop the current cleanup before editing another cleanup."); return; }
+        int navigation = BeginNavigation();
         _draftSession = null; _definition = definition; _savedDefinition = definition; ResetPreview(); WriteForm(); ShowPlan();
         await RefreshPreviewAsync(_scan is null || !string.Equals(_scan.RootPath, definition.DiscoveryRootPath, StringComparison.OrdinalIgnoreCase));
-        SaveDraft();
+        if (IsCurrentNavigation(navigation)) SaveDraft();
     }
     private async Task OpenRecordAsync(CleanupRunRecord record)
     {
         if (ForegroundBusy) { ShowNotice("The current cleanup is still running."); return; }
+        await RestoreRecordAsync(record, BeginNavigation());
+    }
+    private async Task RestoreRecordAsync(CleanupRunRecord record, int navigation)
+    {
+        if (!IsCurrentNavigation(navigation)) return;
         CaptureDraftSession();
-        _savedView = _historyView = false; _shownRecord = record; _result = null; _inspecting = false; _omitted.Clear();
-        try { _prepared = record.State == CleanupRunState.Review ? await _coordinator.RestorePreparedAsync(record, CancellationToken.None) : null; }
-        catch (Exception error) when (CleanupBatch.IsExpected(error)) { _prepared = null; ShowNotice("Some recorded locations are unavailable. " + error.Message); }
+        _savedView = _historyView = false; _shownRecord = record; _prepared = null; _result = null; _inspecting = false; _omitted.Clear();
         ShowResult();
+        if (record.State == CleanupRunState.Review) { ResultHeadline.Text = "Checking captured folders…"; ResultSummary.Text = ""; }
+        using var work = new CancellationTokenSource(); _recordWork = work;
+        try
+        {
+            var prepared = record.State == CleanupRunState.Review ? await _coordinator.RestorePreparedAsync(record, work.Token) : null;
+            if (!IsCurrentNavigation(navigation)) return;
+            _prepared = prepared; ShowResult();
+        }
+        catch (OperationCanceledException) when (work.IsCancellationRequested) { }
+        catch (Exception error) when (CleanupBatch.IsExpected(error))
+        { if (IsCurrentNavigation(navigation)) { _prepared = null; ShowNotice("Some recorded locations are unavailable. " + error.Message); ShowResult(); } }
+        finally { if (ReferenceEquals(_recordWork, work)) _recordWork = null; }
     }
     private async Task OpenRecordByIdAsync(Guid id)
     {
+        if (ForegroundBusy) { ShowNotice("The current cleanup is still running."); return; }
+        int navigation = BeginNavigation();
         var record = await Task.Run(() => _store.LoadRun(id));
+        if (!IsCurrentNavigation(navigation)) return;
         if (record is null) { ShowNotice("This cleanup run is no longer available."); return; }
-        await OpenRecordAsync(record);
+        await RestoreRecordAsync(record, navigation);
     }
+    private int BeginNavigation() { _recordWork?.Cancel(); return ++_navigationVersion; }
+    private bool IsCurrentNavigation(int navigation) => !_stopped && navigation == _navigationVersion;
     private async void ViewRunning_Click(object sender, RoutedEventArgs e)
     {
         if (_activeBackgroundRun is null) return;
@@ -661,6 +701,7 @@ internal partial class CleanupWorkspace : UserControl
     private void Back_Click(object sender, RoutedEventArgs e)
     {
         if (ForegroundBusy) { ShowNotice("Use Stop cleanup to end the current run."); return; }
+        BeginNavigation();
         if (_draftSession is { } session)
         {
             _definition = session.Definition; _savedDefinition = session.SavedDefinition; _prepared = session.Prepared;
@@ -683,6 +724,7 @@ internal partial class CleanupWorkspace : UserControl
     private void New_Click(object sender, RoutedEventArgs e)
     {
         if (ForegroundBusy) return;
+        BeginNavigation();
         _draftSession = null; _savedDefinition = null;
         var scan = _latestScan ?? _scan;
         _definition = new() { DiscoveryRootPath = scan?.RootPath ?? "", ScopePaths = scan is null ? [] : [scan.RootPath] };
@@ -704,7 +746,11 @@ internal partial class CleanupWorkspace : UserControl
         _refreshingStatus = true;
         try
         {
-            var data = await Task.Run(() => (Definitions: _store.LoadDefinitions(), Runs: _store.LoadRunHeaders()));
+            var data = await Task.Run(() =>
+            {
+                _store.RecoverInterruptedRuns();
+                return (Definitions: _store.LoadDefinitions(), Runs: _store.LoadRunHeaders());
+            });
             int pending = data.Runs.Count(run => run.State == CleanupRunState.Review && run.Source != "Manual");
             PendingButton.Content = $"{pending:N0} {(pending == 1 ? "review ready" : "reviews ready")}"; PendingButton.Visibility = pending > 0 ? Visibility.Visible : Visibility.Collapsed;
             var active = data.Runs.FirstOrDefault(run => run.State is CleanupRunState.Queued or CleanupRunState.Running);
@@ -721,10 +767,11 @@ internal partial class CleanupWorkspace : UserControl
                 if (_activeBackgroundRun is { } previous && _shownRecord?.Id == previous.Id) { _shownRecord = await Task.Run(() => _store.LoadRun(previous.Id)); if (_shownRecord is not null) ShowResult(); }
                 _activeBackgroundRun = null; ViewRunningButton.Visibility = Visibility.Collapsed;
             }
-            if (active is not null || data.Definitions.Any(definition => definition.Enabled)) _statusTimer.Start(); else _statusTimer.Stop();
+            if (active is not null || _store.HasEndedWorkers || data.Definitions.Any(definition => definition.Enabled)) _statusTimer.Start(); else _statusTimer.Stop();
         }
-        catch (Exception error) when (CleanupBatch.IsExpected(error) || error is JsonException) { _statusTimer.Stop(); ShowNotice("Cleanup history could not refresh. " + error.Message); }
-        finally { _refreshingStatus = false; }
+        catch (Exception error) when (CleanupBatch.IsExpected(error) || error is JsonException)
+        { if (!_stopped && IsVisible) _statusTimer.Start(); ShowNotice("Cleanup history could not refresh. " + error.Message); }
+        finally { _refreshingStatus = false; UpdateApprovalAvailability(); }
     }
 
     private static string Describe(CleanupDefinition definition)
@@ -815,7 +862,7 @@ internal partial class CleanupWorkspace : UserControl
     }
     internal async Task StopAsync()
     {
-        bool dirty = _draftTimer.IsEnabled; _draftTimer.Stop(); if (dirty) SaveDraft(); _stopped = true; _statusTimer.Stop(); _previewTimer.Stop(); _previewWork?.Cancel(); _runWork?.Cancel();
+        bool dirty = _draftTimer.IsEnabled; _draftTimer.Stop(); if (dirty) SaveDraft(); _stopped = true; BeginNavigation(); _statusTimer.Stop(); _previewTimer.Stop(); _previewWork?.Cancel(); _runWork?.Cancel();
         if (_runTask is not null) await _runTask;
     }
     internal Task RefreshStatusAsync() => RefreshBackgroundStatusAsync();

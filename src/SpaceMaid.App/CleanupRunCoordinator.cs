@@ -28,7 +28,8 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
         var persisted = store.LoadRun(reserved.Id);
         if (persisted?.State is CleanupRunState.Stopped or CleanupRunState.Superseded || store.IsStopRequested(reserved.Id))
             throw new OperationCanceledException("This scheduled cleanup was stopped.", token);
-        store.SaveRun(prepared.Record);
+        if (!store.TryPublishScheduledPreparation(prepared.Record))
+            throw new InvalidOperationException("The scheduled cleanup changed or stopped during preparation. No obsolete review was published.");
         return prepared;
     }
 
@@ -259,8 +260,6 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
             }
             catch (Exception error) when (CleanupBatch.IsExpected(error))
             {
-                // If the metadata volume itself failed, the durable starting
-                // journal remains authoritative for restart recovery.
                 if (!journalFailed)
                 {
                     store.SaveRun(active with { State = receipts.Values.Any(item => item.Attempted) ? CleanupRunState.NeedsAttention : CleanupRunState.Stopped,
@@ -270,18 +269,14 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
             }
             finally { monitorStop.Cancel(); await watcher.ConfigureAwait(false); }
         }, token).ConfigureAwait(false); }
-        catch (OperationCanceledException)
-        {
-            var current = store.LoadRun(record.Id);
-            if (current?.State == CleanupRunState.Queued)
-                store.SaveRun(current with { State = CleanupRunState.Stopped, UpdatedUtc = DateTimeOffset.UtcNow, Message = "Stopped while waiting for another cleanup." });
-            throw;
-        }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {
-            var current = store.LoadRun(record.Id);
-            if (current?.State == CleanupRunState.Queued)
-                store.SaveRun(current with { State = CleanupRunState.Stopped, UpdatedUtc = DateTimeOffset.UtcNow, Message = error.Message });
+            // The lease has ended. Retry terminal persistence from durable
+            // receipts now, or on a later status refresh if storage is down.
+            store.MarkWorkerEnded(record.Id, record.ApprovalClaimId!.Value,
+                error is OperationCanceledException ? "Cleanup stopped. No cleanup resumed automatically." : "Cleanup stopped. " + error.Message);
+            try { store.RecoverInterruptedRuns(); }
+            catch (Exception persistence) when (CleanupBatch.IsExpected(persistence)) { /* Preserve the journal and deferred finalization. */ }
             throw;
         }
     }

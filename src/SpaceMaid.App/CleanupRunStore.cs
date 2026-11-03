@@ -1,4 +1,5 @@
 using System.IO;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,8 +17,10 @@ internal sealed class CleanupRunStore
     private const int MaximumDefinitionsBytes = 16 * 1024 * 1024;
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false, Converters = { new AutomaticCleanupRuleConverter() } };
     private readonly DiskAccess _files;
+    private readonly ConcurrentDictionary<Guid, (Guid Claim, string Message)> _endedWorkers = new();
     private readonly string _directory, _definitionsPath, _runsDirectory, _stopDirectory, _mutexName, _indexPath, _indexDirtyPath;
     internal string DirectoryPath => _directory;
+    internal bool HasEndedWorkers => !_endedWorkers.IsEmpty;
 
     internal CleanupRunStore(DiskAccess files, string directory)
     {
@@ -117,6 +120,27 @@ internal sealed class CleanupRunStore
         return true;
     });
 
+    internal bool TryPublishScheduledPreparation(CleanupRunRecord prepared) => Locked(() =>
+    {
+        var reserved = LoadRunCore(prepared.Id);
+        if (reserved?.State != CleanupRunState.Queued || reserved.ApprovalClaimId is not null
+            || reserved.OwnerProcessId != prepared.OwnerProcessId || reserved.OwnerStartedUtc != prepared.OwnerStartedUtc
+            || reserved.Definition.Id != prepared.Definition.Id || reserved.Definition.Revision != prepared.Definition.Revision)
+            return false;
+        var current = LoadDefinitionsCore().SingleOrDefault(item => item.Id == reserved.Definition.Id);
+        string? reason = current is null || current.Revision != reserved.Definition.Revision
+            ? "The saved cleanup changed or was removed during preparation. No review or cleanup was started."
+            : IsStopRequested(reserved.Id) ? "Scheduled preparation was stopped."
+            : prepared.Definition.Schedule?.Automatic == true && !current.Enabled ? "Automatic cleanup was paused before execution." : null;
+        if (reason is not null)
+        {
+            SaveRunCore(reserved with { State = CleanupRunState.Stopped, UpdatedUtc = DateTimeOffset.UtcNow, Message = reason });
+            return false;
+        }
+        SaveRunCore(prepared);
+        return true;
+    });
+
     internal bool RequestStop(Guid id) => Locked(() =>
     {
         var run = LoadRunCore(id);
@@ -139,25 +163,41 @@ internal sealed class CleanupRunStore
         return true;
     });
 
-    // Recovery requires exact process-start identity proof, not a timeout. A
-    // live owner can still be preparing a queued occurrence without the lease.
+    // Recovery needs proof of a dead process or an ended local worker, never a
+    // timeout. A live owner may still be preparing outside the mutation lease.
     internal void RecoverInterruptedRuns() => Locked(() =>
     {
         RecoverDeadOwnersCore();
         return true;
     });
 
+    // A failed metadata write can outlive the worker without ending its app.
+    // Keep this fact in memory even while the profile disk is unavailable.
+    internal void MarkWorkerEnded(Guid id, Guid claim, string message)
+    {
+        RequireId(id); RequireId(claim);
+        _endedWorkers[id] = (claim, message[..Math.Min(message.Length, 8000)]);
+    }
+
     private void RecoverDeadOwnersCore()
     {
-        foreach (var run in LoadRunHeadersCore().Where(item => item.State is CleanupRunState.Running or CleanupRunState.Queued)
-            .Select(item => LoadRunCore(item.Id)!).Where(item => item is not null)
-            .Where(CleanupRunOwnership.IsDefinitelyGone))
+        var headers = LoadRunHeadersCore();
+        // Missing data can mean an unavailable profile volume. Only positive
+        // terminal state proves that an ended-worker marker is no longer needed.
+        foreach (var header in headers.Where(item => item.State is not (CleanupRunState.Running or CleanupRunState.Queued)))
+            _endedWorkers.TryRemove(header.Id, out _);
+        var active = headers.Where(item => item.State is CleanupRunState.Running or CleanupRunState.Queued).ToArray();
+        foreach (var run in active.Select(item => LoadRunCore(item.Id)!).Where(item => item is not null))
         {
+            bool endedHere = _endedWorkers.TryGetValue(run.Id, out var ended) && ended.Claim == run.ApprovalClaimId
+                && run.OwnerProcessId == Environment.ProcessId && run.OwnerStartedUtc == CleanupRunOwnership.CurrentStartedUtc;
+            if (!endedHere && !CleanupRunOwnership.IsDefinitelyGone(run)) continue;
             var receipts = run.Receipts.Select(item => item.Attempted && item.Outcome == CleanupOutcome.Uncertain
-                ? item with { Message = "The previous process ended before confirming this outcome. Inspect it before retrying." } : item).ToArray();
+                ? item with { Message = "The cleanup worker ended before confirming this outcome. Inspect it before retrying." } : item).ToArray();
             SaveRunCore(run with { State = run.HasUncertainOutcome
                 ? CleanupRunState.NeedsAttention : CleanupRunState.Stopped, Receipts = receipts,
-                UpdatedUtc = DateTimeOffset.UtcNow, Message = "Interrupted. No cleanup resumed automatically." });
+                UpdatedUtc = DateTimeOffset.UtcNow, Message = endedHere ? ended.Message : "Interrupted. No cleanup resumed automatically." });
+            _endedWorkers.TryRemove(run.Id, out _);
         }
     }
 
@@ -165,7 +205,7 @@ internal sealed class CleanupRunStore
     {
         if (!_files.FileExists(_definitionsPath)) return [];
         var document = Read<DefinitionFile>(_definitionsPath, MaximumDefinitionsBytes);
-        if (document.Version != 1 || document.Definitions is null || document.Definitions.Length > 256)
+        if (document.Version != 1 || document.Definitions is null || document.Definitions.Length > 256 || document.Definitions.Any(item => item is null))
             throw new InvalidDataException("Saved cleanup definitions have an unsupported format.");
         var definitions = document.Definitions.Select(item => item.Validate()).ToArray();
         if (definitions.Select(item => item.Id).Distinct().Count() != definitions.Length)

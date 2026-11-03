@@ -26,6 +26,8 @@ public sealed partial class DesktopTests
             browser.Visibility = Visibility.Collapsed; host.Visibility = Visibility.Visible;
             CheckCleanupBackgroundSelection(window, host, artifactRoot);
             CheckCleanupDraftNavigation(window, host, artifactRoot);
+            CheckCleanupCapturedReviewIsolation(window, host, artifactRoot);
+            CheckCleanupBackgroundRecovery(window, host);
         }
         finally { host.Content = original; host.Visibility = hostVisibility; browser.Visibility = browserVisibility; }
     }

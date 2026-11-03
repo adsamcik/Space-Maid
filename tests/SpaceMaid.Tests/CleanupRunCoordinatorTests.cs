@@ -11,6 +11,97 @@ namespace SpaceMaid.Tests;
 [Trait("Stage", "System")]
 public sealed class CleanupRunCoordinatorTests
 {
+    [Theory]
+    [InlineData("edit")]
+    [InlineData("delete")]
+    [InlineData("pause")]
+    public async Task ScheduledPreparationPublishesOnlyTheCurrentRevisionAndPreservesAdmittedAskFirstOnPause(string change)
+    {
+        using var fixture = new TestDirectory(); var project = CleanupRulePlanTests.Project(fixture.Path, "project", 60);
+        var operations = new FileOperations(); var store = new CleanupRunStore(operations.Files, Path.Join(fixture.Path, "state"));
+        var scan = await operations.ScanAsync(fixture.Path); var findings = DeveloperOpportunityFixture.Find(scan);
+        var initial = await new CleanupRunCoordinator(operations, store, DeveloperOpportunityFixture.Find)
+            .PrepareAsync(CleanupRunStoreTests.Definition(fixture.Path), scan, findings, default);
+        var definition = initial.Definition with { Enabled = true, RegisteredRevision = 1,
+            Schedule = new(DayOfWeek.Monday, new(9, 0), TimeZoneInfo.Local.Id, false) };
+        store.SaveDefinition(definition);
+        var reserved = new CleanupRunRecord { Definition = definition, ScanRootPath = fixture.Path, Source = "Scheduled",
+            State = CleanupRunState.Queued, OccurrenceId = "owned-occurrence" };
+        Assert.True(store.TrySaveOccurrence(reserved));
+        bool changed = false;
+        var coordinator = new CleanupRunCoordinator(operations, store, (current, token) =>
+        {
+            if (!changed)
+            {
+                changed = true;
+                if (change == "delete") store.DeleteDefinition(definition.Id);
+                else store.SaveDefinition(definition with { Revision = change == "edit" ? 2 : 1, Enabled = false });
+            }
+            return DeveloperOpportunityFixture.Find(current, token);
+        });
+        var preparing = coordinator.PrepareScheduledAsync(definition, scan, findings, reserved, default);
+        if (change == "pause")
+        {
+            var ready = await preparing;
+            Assert.Equal(CleanupRunState.Review, store.LoadRun(ready.Record.Id)!.State);
+            Assert.Single(ready.Plan.Targets);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => preparing);
+            var stopped = store.LoadRun(reserved.Id)!;
+            Assert.Equal(CleanupRunState.Stopped, stopped.State); Assert.Empty(stopped.Targets);
+            Assert.Contains("during preparation", stopped.Message);
+            Assert.DoesNotContain(store.LoadRunHeaders(), run => run.State == CleanupRunState.Review);
+        }
+        Assert.True(changed); Assert.Equal("generated output", File.ReadAllText(project.File));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task JournalFailureEndsTheLiveOwnersRunAndRetainsDurableCompletedOutcomes(bool afterFirstTarget, bool deferFinalization)
+    {
+        using var fixture = new TestDirectory(); _ = CleanupRulePlanTests.Project(fixture.Path, "first", 60);
+        _ = CleanupRulePlanTests.Project(fixture.Path, "second", 60);
+        var operations = new FileOperations(); string data = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(operations.Files, data);
+        var coordinator = new CleanupRunCoordinator(operations, store, DeveloperOpportunityFixture.Find);
+        var scan = await operations.ScanAsync(fixture.Path);
+        var prepared = await coordinator.PrepareAsync(CleanupRunStoreTests.Definition(fixture.Path) with { BuildAction = BuildCleanupAction.PermanentlyDelete },
+            scan, DeveloperOpportunityFixture.Find(scan), default);
+        store.SaveRun(prepared.Record);
+        string journal = Path.Join(data, "Runs", prepared.Record.Id.ToString("N") + ".journal");
+        FileStream? readLease = null, manifestLease = null;
+        if (!afterFirstTarget) Directory.CreateDirectory(journal);
+        try
+        {
+            var progress = new CallbackProgress(update =>
+            {
+                if (afterFirstTarget && readLease is null && update.Result?.Outcome == CleanupOutcome.PermanentlyDeleted)
+                {
+                    readLease = File.Open(journal, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                    if (deferFinalization) manifestLease = File.Open(Path.ChangeExtension(journal, ".json"), FileMode.Open, FileAccess.Read, FileShare.Read);
+                }
+            });
+            var error = await Record.ExceptionAsync(() => coordinator.RunAsync(prepared, 0, progress, default));
+            Assert.NotNull(error); Assert.True(CleanupBatch.IsExpected(error));
+            if (deferFinalization)
+            {
+                Assert.Equal(CleanupRunState.Running, store.LoadRun(prepared.Record.Id)!.State);
+                manifestLease!.Dispose(); manifestLease = null; readLease!.Dispose(); readLease = null;
+                store.RecoverInterruptedRuns();
+            }
+            var stopped = store.LoadRun(prepared.Record.Id)!;
+            Assert.Equal(CleanupRunState.Stopped, stopped.State);
+            Assert.True(CleanupRunOwnership.IsAlive(stopped));
+            Assert.Equal(afterFirstTarget ? 1 : 0, stopped.Receipts.Count(item => item.Outcome == CleanupOutcome.PermanentlyDeleted));
+            Assert.Equal(afterFirstTarget ? 1 : 2, prepared.Record.Targets.Count(item => Directory.Exists(item.Location.Path)));
+        }
+        finally { manifestLease?.Dispose(); readLease?.Dispose(); }
+    }
+
     [Fact]
     public async Task AReplacementNeverInheritsTheOriginalCapturedApproval()
     {
@@ -135,4 +226,5 @@ public sealed class CleanupRunCoordinatorTests
     }
 
     private sealed class Progress : IProgress<CleanupProgress> { public void Report(CleanupProgress value) { } }
+    private sealed class CallbackProgress(Action<CleanupProgress> callback) : IProgress<CleanupProgress> { public void Report(CleanupProgress value) => callback(value); }
 }

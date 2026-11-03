@@ -11,6 +11,39 @@ namespace SpaceMaid.Tests;
 public sealed class CleanupRunStoreTests
 {
     [Fact]
+    public void EndedWorkerRecoveryRequiresItsExactClaimAndRetainsUnknownOutcomes()
+    {
+        using var fixture = new TestDirectory(); var store = new CleanupRunStore(DiskAccess.Default, Path.Join(fixture.Path, "state"));
+        var run = Record(fixture.Path) with { State = CleanupRunState.Running, ApprovalClaimId = Guid.NewGuid() };
+        store.SaveRun(run); var target = run.Targets[0].Location;
+        store.AppendReceipt(run.Id, new(target.Path, target.ProviderId, target.RuleId, CleanupOutcome.Uncertain, "Confirmation was lost", true, DateTimeOffset.UtcNow));
+        store.MarkWorkerEnded(run.Id, Guid.NewGuid(), "An unrelated claim ended."); store.RecoverInterruptedRuns();
+        Assert.Equal(CleanupRunState.Running, store.LoadRun(run.Id)!.State);
+        store.MarkWorkerEnded(run.Id, run.ApprovalClaimId.Value, "The local worker ended.");
+        string original = Path.Join(fixture.Path, "state"), unavailable = Path.Join(fixture.Path, "state-unavailable");
+        Directory.Move(original, unavailable);
+        try { store.RecoverInterruptedRuns(); }
+        finally { Directory.Move(unavailable, original); }
+        store.RecoverInterruptedRuns();
+        var recovered = store.LoadRun(run.Id)!;
+        Assert.Equal(CleanupRunState.NeedsAttention, recovered.State); Assert.True(recovered.HasUncertainOutcome);
+        Assert.Equal(CleanupOutcome.Uncertain, Assert.Single(recovered.Receipts).Outcome);
+        Assert.Equal(run.Targets[0].Identity, recovered.Targets[0].Identity);
+    }
+
+    [Fact]
+    public void NullSavedDefinitionIsReportedAsDamagedDataAndPreserved()
+    {
+        using var fixture = new TestDirectory();
+        string path = Path.Join(fixture.Path, "definitions.json");
+        const string damaged = "{\"Version\":1,\"Definitions\":[null]}";
+        File.WriteAllText(path, damaged);
+        var store = new CleanupRunStore(DiskAccess.Default, fixture.Path);
+        Assert.Throws<InvalidDataException>(() => store.LoadDefinitions());
+        Assert.Equal(damaged, File.ReadAllText(path));
+    }
+
+    [Fact]
     public void LargeExactScopeSelectionRoundTripsWithoutBroadeningToItsParent()
     {
         using var fixture = new TestDirectory();
