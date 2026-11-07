@@ -914,6 +914,7 @@ public sealed partial class DesktopTests
                 CheckAssistant(window, app, artifactRoot);
                 BeginWorkflow("Explorer maps and columns");
                 SetStage("rendering framed folders at desktop and compact sizes");
+                ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
                 window.SetScanTarget(@"G:\");
                 var layoutScan = NestedLayoutFixture();
                 var layoutLoad = window.InitializeExplorerAsync(layoutScan, [], default);

@@ -3,7 +3,6 @@ using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
 using Microsoft.Extensions.AI;
 using SpaceMaid.App;
 using SpaceMaid.App.Extensions;
@@ -92,10 +91,10 @@ public sealed partial class DesktopTests
             var shutdown = view.ShutdownAsync(); PumpUntil(() => shutdown.IsCompleted, TimeSpan.FromSeconds(3)); shutdown.GetAwaiter().GetResult();
             dialog.Close(); host.Dispose();
         }
-        CheckAssistantHostReview(owner, app);
+        CheckAssistantHostReview(owner);
     }
 
-    private static void CheckAssistantHostReview(MainWindow window, Application app)
+    private static void CheckAssistantHostReview(MainWindow window)
     {
         using var fixture = new TestDirectory();
         File.WriteAllText(Path.Join(fixture.Path, "sample.csproj"), "<Project />");
@@ -103,7 +102,7 @@ public sealed partial class DesktopTests
         string obj = Directory.CreateDirectory(Path.Join(fixture.Path, "obj")).FullName;
         File.WriteAllText(Path.Join(bin, "custom.txt"), "keep this custom fixture");
         File.WriteAllText(Path.Join(obj, "output.o"), "keep this generated fixture");
-        BuildActivityFixture.AgeProject(fixture.Path);
+        BuildActivityFixture.AgeProject(fixture.Path, days: 366);
         var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(5)); var scan = scanning.GetAwaiter().GetResult();
         var findings = OpportunityDetector.Find(scan);
@@ -120,33 +119,22 @@ public sealed partial class DesktopTests
         PumpUntil(() => unmatched.IsCompleted, TimeSpan.FromSeconds(3)); Assert.Equal(0, unmatched.GetAwaiter().GetResult().MatchedLocations);
         var children = session.ChildrenAsync(session.Scope.Root.Id, 20, null, default);
         PumpUntil(() => children.IsCompleted, TimeSpan.FromSeconds(3)); var target = Assert.Single(children.GetAwaiter().GetResult().Items, item => item.Name == "bin");
-        bool opened = false; Exception? failure = null;
-        var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(10) };
-        timer.Tick += (_, _) =>
-        {
-            var review = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-            if (review is null) return;
-            try
-            {
-                opened = true;
-                Assert.True(((Button)review.FindName("CloseButton")).IsDefault);
-                Assert.Equal(bin, Assert.Single(((ListBox)review.FindName("LocationList")).Items.Cast<CleanupReviewRow>()).Path);
-                ((Button)review.FindName("CloseButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            }
-            catch (Exception error) { failure = error; review.Close(); }
-        };
-        timer.Start();
-        try
-        {
-            var review = runtime.ReviewEvidenceAsync(session, [target.Id], default);
-            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10)); Assert.Equal(1, review.GetAwaiter().GetResult().MatchedLocations);
-            if (failure is not null) throw failure;
-            Assert.True(opened); Assert.Equal("keep this custom fixture", File.ReadAllText(Path.Join(bin, "custom.txt")));
-            Assert.Equal("keep this generated fixture", File.ReadAllText(Path.Join(obj, "output.o")));
-            var after = (IEnumerable<OpportunityRow>)typeof(MainWindow).GetField("_rows", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
-            Assert.Equal(obj, Assert.Single(after, row => row.Selected).Item.Path);
-        }
-        finally { timer.Stop(); }
+        var review = runtime.ReviewEvidenceAsync(session, [target.Id], default);
+        PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10));
+        Assert.Equal(1, review.GetAwaiter().GetResult().MatchedLocations);
+        var workspace = Assert.IsType<CleanupWorkspace>(window.CleanupWorkspaceView);
+        Assert.True(workspace.IsVisible);
+        PumpUntil(() => workspace.PreviewTask is { IsCompleted: true }, TimeSpan.FromSeconds(15));
+        var prepared = Assert.IsType<CleanupPreparedRun>(workspace.Prepared);
+        Assert.Equal(bin, Assert.Single(prepared.Definition.ScopePaths));
+        Assert.Equal(bin, Assert.Single(prepared.Plan.Preview.Locations).Path);
+        var action = (Button)workspace.FindName("CleanupButton");
+        Assert.True(action.IsEnabled);
+        Assert.False(action.IsDefault);
+        Assert.Null(workspace.RunTask);
+        Assert.Equal("keep this custom fixture", File.ReadAllText(Path.Join(bin, "custom.txt")));
+        Assert.Equal("keep this generated fixture", File.ReadAllText(Path.Join(obj, "output.o")));
+        Assert.Equal(obj, Assert.Single(rows, row => row.Selected).Item.Path);
     }
 
     private sealed class AssistantUiHost : IExtensionHost, IExtensionEvidenceReview, IDisposable
