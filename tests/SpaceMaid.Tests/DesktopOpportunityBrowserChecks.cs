@@ -8,7 +8,6 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Threading;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
@@ -66,7 +65,7 @@ public sealed partial class DesktopTests
         finally { runtime.SetEnabled(entry, true); }
     }
 
-    private static void CheckOverlappingOpportunityExtensions(MainWindow window, Application app, string artifactRoot)
+    private static void CheckOverlappingOpportunityExtensions(MainWindow window, string artifactRoot)
     {
         using var fixture = new TestDirectory();
         var runtime = Assert.IsType<SpaceMaid.App.Extensions.ExtensionRuntime>(typeof(MainWindow)
@@ -140,36 +139,23 @@ public sealed partial class DesktopTests
         ((Button)OpportunityControl(window, "AllOpportunitiesButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(2, list.Items.Count);
         foreach (var row in list.Items.Cast<OpportunityRow>()) row.Selected = true;
-        provider.Enabled = false; // Only this provider's rule disappears during fresh review.
-        Exception? failure = null; bool reviewed = false;
-        var closeReview = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
-        {
-            var dialog = app.Windows.OfType<ReviewWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-            if (dialog is null) return;
-            try
-            {
-                reviewed = true;
-                var reviewedLocation = Assert.IsType<CleanupReviewRow>(Assert.Single(((ListBox)dialog.FindName("LocationList")).Items.Cast<object>()));
-                Assert.Equal(DeveloperOpportunityFixture.ProviderId, reviewedLocation.Location.ProviderId);
-                Assert.Equal(bin, reviewedLocation.Path);
-            }
-            catch (Exception error) { failure = error; }
-            finally { dialog.Close(); }
-        }, Dispatcher.CurrentDispatcher);
-        try
-        {
-            var review = window.ReviewSelectionAsync();
-            PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(10)); review.GetAwaiter().GetResult();
-            if (failure is not null) throw failure;
-            Assert.True(reviewed);
-            var retained = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
-            Assert.Equal(DeveloperOpportunityFixture.ProviderId, retained.Item.ProviderId);
-            Assert.True(retained.Selected); // Excluding another provider at this path must retain this valid selection.
-            Assert.Equal(5000, new FileInfo(file).Length);
-        }
-        finally { closeReview.Stop(); }
+        provider.Enabled = false; // Only this provider's rule disappears from a fresh inventory.
+        var providerRefresh = window.RecheckFolderAsync(bin);
+        PumpUntil(() => providerRefresh.IsCompleted, TimeSpan.FromSeconds(5)); providerRefresh.GetAwaiter().GetResult();
+        var retained = Assert.IsType<OpportunityRow>(Assert.Single(list.Items.Cast<object>()));
+        Assert.Equal(DeveloperOpportunityFixture.ProviderId, retained.Item.ProviderId);
+        Assert.True(retained.Selected); // Excluding another provider at this path must retain this valid selection.
+
+        var workspace = OpenWorkspaceReview(window, 3);
+        var prepared = workspace.Prepared!;
+        Assert.Equal(bin, Assert.Single(prepared.Definition.ScopePaths));
+        var reviewedLocation = Assert.Single(prepared.Plan.Preview.Locations);
+        Assert.Equal(DeveloperOpportunityFixture.ProviderId, reviewedLocation.ProviderId);
+        Assert.Equal(bin, reviewedLocation.Path);
+        Assert.Equal(5000, new FileInfo(file).Length);
+
         provider.Enabled = true; provider.FailRegrouping = true;
-        grouping.SelectedIndex = 0;
+        ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 0;
         var regroupFailure = window.RecheckFolderAsync(bin);
         PumpUntil(() => regroupFailure.IsCompleted, TimeSpan.FromSeconds(5)); regroupFailure.GetAwaiter().GetResult();
         Assert.Contains("1 cleanup extension unavailable", ((TextBlock)OpportunityControl(window, "CleanupOverviewNote")).Text);

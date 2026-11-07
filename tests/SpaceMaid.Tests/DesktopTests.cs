@@ -163,6 +163,7 @@ public sealed partial class DesktopTests
                     CheckModels(window, app, artifactRoot: FindRepository());
                     CheckReviewClarity(app, artifactRoot: FindRepository());
                     CheckCleanupUsability(window, app, artifactRoot: FindRepository());
+                    CheckOverlappingOpportunityExtensions(window, FindRepository());
                     return;
                 }
                 SetStage("loading and independently disabling the Opportunities browser extension");
@@ -1023,7 +1024,7 @@ public sealed partial class DesktopTests
                 CheckCleanupResults(app, artifactRoot);
                 CheckOpportunityCleanup(window, app, artifactRoot);
                 SetStage("keeping overlapping extension groups and selections separate");
-                CheckOverlappingOpportunityExtensions(window, app, artifactRoot);
+                CheckOverlappingOpportunityExtensions(window, artifactRoot);
                 BeginWorkflow("Recycle Bin and helper lifecycle");
                 SetStage("confirming selected-drive Recycle Bin cleanup without deleting real bin contents");
                 CheckRecycleBinCleanup(window, app, artifactRoot);
