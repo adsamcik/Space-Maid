@@ -16,19 +16,22 @@ public static partial class CloudFiles
     // Names and default-stream lengths come from directory metadata. Opening
     // READ_ATTRIBUTES handles inspects residency without requesting contents.
     public static CloudDirectoryListing ReadDirectory(string path, CancellationToken token)
+        => ReadDirectory(path, token, DiskAccess.Default);
+
+    public static CloudDirectoryListing ReadDirectory(string path, CancellationToken token, DiskAccess files)
     {
         token.ThrowIfCancellationRequested();
         path = NormalizeLocalPath(path);
-        ValidateAncestors(path);
-        using var directory = Open(path);
-        if ((LayoutParser.U32(Information(directory, 9, 8), 0) & (uint)FileAttributes.Directory) == 0)
+        ValidateAncestors(path, files);
+        using var directory = Open(path, files);
+        if ((LayoutParser.U32(Information(directory, 9, 8, files), 0) & (uint)FileAttributes.Directory) == 0)
             throw new IOException("Choose a cloud drive folder.");
-        var selected = Inspect(directory);
+        var selected = Inspect(directory, files);
         var entries = new List<CloudDirectoryEntry>();
         var warnings = new List<string>();
         bool complete = true;
         var options = new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, AttributesToSkip = 0 };
-        var children = DiskAccess.Default.EnumerateEntries<(string Path, string Name, bool Directory, long Length)>(path,
+        var children = files.EnumerateEntries<(string Path, string Name, bool Directory, long Length)>(path,
             (ref FileSystemEntry entry) => (entry.ToFullPath(), entry.FileName.ToString(), entry.IsDirectory,
                 entry.IsDirectory ? 0 : entry.Length), options);
         try
@@ -43,12 +46,12 @@ public static partial class CloudFiles
                 }
                 try
                 {
-                    if (HasUnsupportedLink(child.Path))
+                    if (HasUnsupportedLink(child.Path, files))
                     {
                         entries.Add(new(child.Path, child.Name, child.Directory, child.Length, null, "Linked location · not followed", false));
                         continue;
                     }
-                    var state = Inspect(child.Path);
+                    var state = Inspect(child.Path, files);
                     bool sameRoot = selected is not null && state is not null
                         && state.SyncRootId == selected.SyncRootId && state.Volume == selected.Volume;
                     string availability = state is null ? "Managed by provider"

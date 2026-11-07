@@ -39,12 +39,16 @@
                     <Button x:Name="RefreshButton" Content="Refresh" Click="Refresh_Click" DockPanel.Dock="Right" Margin="8,0,0,0" IsEnabled="False"/>
                     <TextBox x:Name="FolderPath" IsReadOnly="True" VerticalContentAlignment="Center" AutomationProperties.Name="Current cloud folder"/>
                 </DockPanel>
-                <Grid Grid.Row="1" Margin="0,0,0,8">
-                    <TextBox x:Name="SearchBox" TextChanged="Search_Changed" AutomationProperties.Name="Filter current folder" ToolTip="Filter names in the current folder"/>
-                    <TextBlock Text="Filter this folder" VerticalAlignment="Center" Margin="12,0" Opacity="0.6" IsHitTestVisible="False">
-                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
-                    </TextBlock>
-                </Grid>
+                <DockPanel Grid.Row="1" Margin="0,0,0,8">
+                    <Button x:Name="MeasureButton" Content="Measure folders" Click="Measure_Click" DockPanel.Dock="Right"
+                            Margin="8,0,0,0" IsEnabled="False" ToolTip="Measure subfolders without downloading file contents."/>
+                    <Grid>
+                        <TextBox x:Name="SearchBox" TextChanged="Search_Changed" AutomationProperties.Name="Filter current folder" ToolTip="Filter names in the current folder"/>
+                        <TextBlock Text="Filter this folder" VerticalAlignment="Center" Margin="12,0" Opacity="0.6" IsHitTestVisible="False">
+                            <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </DockPanel>
                 <DataGrid x:Name="FileList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False"
                           SelectionMode="Single" SelectionChanged="File_Changed" MouseDoubleClick="File_DoubleClick" PreviewKeyDown="File_KeyDown"
                           RowHeight="38" HeadersVisibility="Column" GridLinesVisibility="Horizontal" EnableRowVirtualization="True" EnableColumnVirtualization="True" AutomationProperties.Name="Cloud folder contents">
@@ -53,8 +57,8 @@
                         <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" MinWidth="130" SortMemberPath="Name">
                             <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Margin" Value="8,0"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Name}"/></Style></DataGridTextColumn.ElementStyle>
                         </DataGridTextColumn>
-                        <DataGridTextColumn Header="File size" Binding="{Binding SizeText}" SortMemberPath="LogicalBytes" Width="90"/>
-                        <DataGridTextColumn Header="Local data" Binding="{Binding LocalText}" SortMemberPath="LocalBytes" Width="90"/>
+                        <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" SortMemberPath="LogicalBytes" Width="90"/>
+                        <DataGridTextColumn x:Name="LocalColumn" Header="Local data" Binding="{Binding LocalText}" SortMemberPath="LocalBytes" Width="90"/>
                         <DataGridTextColumn Header="Availability" Binding="{Binding Availability}" Width="160"/>
                     </DataGrid.Columns>
                 </DataGrid>
@@ -70,7 +74,7 @@
                 <Button x:Name="FreeButton" Content="Free local space…" Click="Free_Click" IsEnabled="False" ToolTip="Review synced files to make online-only. Cloud copies stay."/>
             </WrapPanel>
             <TextBlock x:Name="ActionHint" Text="Local space only. Cloud quota and files outside these folders are managed in the provider’s app." FontSize="12" Opacity="0.75" TextWrapping="Wrap" Margin="0,7,0,0"/>
-            <Expander Header="Details" FontSize="12" Margin="0,6,0,0"><TextBlock x:Name="DetailsText" Text="Browsing reads metadata. File size is not cloud quota usage; local data excludes folder totals and provider caches. Freeing local space requires an installed provider with Windows online-only support." TextWrapping="Wrap" Margin="0,5,0,0" MaxHeight="95"/></Expander>
+            <Expander Header="Details" FontSize="12" Margin="0,6,0,0"><TextBlock x:Name="DetailsText" Text="Measure folders to compare file lengths and reported disk allocation across the folders this provider exposes." TextWrapping="Wrap" Margin="0,5,0,0"/></Expander>
         </StackPanel>
     </Grid>
 </UserControl>

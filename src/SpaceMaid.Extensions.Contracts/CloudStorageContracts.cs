@@ -16,3 +16,8 @@ public interface ICloudStorageServices
     Task<CloudDirectoryListing> ReadDirectoryAsync(string path, CancellationToken token);
     Task<CloudStorageReviewResult> ReviewOnlineOnlyAsync(string path, CancellationToken token);
 }
+
+public interface ICloudFolderUsageServices
+{
+    Task<CloudFolderUsage> MeasureFolderUsageAsync(string path, CancellationToken token);
+}

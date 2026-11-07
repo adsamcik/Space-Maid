@@ -113,6 +113,12 @@ public sealed partial class DesktopTests
                     CheckSidebar(window, app, FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cloud")
+                {
+                    BeginWorkflow("Cloud drive browsing, folder usage and online-only review");
+                    CheckCloudDrives(window, app, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-results")
                 {
                     BeginWorkflow("Cleanup results and affected-folder estimates");

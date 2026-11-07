@@ -35,32 +35,40 @@ public sealed record OnlineOnlyResult(int Requested, int ConfirmedOnlineOnly, in
 // reads, deletion, forced dehydration, or changes to the provider's sync state.
 public static partial class CloudFiles
 {
-    public static CloudFileState? Inspect(string path)
+    public static CloudFileState? Inspect(string path) => Inspect(path, DiskAccess.Default);
+
+    public static CloudFileState? Inspect(string path, DiskAccess files)
     {
-        try { using var handle = Open(path); return Inspect(handle); }
+        try { using var handle = Open(path, files); return Inspect(handle, files); }
         catch (Exception ex) when (ex is IOException or Win32Exception or UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException) { return null; }
     }
 
     public static OnlineOnlyPlan Prepare(ScanSnapshot scan, int link, CancellationToken token)
+        => Prepare(scan, link, token, DiskAccess.Default);
+
+    public static OnlineOnlyPlan Prepare(ScanSnapshot scan, int link, CancellationToken token, DiskAccess files)
     {
         string path = scan.EntryPath(link) ?? throw new IOException("An unresolved location cannot be made online-only.");
-        ValidateAncestors(path);
-        var selected = Inspect(path) ?? throw new IOException("This location has no supported Windows online-only capability.");
+        ValidateAncestors(path, files);
+        var selected = Inspect(path, files) ?? throw new IOException("This location has no supported Windows online-only capability.");
         if (scan.HasAllocationData && selected.Identity != scan.Records[scan.Entry(link).FileIndex].Identity)
             throw new IOException("This location changed since scanning. Recheck it first.");
-        return Prepare(path, selected, token);
+        return Prepare(path, selected, token, files);
     }
 
     public static OnlineOnlyPlan Prepare(string path, CancellationToken token)
+        => Prepare(path, token, DiskAccess.Default);
+
+    public static OnlineOnlyPlan Prepare(string path, CancellationToken token, DiskAccess files)
     {
         token.ThrowIfCancellationRequested();
         path = NormalizeLocalPath(path);
-        ValidateAncestors(path);
-        var selected = Inspect(path) ?? throw new IOException("This location has no supported Windows online-only capability.");
-        return Prepare(path, selected, token);
+        ValidateAncestors(path, files);
+        var selected = Inspect(path, files) ?? throw new IOException("This location has no supported Windows online-only capability.");
+        return Prepare(path, selected, token, files);
     }
 
-    private static OnlineOnlyPlan Prepare(string path, CloudFileState selected, CancellationToken token)
+    private static OnlineOnlyPlan Prepare(string path, CloudFileState selected, CancellationToken token, DiskAccess files)
     {
         var targets = new List<OnlineOnlyPlan.Target>();
         var warnings = new List<string>();
@@ -71,13 +79,13 @@ public static partial class CloudFiles
             token.ThrowIfCancellationRequested();
             try
             {
-                if (HasUnsupportedLink(current)) { Skip("A linked location was skipped."); continue; }
-                var state = Inspect(current);
+                if (HasUnsupportedLink(current, files)) { Skip("A linked location was skipped."); continue; }
+                var state = Inspect(current, files);
                 if (state is null || state.SyncRootId != selected.SyncRootId || state.Volume != selected.Volume)
                 { Skip("A local-only or unsupported location was skipped."); continue; }
                 if (state.IsDirectory)
                 {
-                    foreach (string child in DiskAccess.Default.EnumerateFileSystemEntries(current)) { token.ThrowIfCancellationRequested(); pending.Push(child); }
+                    foreach (string child in files.EnumerateFileSystemEntries(current)) { token.ThrowIfCancellationRequested(); pending.Push(child); }
                 }
                 else if (state.CanRequestOnlineOnly) targets.Add(new(current, state));
                 else Skip(state.LocalBytes == 0 ? "An already online-only file was skipped." : "An unsynced or excluded file was skipped.");
@@ -90,6 +98,9 @@ public static partial class CloudFiles
     }
 
     public static OnlineOnlyResult Execute(OnlineOnlyPlan plan, IProgress<OnlineOnlyProgress>? progress, CancellationToken token)
+        => Execute(plan, progress, token, DiskAccess.Default);
+
+    public static OnlineOnlyResult Execute(OnlineOnlyPlan plan, IProgress<OnlineOnlyProgress>? progress, CancellationToken token, DiskAccess files)
     {
         int requested = 0, confirmed = 0, skipped = plan.SkippedCount, processed = 0;
         var warnings = new List<string>();
@@ -99,9 +110,9 @@ public static partial class CloudFiles
             if (token.IsCancellationRequested) break;
             try
             {
-                ValidateAncestors(target.Path);
-                using var handle = Open(target.Path);
-                var live = Inspect(handle);
+                ValidateAncestors(target.Path, files);
+                using var handle = Open(target.Path, files);
+                var live = Inspect(handle, files);
                 if (live is null || live.Identity != target.State.Identity || live.Volume != target.State.Volume
                     || live.SyncRootId != target.State.SyncRootId || !live.CanRequestOnlineOnly)
                     throw new IOException("A file changed or is no longer eligible; it was skipped.");
@@ -109,7 +120,7 @@ public static partial class CloudFiles
                 // processes it asynchronously; never claim immediate release.
                 Marshal.ThrowExceptionForHR(CfSetPinState(handle, 2, 0, 0));
                 requested++;
-                if (Inspect(handle) is { LocalBytes: 0 }) confirmed++;
+                if (Inspect(handle, files) is { LocalBytes: 0 }) confirmed++;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or COMException)
             { skipped++; if (warnings.Count < 8) warnings.Add(ex.Message); }
@@ -121,42 +132,48 @@ public static partial class CloudFiles
         return new(requested, confirmed, skipped, token.IsCancellationRequested, warnings.AsReadOnly());
     }
 
-    internal static bool HasUnsupportedLink(string path)
+    internal static bool HasUnsupportedLink(string path) => HasUnsupportedLink(path, DiskAccess.Default);
+
+    private static bool HasUnsupportedLink(string path, DiskAccess files)
     {
-        using var handle = Open(path);
-        var tags = Information(handle, 9, 8);
-        uint attributes = LayoutParser.U32(tags, 0), tag = LayoutParser.U32(tags, 4);
+        using var handle = Open(path, files);
+        var tags = Information(handle, 9, 8, files);
+        return IsUnsupportedLink(LayoutParser.U32(tags, 0), LayoutParser.U32(tags, 4));
+    }
+
+    private static bool IsUnsupportedLink(uint attributes, uint tag)
+    {
         if ((tag & 0x20000000) != 0) return true;
         if ((attributes & (uint)FileAttributes.ReparsePoint) == 0) return false;
         uint cloud = CfGetPlaceholderStateFromAttributeTag(attributes, tag);
         return cloud == uint.MaxValue || (cloud & 3) == 0;
     }
 
-    private static void ValidateAncestors(string path)
+    private static void ValidateAncestors(string path, DiskAccess files)
     {
         for (string? part = path; part is not null; part = System.IO.Path.GetDirectoryName(part))
-            if (HasUnsupportedLink(part)) throw new IOException("Linked paths are not supported for online-only requests.");
+            if (HasUnsupportedLink(part, files)) throw new IOException("Linked paths are not supported for online-only requests.");
     }
 
-    private static SafeFileHandle Open(string path)
+    private static SafeFileHandle Open(string path, DiskAccess files, uint access = 0x80, uint flags = 0)
     {
-        var handle = DiskAccess.Default.OpenHandle(NativeMethods.ExtendedPath(path), 0x80, 3, 0, 3,
-            NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint, 0);
+        var handle = files.OpenHandle(NativeMethods.ExtendedPath(path), access, 3, 0, 3,
+            NativeMethods.BackupSemantics | NativeMethods.OpenReparsePoint | flags, 0);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastPInvokeError(); handle.Dispose(); throw new Win32Exception(error);
     }
 
-    private static unsafe byte[] Information(SafeFileHandle handle, int info, int length)
+    private static unsafe byte[] Information(SafeFileHandle handle, int info, int length, DiskAccess files)
     {
         var data = new byte[length];
         fixed (byte* buffer = data)
-            if (!DiskAccess.Default.ReadHandleInformation(handle, info, buffer, (uint)length)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            if (!files.ReadHandleInformation(handle, info, buffer, (uint)length)) throw new Win32Exception(Marshal.GetLastPInvokeError());
         return data;
     }
 
-    private static unsafe CloudFileState? Inspect(SafeFileHandle handle)
+    private static unsafe CloudFileState? Inspect(SafeFileHandle handle, DiskAccess files)
     {
-        var tags = Information(handle, 9, 8);
+        var tags = Information(handle, 9, 8, files);
         uint attributes = LayoutParser.U32(tags, 0), tag = LayoutParser.U32(tags, 4);
         if ((tag & 0x20000000) != 0) return null;
         var root = new byte[1028];
@@ -183,7 +200,7 @@ public static partial class CloudFiles
                 if (CfGetSyncRootInfoByHandle(handle, 0, buffer, (uint)basic.Length, out uint _) < 0) return null;
             syncRootId = LayoutParser.I64(basic, 0);
         }
-        var id = Information(handle, 18, 24);
+        var id = Information(handle, 18, 24, files);
         string provider = MemoryMarshal.Cast<byte, char>(root.AsSpan(4, 512)).ToString().TrimEnd('\0');
         return new(provider, directory,
             LayoutParser.I64(file, 0), LayoutParser.I64(file, 16), LayoutParser.U32(file, 36) == 1, (int)LayoutParser.U32(file, 32))

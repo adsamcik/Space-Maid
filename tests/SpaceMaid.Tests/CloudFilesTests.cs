@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using SpaceMaid.App;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Core.Scanning;
 using SpaceMaid.Core.Optimization;
 using Xunit;
@@ -29,15 +30,15 @@ public sealed class CloudFilesTests
         Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
     }
 
-    internal static IDisposable RegisterSyncedFixture(string root, string file)
+    internal static IDisposable RegisterSyncedFixture(string root, string file, bool onlineOnly = false)
     {
         var registration = new Registration { Size = (uint)Marshal.SizeOf<Registration>(), Name = "Space Maid owned test provider", Version = "1", ProviderId = Guid.NewGuid() };
         var policies = new Policies { Size = (uint)Marshal.SizeOf<Policies>(), Hydration = 2, Population = 3 };
         Marshal.ThrowExceptionForHR(CfRegisterSyncRoot(root, ref registration, ref policies, 6));
         try
         {
-            using var handle = File.OpenHandle(file, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-            Marshal.ThrowExceptionForHR(CfConvertToPlaceholder(handle, [1], 1, 1, out _, 0));
+            using var handle = File.OpenHandle(file, FileMode.Open, FileAccess.ReadWrite, onlineOnly ? FileShare.None : FileShare.ReadWrite);
+            Marshal.ThrowExceptionForHR(CfConvertToPlaceholder(handle, [1], 1, onlineOnly ? 3u : 1u, out _, 0));
             return new RegisteredFixture(root);
         }
         catch { Marshal.ThrowExceptionForHR(CfUnregisterSyncRoot(root)); throw; }
@@ -46,6 +47,29 @@ public sealed class CloudFilesTests
     private sealed class RegisteredFixture(string path) : IDisposable
     {
         public void Dispose() => Marshal.ThrowExceptionForHR(CfUnregisterSyncRoot(path));
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public void UsageMarksAProviderDirectoryWithAnUnavailableListingAsPartial()
+    {
+        using var fixture = new TestDirectory();
+        string lazy = Directory.CreateDirectory(Path.Join(fixture.Path, "lazy")).FullName;
+        File.WriteAllBytes(Path.Join(fixture.Path, "visible.bin"), new byte[4096]);
+        var registration = new Registration { Size = (uint)Marshal.SizeOf<Registration>(), Name = "Space Maid owned test provider", Version = "1", ProviderId = Guid.NewGuid() };
+        var policies = new Policies { Size = (uint)Marshal.SizeOf<Policies>(), Hydration = 2, Population = 2 };
+        Marshal.ThrowExceptionForHR(CfRegisterSyncRoot(fixture.Path, ref registration, ref policies, 6));
+        using var unregister = new RegisteredFixture(fixture.Path);
+        var files = DiskAccess.Default;
+        using (var directory = files.OpenHandle(lazy, 0x40000000, 7, 0, 3, 0x02000000, 0))
+            Marshal.ThrowExceptionForHR(CfConvertToPlaceholder(directory, [1], 1, 5, out _, 0));
+
+        // The fixture has no connected provider to supply the lazy listing.
+        var usage = CloudFiles.MeasureUsage(fixture.Path, files, default);
+
+        Assert.Equal(4096, usage.Total.LogicalBytes);
+        Assert.False(usage.Total.Complete);
+        Assert.NotEmpty(usage.Warnings);
     }
 
     [Theory]

@@ -17,6 +17,7 @@ public partial class CloudView : UserControl, IExtensionContextView
 {
     private readonly IExtensionHost _host;
     private readonly ICloudStorageServices? _storage;
+    private readonly ICloudFolderUsageServices? _usage;
     private readonly CancellationToken _lifetime;
     private readonly List<CloudRoot> _saved = [];
     private IReadOnlyList<CloudRoot> _discovered = [];
@@ -27,6 +28,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     private Task _pending = Task.CompletedTask;
     private string? _currentPath;
     private bool _hostBusy, _settingsLoaded;
+    private CloudDirectoryListing? _listing;
     private string? _settingsError;
     private string SettingsPath => Path.Join(_host.DataDirectory, "folders.json");
     private CloudRoot? Root => RootList.SelectedItem as CloudRoot;
@@ -36,7 +38,9 @@ public partial class CloudView : UserControl, IExtensionContextView
     {
         _host = host; _lifetime = lifetime;
         _storage = (host as ICloudStorageHost)?.CloudStorage;
+        _usage = _storage as ICloudFolderUsageServices;
         InitializeComponent();
+        MeasureButton.Visibility = _usage is null ? Visibility.Collapsed : Visibility.Visible;
         if (_storage is null) StatusText.Text = "Cloud storage services are unavailable. Update Space Maid to use this extension.";
     }
 
@@ -69,22 +73,52 @@ public partial class CloudView : UserControl, IExtensionContextView
         token.ThrowIfCancellationRequested();
         _currentPath = listing.Path;
         FolderPath.Text = listing.Path;
-        _entries = listing.Entries.Select(entry => new CloudEntryRow(entry)).ToArray();
+        _listing = listing;
+        LocalColumn.Header = "Local data";
+        SetRows(listing.Entries.Select(entry => new CloudEntryRow(entry)).ToArray(), listing.Path);
+        StatusText.Text = $"{listing.Entries.Count:N0} items" + (listing.Complete ? "" : " · Partial results; see Details");
+        DetailsText.Text = "Local data shows the Windows Cloud Files residency of each file. Measure folders to see recursive totals and reported disk allocation.\n"
+            + string.Join("\n", listing.Warnings);
+        UpdateActions();
+    });
+
+    internal Task MeasureAsync() => RunAsync(async token =>
+    {
+        if (_usage is null || _listing is not { } listing || Root is not { } root || !Within(listing.Path, root.Path)) return;
+        string path = listing.Path;
+        SavePosition();
+        StatusText.Text = "Measuring folder sizes…";
+        var usage = await _usage.MeasureFolderUsageAsync(path, token);
+        token.ThrowIfCancellationRequested();
+        LocalColumn.Header = "Allocated";
+        SetRows(listing.Entries.Select(entry => new CloudEntryRow(entry, true, usage.Entries.GetValueOrDefault(entry.Path))).ToArray(), path);
+        var total = usage.Total;
+        bool itemsChanged = listing.Complete && total.Complete && (usage.Entries.Count != listing.Entries.Count
+            || listing.Entries.Any(entry => !usage.Entries.ContainsKey(entry.Path)));
+        StatusText.Text = $"{CloudEntryRow.Format(total.LogicalBytes, total.Complete)} total size · "
+            + (total.AllocatedBytes is { } bytes ? $"{CloudEntryRow.Format(bytes, total.Complete)} allocated" : "Allocation unavailable")
+            + (total.Complete ? "" : " · Partial measurement")
+            + (!listing.Complete ? " · List partial" : itemsChanged ? " · Refresh to see current items" : "");
+        DetailsText.Text = "Size includes online-only files visible to Windows. Allocation is reported by the filesystem and excludes provider caches. "
+            + "Providers can fetch folder listings during measurement. Use the provider’s app for account-wide usage.\n"
+            + (!listing.Complete ? "The total can include items beyond the displayed list.\n" : "")
+            + string.Join("\n", usage.Warnings.Concat(listing.Warnings).Distinct());
+    }, "Measurement cancelled.");
+
+    private void SetRows(IReadOnlyList<CloudEntryRow> rows, string path)
+    {
+        _entries = rows;
         var view = CollectionViewSource.GetDefaultView(_entries);
         foreach (var sort in _sorting) view.SortDescriptions.Add(sort);
         FileList.ItemsSource = view;
         ApplyFilter();
-        if (_positions.TryGetValue(listing.Path, out var position))
+        if (_positions.TryGetValue(path, out var position))
         {
             FileList.SelectedItem = _entries.FirstOrDefault(row => row.Entry.Path.Equals(position.SelectedPath, StringComparison.OrdinalIgnoreCase));
             FileList.UpdateLayout();
             FindScrollViewer(FileList)?.ScrollToVerticalOffset(position.Offset);
         }
-        StatusText.Text = $"{listing.Entries.Count:N0} items" + (listing.Complete ? "" : " · Partial results; see Details");
-        DetailsText.Text = "Local data is reported by Windows for each file; folder totals and provider caches are excluded. File size is not cloud quota usage.\n"
-            + string.Join("\n", listing.Warnings);
-        UpdateActions();
-    });
+    }
 
     internal async Task AddRootAsync(string provider, string path)
     {
@@ -139,7 +173,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         RootList.SelectedItem = RootList.Items.Cast<CloudRoot>().FirstOrDefault(root => root.Path.Equals(previous, StringComparison.OrdinalIgnoreCase));
         // No content enumeration until the user selects a folder or refreshes it.
         if (Root is null || _currentPath is { } current && !Within(current, Root.Path))
-        { _currentPath = null; FolderPath.Text = ""; _entries = []; FileList.ItemsSource = null; ApplyFilter(); }
+        { _currentPath = null; FolderPath.Text = ""; _listing = null; _entries = []; FileList.ItemsSource = null; ApplyFilter(); }
     }
 
     private void SavePosition()
@@ -158,13 +192,13 @@ public partial class CloudView : UserControl, IExtensionContextView
         return null;
     }
 
-    private async Task RunAsync(Func<CancellationToken, Task> action)
+    private async Task RunAsync(Func<CancellationToken, Task> action, string cancelled = "Cancelled. Accepted online-only requests may still be processing.")
     {
         if (_work is not null || _lifetime.IsCancellationRequested) return;
         using var work = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
         _work = work; UpdateActions();
         try { await action(work.Token); }
-        catch (OperationCanceledException) { StatusText.Text = "Cancelled. Accepted online-only requests may still be processing."; }
+        catch (OperationCanceledException) { StatusText.Text = cancelled; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or Win32Exception)
         {
             StatusText.Text = "Could not finish. Refresh the folder or use the provider’s controls in Explorer.";
@@ -182,7 +216,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (result.RequestsAccepted)
         {
             // Provider processing is asynchronous; old residency is no longer current.
-            _entries = []; FileList.ItemsSource = null; ApplyFilter();
+            _listing = null; _entries = []; FileList.ItemsSource = null; ApplyFilter();
             EmptyText.Text = "Refresh to check the provider’s current local storage.";
         }
     });
@@ -195,6 +229,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         FileList.IsEnabled = idle;
         CancelButton.Visibility = idle ? Visibility.Collapsed : Visibility.Visible;
         RefreshButton.IsEnabled = idle && _currentPath is not null && _storage is not null;
+        MeasureButton.IsEnabled = idle && _listing is not null && _usage is not null;
         UpButton.IsEnabled = idle && Root is { } root && _currentPath is { } current && !current.Equals(root.Path, StringComparison.OrdinalIgnoreCase);
         string? target = Selected?.Entry.Path ?? _currentPath;
         SelectedPath.Text = target ?? "";
@@ -229,7 +264,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     {
         if (_work is not null) return;
         SavePosition();
-        _currentPath = null; FolderPath.Text = ""; _entries = []; FileList.ItemsSource = null; ApplyFilter(); UpdateActions();
+        _currentPath = null; FolderPath.Text = ""; _listing = null; _entries = []; FileList.ItemsSource = null; ApplyFilter(); UpdateActions();
         if (Root is { } root) await (_pending = BrowseAsync(root.Path));
     }
     private void Add_Click(object sender, RoutedEventArgs e) { AddButton.ContextMenu.PlacementTarget = AddButton; AddButton.ContextMenu.IsOpen = true; }
@@ -247,6 +282,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     }));
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
     private async void Refresh_Click(object sender, RoutedEventArgs e) { if (_currentPath is { } path) await (_pending = BrowseAsync(path)); }
+    private async void Measure_Click(object sender, RoutedEventArgs e) => await (_pending = MeasureAsync());
     private async void Up_Click(object sender, RoutedEventArgs e) { if (_currentPath is { } path && Path.GetDirectoryName(path) is { } parent) await (_pending = BrowseAsync(parent)); }
     private void Search_Changed(object sender, TextChangedEventArgs e) => ApplyFilter();
     private void File_Changed(object sender, SelectionChangedEventArgs e) => UpdateActions();
@@ -265,19 +301,20 @@ public partial class CloudView : UserControl, IExtensionContextView
     internal async Task ShutdownAsync() { _work?.Cancel(); await _pending; }
 }
 
-internal sealed record CloudEntryRow(CloudDirectoryEntry Entry)
+internal sealed record CloudEntryRow(CloudDirectoryEntry Entry, bool Measured = false, CloudUsageTotals? Usage = null)
 {
     public string Name => Entry.Name;
-    public long LogicalBytes => Entry.LogicalBytes;
-    public long? LocalBytes => Entry.LocalBytes;
+    public long? LogicalBytes => Measured ? Usage?.LogicalBytes : Entry.IsDirectory ? null : Entry.LogicalBytes;
+    public long? LocalBytes => Measured ? Usage?.AllocatedBytes : Entry.LocalBytes;
     public string Availability => Entry.Availability;
-    public string SizeText => Entry.IsDirectory ? "—" : Format(Entry.LogicalBytes);
-    public string LocalText => Entry.LocalBytes is { } bytes ? Format(bytes) : "—";
-    private static string Format(long bytes)
+    public string SizeText => LogicalBytes is { } bytes ? Format(bytes, Usage?.Complete ?? true) : "—";
+    public string LocalText => LocalBytes is { } bytes ? Format(bytes, Usage?.Complete ?? true) : "—";
+    internal static string Format(long bytes, bool complete)
     {
         string[] units = ["B", "KiB", "MiB", "GiB", "TiB"];
         double value = bytes; int unit = 0;
         while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
-        return $"{value:0.#} {units[unit]}";
+        if (!complete && unit > 0) value = Math.Floor(value * 10) / 10;
+        return (complete ? "" : "≥ ") + $"{value:0.#} {units[unit]}";
     }
 }

@@ -74,22 +74,25 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
             : CleanupMutationLease.RunAsync(() => CleanupBatch.ExecuteAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, this), token);
 
     public Task<CloudFileState?> InspectCloudAsync(string path, CancellationToken token = default)
-        => Task.Run(() => { token.ThrowIfCancellationRequested(); return CloudFiles.Inspect(path); }, token);
+        => Task.Run(() => { token.ThrowIfCancellationRequested(); return CloudFiles.Inspect(path, Files); }, token);
 
     public Task<OnlineOnlyPlan> PrepareOnlineOnlyAsync(ScanSnapshot scan, int link, CancellationToken token)
-        => Task.Run(() => CloudFiles.Prepare(scan, link, token), token);
+        => Task.Run(() => CloudFiles.Prepare(scan, link, token, Files), token);
 
     public Task<OnlineOnlyPlan> PrepareOnlineOnlyAsync(string path, CancellationToken token)
-        => Task.Run(() => CloudFiles.Prepare(path, token), token);
+        => Task.Run(() => CloudFiles.Prepare(path, token, Files), token);
 
     public Task<CloudDirectoryListing> ReadCloudDirectoryAsync(string path, CancellationToken token)
-        => Task.Run(() => CloudFiles.ReadDirectory(path, token), token);
+        => Task.Run(() => CloudFiles.ReadDirectory(path, token, Files), token);
+
+    public Task<CloudFolderUsage> MeasureCloudFolderUsageAsync(string path, CancellationToken token)
+        => Task.Run(() => CloudFiles.MeasureUsage(path, Files, token), token);
 
     // Execute reports partial cancellation, so it must run even if the token
     // was cancelled before scheduling, rather than returning a cancelled Task.
     public Task<OnlineOnlyResult> MakeOnlineOnlyAsync(OnlineOnlyPlan plan, IProgress<OnlineOnlyProgress>? progress,
-        CancellationToken token) => token.IsCancellationRequested ? Task.Run(() => CloudFiles.Execute(plan, progress, token))
-            : CleanupMutationLease.RunAsync(() => Task.Run(() => CloudFiles.Execute(plan, progress, token)), token);
+        CancellationToken token) => token.IsCancellationRequested ? Task.Run(() => CloudFiles.Execute(plan, progress, token, Files))
+            : CleanupMutationLease.RunAsync(() => Task.Run(() => CloudFiles.Execute(plan, progress, token, Files)), token);
 
     public Task<RecycleBinSnapshot> QueryRecycleBinAsync(string root) => _recycleBins.QueryAsync(root);
 

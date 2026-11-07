@@ -354,7 +354,7 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
         var pending = new Queue<(string Path, FileIdentity Id)>();
         var visited = new HashSet<FileIdentity> { rootId };
         pending.Enqueue((target, rootId));
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(128 * 1024);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(DiskAccess.DirectoryRecordBufferSize);
         try
         {
             while (pending.TryDequeue(out var directory))
@@ -388,15 +388,11 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                 while (true)
                 {
                     token.ThrowIfCancellationRequested();
-                    bool success;
                     long queryStarted = Stopwatch.GetTimestamp();
-                    fixed (byte* pointer = buffer)
-                        success = DiskAccess.Default.ReadHandleInformation(handle, 19, pointer, (uint)buffer.Length);
-                    int queryError = success ? 0 : Marshal.GetLastPInvokeError();
+                    int error = DiskAccess.Default.ReadDirectoryRecords(handle, buffer);
                     reporter.QueryCompleted(queryStarted, 0); // This API does not return a byte count.
-                    if (!success)
+                    if (error != 0)
                     {
-                        int error = queryError;
                         if (error == NativeMethods.NoMoreFiles) break;
                         if (directory.Id == rootId && error is 1 or 50 or 87) throw new Win32Exception(error);
                         builder.Warn($"Could not finish reading {directory.Path}: Win32 {error}: {new Win32Exception(error).Message}", directory.Id);
@@ -404,39 +400,30 @@ public sealed partial class VolumeScanner(INtfsLayoutSource? scopedSource = null
                     }
                     int offset = 0;
                     long parseStarted = Stopwatch.GetTimestamp();
-                    while (true)
+                    while (offset >= 0)
                     {
-                        LayoutParser.Require(buffer, offset, 88);
-                        uint next = LayoutParser.U32(buffer, offset);
-                        int end = next == 0 ? buffer.Length : checked(offset + (int)next);
-                        if (next != 0 && next < 88 || end > buffer.Length) throw new InvalidDataException("Invalid directory metadata.");
-                        uint nameBytes = LayoutParser.U32(buffer, offset + 60);
-                        if ((nameBytes & 1) != 0) throw new InvalidDataException("Invalid filename length.");
-                        LayoutParser.Require(buffer.AsSpan(0, end), offset + 88, checked((int)nameBytes));
-                        var name = MemoryMarshal.Cast<byte, char>(buffer.AsSpan(offset + 88, (int)nameBytes));
+                        var record = new DiskAccess.DirectoryRecord(buffer, ref offset);
+                        var name = record.Name;
                         if (!name.SequenceEqual(".") && !name.SequenceEqual(".."))
                         {
-                            var id = new FileIdentity(LayoutParser.U64(buffer, offset + 72), LayoutParser.U64(buffer, offset + 80));
+                            var id = record.Identity;
                             // Some providers return successful records without usable IDs.
                             // Restart in basic mode rather than merging unrelated files under ID zero.
                             if (id == default) throw new Win32Exception(50);
-                            var attributes = (FileAttributes)LayoutParser.U32(buffer, offset + 56);
+                            var attributes = record.Attributes;
                             bool isDirectory = (attributes & FileAttributes.Directory) != 0;
-                            long logical = isDirectory ? 0 : LayoutParser.I64(buffer, offset + 40);
-                            long allocation = isDirectory ? 0 : LayoutParser.I64(buffer, offset + 48);
+                            long logical = isDirectory ? 0 : record.LogicalBytes;
+                            long allocation = isDirectory ? 0 : record.AllocatedBytes;
                             if (logical < 0 || allocation < 0) throw new InvalidDataException("Invalid directory size.");
-                            int index = builder.AddFile(new(id, attributes, logical, allocation, LayoutParser.I64(buffer, offset + 24), LayoutParser.I64(buffer, offset + 8)));
+                            int index = builder.AddFile(new(id, attributes, logical, allocation, record.LastWrite, record.Created));
                             builder.AddLink(index, directory.Id, name);
                             if (isDirectory && recursive)
                             {
-                                uint tag = LayoutParser.U32(buffer, offset + 68);
-                                if ((tag & 0x20000000) != 0)
+                                if ((record.Tag & 0x20000000) != 0)
                                     builder.Warn($"Junction/symbolic-link target not followed: {Path.Join(directory.Path, new string(name))}", id);
                                 else if (visited.Add(id)) pending.Enqueue((Path.Join(directory.Path, new string(name)), id));
                             }
                         }
-                        if (next == 0) break;
-                        offset = end;
                     }
                     reporter.ParseCompleted(parseStarted);
                     reporter.Report("Reading folders", builder);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Core.Scanning;
 using Xunit;
 
@@ -7,6 +8,34 @@ namespace SpaceMaid.Tests;
 
 public sealed class CloudDirectoryTests
 {
+    [Fact]
+    [Trait("Stage", "System")]
+    public void UsageSeparatesOnlineOnlyLengthFromAllocationWithoutRecall()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "Photos")).FullName;
+        string nested = Directory.CreateDirectory(Path.Join(folder, "2026")).FullName;
+        string empty = Directory.CreateDirectory(Path.Join(fixture.Path, "Empty")).FullName;
+        string online = Path.Join(nested, "online.bin");
+        string local = Path.Join(fixture.Path, "local.bin");
+        const int onlineLength = 8 * 1024 * 1024, localLength = 64 * 1024;
+        using (var stream = File.Create(online)) stream.SetLength(onlineLength);
+        File.WriteAllBytes(local, new byte[localLength]);
+        using var registration = CloudFilesTests.RegisterSyncedFixture(fixture.Path, online, onlineOnly: true);
+        Assert.Equal(0, CloudFiles.Inspect(online)!.LocalBytes);
+        var files = new DiskAccess(() => throw new InvalidOperationException("Usage must not require a raw NTFS scan."));
+
+        var usage = CloudFiles.MeasureUsage(fixture.Path, files, default);
+
+        Assert.Empty(usage.Warnings);
+        Assert.Equal(new(0, 0, true), usage.Entries[empty]);
+        Assert.Equal(new(onlineLength, 0, true), usage.Entries[folder]);
+        Assert.Equal(localLength, usage.Entries[local].LogicalBytes);
+        Assert.True(usage.Entries[local].AllocatedBytes > 0);
+        Assert.Equal(new(onlineLength + localLength, usage.Entries[local].AllocatedBytes, true), usage.Total);
+        Assert.Equal(0, CloudFiles.Inspect(online)!.LocalBytes);
+    }
+
     [Fact]
     [Trait("Stage", "System")]
     public void OrdinaryFoldersExposeMetadataWithoutGuessingOnlineOnlySupport()
@@ -96,6 +125,11 @@ public sealed class CloudDirectoryTests
             Assert.Contains("not followed", entry.Availability);
             Assert.Throws<IOException>(() => CloudFiles.ReadDirectory(linked, default));
             Assert.Throws<IOException>(() => CloudFiles.Prepare(linked, default));
+            var usage = CloudFiles.MeasureUsage(fixture.Path, DiskAccess.Default, default);
+            Assert.Equal(new(0, 0, false), usage.Total);
+            Assert.Empty(usage.Entries);
+            Assert.Contains("Linked locations", Assert.Single(usage.Warnings));
+            Assert.Throws<IOException>(() => CloudFiles.MeasureUsage(linked, DiskAccess.Default, default));
             Assert.Equal("keep", File.ReadAllText(Path.Join(outside.Path, "original.txt")));
         }
         finally { Directory.Delete(linked); }
@@ -106,7 +140,7 @@ public sealed class CloudDirectoryTests
     public void LargeDirectoriesHaveAnExplicitBoundAndIncompleteCoverage()
     {
         using var fixture = new TestDirectory();
-        for (int i = 0; i < 5001; i++) File.WriteAllBytes(Path.Join(fixture.Path, $"file-{i:D4}.bin"), []);
+        for (int i = 0; i < 5001; i++) File.WriteAllBytes(Path.Join(fixture.Path, $"file-{i:D4}.bin"), [1]);
 
         var listing = CloudFiles.ReadDirectory(fixture.Path, default);
 
@@ -114,6 +148,9 @@ public sealed class CloudDirectoryTests
         Assert.False(listing.Complete);
         Assert.Contains("5,000", Assert.Single(listing.Warnings));
         Assert.Equal(5001, Directory.GetFiles(fixture.Path).Length);
+        var usage = CloudFiles.MeasureUsage(fixture.Path, DiskAccess.Default, default);
+        Assert.True(usage.Total.Complete);
+        Assert.Equal(5001, usage.Total.LogicalBytes);
     }
 
     [Theory]
@@ -122,6 +159,7 @@ public sealed class CloudDirectoryTests
     public void OnlyFullyQualifiedLocalPathsAreAccepted(string path)
     {
         Assert.Throws<IOException>(() => CloudFiles.ReadDirectory(path, default));
+        Assert.Throws<IOException>(() => CloudFiles.MeasureUsage(path, DiskAccess.Default, default));
         Assert.Throws<IOException>(() => CloudFiles.Prepare(path, default));
     }
 
@@ -131,6 +169,7 @@ public sealed class CloudDirectoryTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         Assert.Throws<OperationCanceledException>(() => CloudFiles.ReadDirectory(@"Z:\not-accessed", cancellation.Token));
+        Assert.Throws<OperationCanceledException>(() => CloudFiles.MeasureUsage(@"Z:\not-accessed", DiskAccess.Default, cancellation.Token));
         Assert.Throws<OperationCanceledException>(() => CloudFiles.Prepare(@"Z:\not-accessed", cancellation.Token));
     }
 }

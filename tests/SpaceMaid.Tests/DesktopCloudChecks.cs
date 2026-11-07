@@ -30,14 +30,23 @@ public sealed partial class DesktopTests
         void Finish(Task task) { PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(10)); task.GetAwaiter().GetResult(); }
         var list = (DataGrid)view.FindName("FileList");
         var free = (Button)view.FindName("FreeButton");
+        var measure = (Button)view.FindName("MeasureButton");
         var search = (TextBox)view.FindName("SearchBox");
-        Assert.Empty(list.Items); Assert.False(free.IsEnabled);
+        Assert.Empty(list.Items); Assert.False(free.IsEnabled); Assert.False(measure.IsEnabled);
         Finish(Invoke("AddRootAsync", "Proton Drive", root));
         Assert.Equal(root, ((TextBox)view.FindName("FolderPath")).Text);
         Assert.Equal(2, list.Items.Count);
         list.SelectedIndex = 1; Assert.True(free.IsEnabled);
         search.Text = "no-such-file"; Assert.Empty(list.Items);
         search.Text = ""; Assert.Equal(2, list.Items.Count); list.SelectedIndex = 1;
+        Assert.True(measure.IsEnabled);
+        measure.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var status = (TextBlock)view.FindName("StatusText");
+        PumpUntil(() => status.Text.Contains("5 KiB total size"), TimeSpan.FromSeconds(10));
+        Assert.Equal(1, list.SelectedIndex);
+        Assert.True(free.IsEnabled);
+        Assert.Equal("Allocated", list.Columns[2].Header);
+        Assert.Equal("1 KiB", list.Items[0].GetType().GetProperty("SizeText")!.GetValue(list.Items[0]));
 
 #pragma warning disable WPF0001
         foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
