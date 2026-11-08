@@ -101,13 +101,22 @@ public partial class MainWindow
     private Button CreateMapButton(ScanSnapshot scan, SpaceContribution contribution, ScanEntry folder, long total, bool isHeader = false)
     {
         string share = total > 0 ? $"{100d * contribution.Bytes / total:0.#}%" : "—";
+        bool binStorage = contribution.Link >= 0 && RecycleBinService.RootForFolder(contribution.Path) is not null
+            && scan.Entry(contribution.Link).IsDirectory;
+        string name = binStorage ? RecycleBinService.StorageName : contribution.Name;
         var text = new StackPanel();
-        text.Children.Add(new TextBlock { Text = contribution.Name + (isHeader ? " ›" : ""), FontWeight = contribution.Link == -2 ? FontWeights.Normal : FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        text.Children.Add(new TextBlock { Text = name + (isHeader ? " ›" : ""), FontWeight = contribution.Link == -2 ? FontWeights.Normal : FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes) + (isHeader ? $" · {share}" : ""), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = isHeader ? 11 : 12 });
         if (!isHeader) text.Children.Add(new TextBlock { Text = share, Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
         string type = contribution.Link >= 0 && !scan.Entry(contribution.Link).IsDirectory
             ? FileTypeClassifier.DescribeDetails(contribution.Name) : "";
         var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" + (type.Length > 0 ? $"\n{type}" : "") };
+        if (binStorage)
+        {
+            var tip = new TextBlock { MaxWidth = 320, TextWrapping = TextWrapping.Wrap };
+            tip.Text = $"{name}\n{button.ToolTip}\n{RecycleBinService.StorageDescription}";
+            button.ToolTip = tip;
+        }
         if (isHeader)
         {
             // Wide parent bands keep size on the right; compact bands stack it
@@ -117,18 +126,19 @@ public partial class MainWindow
             title.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             title.RowDefinitions.Add(new() { Height = GridLength.Auto });
             title.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            var name = (TextBlock)text.Children[0];
+            var titleName = (TextBlock)text.Children[0];
             var facts = (TextBlock)text.Children[1];
             text.Children.Clear();
-            name.VerticalAlignment = VerticalAlignment.Center;
+            titleName.VerticalAlignment = VerticalAlignment.Center;
             facts.FontSize = 12; facts.Opacity = .85;
-            title.Children.Add(name); title.Children.Add(facts);
+            title.Children.Add(titleName); title.Children.Add(facts);
             button.Content = title; button.Tag = title;
             button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             button.VerticalContentAlignment = VerticalAlignment.Center;
             button.BorderThickness = new(0, 0, 0, 1);
         }
-        AutomationProperties.SetName(button, $"{contribution.Name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path} {type}");
+        AutomationProperties.SetName(button, $"{name}, {SizeText.Format(contribution.Bytes)}, {share} of parent. {contribution.Path} {type}");
+        if (binStorage) AutomationProperties.SetHelpText(button, RecycleBinService.StorageDescription);
         if (contribution.Link >= 0 && scan.EntryPath(contribution.Link) is not null)
         {
             button.ContextMenu = new ContextMenu();

@@ -9,6 +9,8 @@ internal sealed record RecycleBinCleanupResult(bool Cancelled, RecycleBinSnapsho
 // Empty/null paths mean every drive to Windows and must never reach the Shell.
 internal sealed class RecycleBinService
 {
+    internal const string StorageName = "Recycle Bin storage";
+    internal const string StorageDescription = "Scanned storage on this drive can include leftover files and other accounts. Cleanup shows the items Windows lists for your account.";
     private readonly Func<string, string?> _volume;
     private readonly Func<string, (long Bytes, long Items)> _query;
     private readonly Func<nint, string, int> _empty;
@@ -67,9 +69,11 @@ internal sealed class RecycleBinService
     {
         if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' || path[2] != '\\') return null;
         string folder = path[3..].TrimEnd('\\');
-        return folder.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)
-            || folder.Equals("Recycler", StringComparison.OrdinalIgnoreCase) ? ValidateRoot(path[..3]) : null;
+        return IsStorageName(folder) ? ValidateRoot(path[..3]) : null;
     }
+
+    internal static bool IsStorageName(string name) => name.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Recycler", StringComparison.OrdinalIgnoreCase);
 
     internal static string ValidateRoot(string root)
     {

@@ -57,6 +57,7 @@ public partial class MainWindow
 
     private async Task EmptyRecycleBinCoreAsync(string root)
     {
+        const string emptyMessage = "Windows reports your Recycle Bin is empty.";
         var scan = _snapshot; string? scannedVolume = _snapshotVolumeId, confirmedVolume = null;
         var operations = Operations;
         using var work = new CancellationTokenSource();
@@ -70,7 +71,7 @@ public partial class MainWindow
             StatusText.Text = "Checking Recycle Bin…";
             var bin = await operations.QueryRecycleBinAsync(root); confirmedVolume = bin.VolumeId;
             if (_closing || work.IsCancellationRequested) return;
-            if (bin.Items == 0) { message = "Recycle Bin is empty."; return; }
+            if (bin.Items == 0) { message = emptyMessage; return; }
             var confirmation = new EmptyRecycleBinWindow(bin) { Owner = this };
             bool accepted;
             using (work.Token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
@@ -84,7 +85,7 @@ public partial class MainWindow
             StatusText.Text = "Emptying Recycle Bin on " + bin.RootPath + "…";
             started = true;
             var result = await operations.EmptyRecycleBinAsync(bin, new WindowInteropHelper(this).Handle, work.Token, log.Record);
-            message = result.Remaining.Items == 0 ? "Recycle Bin is empty."
+            message = result.Remaining.Items == 0 ? emptyMessage
                 : $"{result.Remaining.Items:N0} items remain in the Recycle Bin.";
             if (result.Cancelled) message = "Cleanup cancelled. " + message;
             log.Record("recycle-bin-result", result);

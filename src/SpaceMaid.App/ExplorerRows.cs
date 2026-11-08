@@ -11,7 +11,9 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
 {
     internal bool PreferLogicalSize { get; init; }
     private bool UseAllocation => Scan.HasAllocationData && !PreferLogicalSize;
-    public string Name => Entry.Name;
+    private bool IsRecycleBinStorage => Entry.IsDirectory && (Entry.LinkIndex == -1 || RecycleBinService.IsStorageName(Entry.Name))
+        && RecycleBinService.RootForFolder(Path) is not null;
+    public string Name => IsRecycleBinStorage ? RecycleBinService.StorageName : Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
     public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
     public string Type => Entry.IsDirectory ? "Folder" : FileTypeClassifier.Label(FileTypeClassifier.Classify(Name));
@@ -23,7 +25,8 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     internal static string FormatDate(long value) => ScanSnapshot.IsValidFileTime(value)
         ? DateTime.FromFileTimeUtc(value).ToLocalTime().ToString("g") : "—";
     private bool Unmeasured => Scan.IsUnmeasuredDirectory(Entry.FileIndex);
-    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{FileTypeClassifier.DescribeDetails(Name)}" : Unmeasured ? $"{Path}\n{SizeNote}" : Path;
+    public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{FileTypeClassifier.DescribeDetails(Name)}"
+        : Unmeasured || IsRecycleBinStorage ? $"{Path}\n{SizeNote}" : Path;
     public Thickness Indent => new(Depth * 14, 0, 0, 0);
     public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName && !Unmeasured;
     public string Expander => CanExpand ? Expanded ? "⌄" : "›" : "";
@@ -44,7 +47,8 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     }
     public string Flags => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Unmeasured ? "Not checked" : Entry.IsIncomplete ? "Partial" : null }.OfType<string>());
     public string Description => $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
-    public string SizeNote => Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size." : Entry.IsShared
+    public string SizeNote => Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size."
+        : IsRecycleBinStorage ? RecycleBinService.StorageDescription + (Entry.IsIncomplete ? " This scan is partial." : "") : Entry.IsShared
         ? $"This object has multiple observed names. Its {SizeText.Format(UseAllocation ? Entry.AllocatedBytes : Entry.LogicalBytes)} "
             + $"{(UseAllocation ? "allocation" : "logical size")} is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
         : Entry.IsIncomplete ? "This branch is incomplete. Sizes show only metadata that was read." : "";

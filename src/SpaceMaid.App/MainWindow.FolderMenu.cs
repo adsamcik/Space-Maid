@@ -45,7 +45,7 @@ public partial class MainWindow
             var recycle = new MenuItem
             {
                 Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
-                ToolTip = recycleRoot is null ? blocked : $"Permanently deletes your recycled items on {recycleRoot}"
+                ToolTip = recycleRoot is null ? blocked : $"Permanently deletes items Windows lists in your Recycle Bin on {recycleRoot}"
             };
             ToolTipService.SetShowOnDisabled(recycle, true);
             recycle.Click += async (_, _) =>

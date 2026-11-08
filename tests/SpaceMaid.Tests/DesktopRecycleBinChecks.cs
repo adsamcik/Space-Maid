@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -19,6 +20,45 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckRecycleBinStorage(MainWindow window, string artifactRoot)
+    {
+        const string root = @"Q:\";
+        window.SetScanTarget(root);
+        window.Operations = new(recycleBins: new(path => "fixture-" + path, _ => (0, 0),
+            (_, _) => throw new InvalidOperationException("This check is read-only.")));
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        int bin = builder.AddFile(new(new(2), FileAttributes.Directory, 0, 0, 0));
+        builder.AddLink(bin, new(1), "$Recycle.Bin");
+        int leftover = builder.AddFile(new(new(3), FileAttributes.Normal, GiB(6), GiB(6), 0));
+        builder.AddLink(leftover, new(2), "$Rfixture");
+        var scan = builder.Build(root, "fixture", TimeSpan.Zero, 0, default);
+        var initialized = window.InitializeExplorerAsync(scan, [], default);
+        PumpUntil(() => initialized.IsCompleted, TimeSpan.FromSeconds(3));
+        initialized.GetAwaiter().GetResult();
+
+        var tree = (ListBox)window.FindName("SpaceTree");
+        var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+        var row = rows.Row(rows.Find(scan.PrimaryLink(bin)));
+        Assert.Equal("Recycle Bin storage", row.Name);
+        Assert.Equal("6 GiB", row.Allocated);
+        Assert.Contains("Cleanup shows the items Windows lists for your account", row.SizeNote);
+        var map = (TreemapPanel)window.FindName("SpaceMap");
+        var tile = map.Buttons.Single(button => ((SpaceContribution)button.DataContext).Path == root + "$Recycle.Bin");
+        Assert.StartsWith("Recycle Bin storage, 6 GiB", AutomationProperties.GetName(tile));
+        Assert.Contains("leftover files and other accounts", Assert.IsType<TextBlock>(tile.ToolTip).Text);
+        foreach (var size in new[] { (1220, 910), (1020, 790) })
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-bin-storage-{size.Item1}.png"), size.Item1, size.Item2);
+
+        ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        ((Button)OpportunityControl(window, "BackToCleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var refreshed = window.RefreshRecycleBinAsync();
+        PumpUntil(() => refreshed.IsCompleted, TimeSpan.FromSeconds(3));
+        refreshed.GetAwaiter().GetResult();
+        Assert.Equal("Empty", ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text);
+        Assert.False(((Button)OpportunityControl(window, "EmptyRecycleBinButton")).IsEnabled);
+    }
+
     private static void CheckRecycleBinCleanup(MainWindow window, Application app, string artifactRoot)
     {
         string root = Path.GetPathRoot(window.CurrentPath)!;

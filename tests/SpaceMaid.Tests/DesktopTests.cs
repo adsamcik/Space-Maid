@@ -121,6 +121,12 @@ public sealed partial class DesktopTests
                     CheckCloudDrives(window, app, FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "recycle-bin")
+                {
+                    BeginWorkflow("Recycle Bin storage and Windows cleanup scope");
+                    CheckRecycleBinStorage(window, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-results")
                 {
                     BeginWorkflow("Cleanup results and affected-folder estimates");
