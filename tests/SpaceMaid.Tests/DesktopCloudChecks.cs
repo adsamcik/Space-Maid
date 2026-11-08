@@ -31,8 +31,11 @@ public sealed partial class DesktopTests
         var list = (DataGrid)view.FindName("FileList");
         var free = (Button)view.FindName("FreeButton");
         var measure = (Button)view.FindName("MeasureButton");
+        var cleanup = (Button)view.FindName("CloudCleanupButton");
+        var providerSite = (Button)view.FindName("ProviderButton");
         var search = (TextBox)view.FindName("SearchBox");
         Assert.Empty(list.Items); Assert.False(free.IsEnabled); Assert.False(measure.IsEnabled);
+        Assert.False(cleanup.IsEnabled); Assert.False(providerSite.IsVisible);
         Finish(Invoke("AddRootAsync", "Proton Drive", root));
         Assert.Equal(root, ((TextBox)view.FindName("FolderPath")).Text);
         Assert.Equal(2, list.Items.Count);
@@ -47,6 +50,17 @@ public sealed partial class DesktopTests
         Assert.True(free.IsEnabled);
         Assert.Equal("Allocated", list.Columns[2].Header);
         Assert.Equal("1 KiB", list.Items[0].GetType().GetProperty("SizeText")!.GetValue(list.Items[0]));
+        Assert.True(cleanup.IsEnabled); Assert.False(providerSite.IsVisible);
+        cleanup.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => status.Text.StartsWith("Cloud cleanup review", StringComparison.Ordinal), TimeSpan.FromSeconds(10));
+        Assert.Equal(0, list.SelectedIndex);
+        Assert.Equal(file, ((CloudDirectoryEntry)list.SelectedItem.GetType().GetProperty("Entry")!.GetValue(list.SelectedItem)!).Path);
+        Assert.Equal("4 KiB", list.Items[0].GetType().GetProperty("SizeText")!.GetValue(list.Items[0]));
+        Assert.Equal("Open Proton Drive", providerSite.Content);
+        Assert.True(providerSite.IsVisible && providerSite.IsEnabled);
+        Assert.True(free.IsEnabled);
+        Assert.Equal(4096, new FileInfo(file).Length);
+        Assert.NotEqual(2, CloudFiles.Inspect(file)!.PinState);
 
 #pragma warning disable WPF0001
         foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
@@ -56,7 +70,7 @@ public sealed partial class DesktopTests
             {
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"cloud-drives-{theme}-{size.Item1}.png"), size.Item1, size.Item2);
                 Assert.True(list.ActualHeight > 350); Assert.True(list.ActualWidth > 550);
-                Assert.True(free.IsVisible);
+                Assert.True(free.IsVisible && providerSite.IsVisible);
             }
         }
 #pragma warning restore WPF0001
@@ -82,6 +96,7 @@ public sealed partial class DesktopTests
         Assert.Equal(2, CloudFiles.Inspect(file)!.PinState);
         Assert.Equal(4096, new FileInfo(file).Length); Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
         Assert.Empty(list.Items); Assert.False(free.IsEnabled);
+        Assert.False(providerSite.IsVisible);
         Assert.Contains("requests accepted", ((TextBlock)view.FindName("StatusText")).Text);
         Finish(Invoke("BrowseAsync", root));
         list.SelectedIndex = 0;
@@ -110,6 +125,16 @@ public sealed partial class DesktopTests
             Finish(Invoke("AddRootAsync", provider, location));
             Assert.Single(list.Items); list.SelectedIndex = 0; Assert.False(free.IsEnabled);
             Assert.Equal("keep", File.ReadAllText(Path.Join(location, "original.txt")));
+            if (provider == "OneDrive")
+            {
+                cleanup.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => providerSite.IsEnabled && providerSite.IsVisible, TimeSpan.FromSeconds(10));
+                providerSite.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var menu = (ContextMenu)view.Resources["OneDriveWebsiteMenu"];
+                Assert.True(menu.IsOpen);
+                Assert.Equal(2, menu.Items.Count);
+                menu.IsOpen = false;
+            }
         }
         Assert.True(window.OpenExtension("space-maid.apps"));
     }

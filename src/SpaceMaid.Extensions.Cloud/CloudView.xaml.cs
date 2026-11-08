@@ -1,5 +1,6 @@
 using SpaceMaid.Core.IO;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -27,7 +28,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     private CancellationTokenSource? _work;
     private Task _pending = Task.CompletedTask;
     private string? _currentPath;
-    private bool _hostBusy, _settingsLoaded;
+    private bool _hostBusy, _settingsLoaded, _reviewingCloudSpace;
     private CloudDirectoryListing? _listing;
     private string? _settingsError;
     private string SettingsPath => Path.Join(_host.DataDirectory, "folders.json");
@@ -40,7 +41,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         _storage = (host as ICloudStorageHost)?.CloudStorage;
         _usage = _storage as ICloudFolderUsageServices;
         InitializeComponent();
-        MeasureButton.Visibility = _usage is null ? Visibility.Collapsed : Visibility.Visible;
+        MeasureButton.Visibility = CloudCleanupButton.Visibility = _usage is null ? Visibility.Collapsed : Visibility.Visible;
         if (_storage is null) StatusText.Text = "Cloud storage services are unavailable. Update Space Maid to use this extension.";
     }
 
@@ -74,6 +75,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         _currentPath = listing.Path;
         FolderPath.Text = listing.Path;
         _listing = listing;
+        _reviewingCloudSpace = false;
         LocalColumn.Header = "Local data";
         SetRows(listing.Entries.Select(entry => new CloudEntryRow(entry)).ToArray(), listing.Path);
         StatusText.Text = $"{listing.Entries.Count:N0} items" + (listing.Complete ? "" : " · Partial results; see Details");
@@ -82,7 +84,9 @@ public partial class CloudView : UserControl, IExtensionContextView
         UpdateActions();
     });
 
-    internal Task MeasureAsync() => RunAsync(async token =>
+    internal Task MeasureAsync() => MeasureFolderAsync(reviewCloudSpace: false);
+
+    private Task MeasureFolderAsync(bool reviewCloudSpace) => RunAsync(async token =>
     {
         if (_usage is null || _listing is not { } listing || Root is not { } root || !Within(listing.Path, root.Path)) return;
         string path = listing.Path;
@@ -90,12 +94,13 @@ public partial class CloudView : UserControl, IExtensionContextView
         StatusText.Text = "Measuring folder sizes…";
         var usage = await _usage.MeasureFolderUsageAsync(path, token);
         token.ThrowIfCancellationRequested();
+        _reviewingCloudSpace = reviewCloudSpace;
         LocalColumn.Header = "Allocated";
         SetRows(listing.Entries.Select(entry => new CloudEntryRow(entry, true, usage.Entries.GetValueOrDefault(entry.Path))).ToArray(), path);
         var total = usage.Total;
         bool itemsChanged = listing.Complete && total.Complete && (usage.Entries.Count != listing.Entries.Count
             || listing.Entries.Any(entry => !usage.Entries.ContainsKey(entry.Path)));
-        StatusText.Text = $"{CloudEntryRow.Format(total.LogicalBytes, total.Complete)} total size · "
+        StatusText.Text = (reviewCloudSpace ? "Cloud cleanup review · " : "") + $"{CloudEntryRow.Format(total.LogicalBytes, total.Complete)} total size · "
             + (total.AllocatedBytes is { } bytes ? $"{CloudEntryRow.Format(bytes, total.Complete)} allocated" : "Allocation unavailable")
             + (total.Complete ? "" : " · Partial measurement")
             + (!listing.Complete ? " · List partial" : itemsChanged ? " · Refresh to see current items" : "");
@@ -109,14 +114,19 @@ public partial class CloudView : UserControl, IExtensionContextView
     {
         _entries = rows;
         var view = CollectionViewSource.GetDefaultView(_entries);
-        foreach (var sort in _sorting) view.SortDescriptions.Add(sort);
+        SortDescription[] sorting = _reviewingCloudSpace
+            ? [new(nameof(CloudEntryRow.LogicalBytes), ListSortDirection.Descending)] : _sorting;
         FileList.ItemsSource = view;
+        // DataGrid can clear the sort descriptions when its source changes.
+        foreach (var sort in sorting) view.SortDescriptions.Add(sort);
+        foreach (var column in FileList.Columns)
+            column.SortDirection = sorting.Where(sort => sort.PropertyName == column.SortMemberPath).Select(sort => (ListSortDirection?)sort.Direction).FirstOrDefault();
         ApplyFilter();
         if (_positions.TryGetValue(path, out var position))
         {
             FileList.SelectedItem = _entries.FirstOrDefault(row => row.Entry.Path.Equals(position.SelectedPath, StringComparison.OrdinalIgnoreCase));
             FileList.UpdateLayout();
-            FindScrollViewer(FileList)?.ScrollToVerticalOffset(position.Offset);
+            FindScrollViewer(FileList)?.ScrollToVerticalOffset(_reviewingCloudSpace ? 0 : position.Offset);
         }
     }
 
@@ -173,15 +183,16 @@ public partial class CloudView : UserControl, IExtensionContextView
         RootList.SelectedItem = RootList.Items.Cast<CloudRoot>().FirstOrDefault(root => root.Path.Equals(previous, StringComparison.OrdinalIgnoreCase));
         // No content enumeration until the user selects a folder or refreshes it.
         if (Root is null || _currentPath is { } current && !Within(current, Root.Path))
-        { _currentPath = null; FolderPath.Text = ""; _listing = null; _entries = []; FileList.ItemsSource = null; ApplyFilter(); }
+        { _currentPath = null; FolderPath.Text = ""; _listing = null; _reviewingCloudSpace = false; _entries = []; FileList.ItemsSource = null; ApplyFilter(); }
     }
 
     private void SavePosition()
     {
-        if (FileList.ItemsSource is ICollectionView view) _sorting = view.SortDescriptions.ToArray();
+        if (!_reviewingCloudSpace && FileList.ItemsSource is ICollectionView view) _sorting = view.SortDescriptions.ToArray();
         if (_currentPath is not { } current) return;
         if (_positions.Count >= 32 && !_positions.ContainsKey(current)) _positions.Remove(_positions.Keys.First());
-        _positions[current] = (Selected?.Entry.Path, FindScrollViewer(FileList)?.VerticalOffset ?? 0);
+        double offset = _reviewingCloudSpace ? _positions.GetValueOrDefault(current).Offset : FindScrollViewer(FileList)?.VerticalOffset ?? 0;
+        _positions[current] = (Selected?.Entry.Path, offset);
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject element)
@@ -216,7 +227,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (result.RequestsAccepted)
         {
             // Provider processing is asynchronous; old residency is no longer current.
-            _listing = null; _entries = []; FileList.ItemsSource = null; ApplyFilter();
+            _listing = null; _reviewingCloudSpace = false; _entries = []; FileList.ItemsSource = null; ApplyFilter();
             EmptyText.Text = "Refresh to check the provider’s current local storage.";
         }
     });
@@ -229,7 +240,10 @@ public partial class CloudView : UserControl, IExtensionContextView
         FileList.IsEnabled = idle;
         CancelButton.Visibility = idle ? Visibility.Collapsed : Visibility.Visible;
         RefreshButton.IsEnabled = idle && _currentPath is not null && _storage is not null;
-        MeasureButton.IsEnabled = idle && _listing is not null && _usage is not null;
+        MeasureButton.IsEnabled = CloudCleanupButton.IsEnabled = idle && _listing is not null && _usage is not null;
+        ProviderButton.Visibility = _reviewingCloudSpace ? Visibility.Visible : Visibility.Collapsed;
+        ProviderButton.IsEnabled = idle && _reviewingCloudSpace && Root is not null;
+        ProviderButton.Content = Root is { } providerRoot ? $"Open {providerRoot.Provider}" : "Open provider website";
         UpButton.IsEnabled = idle && Root is { } root && _currentPath is { } current && !current.Equals(root.Path, StringComparison.OrdinalIgnoreCase);
         string? target = Selected?.Entry.Path ?? _currentPath;
         SelectedPath.Text = target ?? "";
@@ -237,7 +251,9 @@ public partial class CloudView : UserControl, IExtensionContextView
         ExplorerButton.IsEnabled = idle && target is not null;
         ExploreButton.IsEnabled = idle && !_hostBusy && target is not null && (_host as IExtensionNavigationHost)?.Navigation is not null;
         FreeButton.IsEnabled = idle && !_hostBusy && _storage is not null && Selected is { Entry.CanRequestOnlineOnly: true };
-        ActionHint.Text = Selected is { Entry.CanRequestOnlineOnly: false }
+        ActionHint.Text = _reviewingCloudSpace
+            ? "Sizes cover the sync folder. Check your account and quota in the provider’s website. Deletions there can sync to other devices."
+            : Selected is { Entry.CanRequestOnlineOnly: false }
             ? "Use the provider’s controls in Explorer for this item. Deleting synced files can also delete their cloud copies."
             : "Free local space keeps cloud copies. Downloading again needs internet.";
         RemoveButton.Visibility = Root is { } selectedRoot && _saved.Any(r => r.Path.Equals(selectedRoot.Path, StringComparison.OrdinalIgnoreCase)) ? Visibility.Visible : Visibility.Collapsed;
@@ -264,7 +280,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     {
         if (_work is not null) return;
         SavePosition();
-        _currentPath = null; FolderPath.Text = ""; _listing = null; _entries = []; FileList.ItemsSource = null; ApplyFilter(); UpdateActions();
+        _currentPath = null; FolderPath.Text = ""; _listing = null; _reviewingCloudSpace = false; _entries = []; FileList.ItemsSource = null; ApplyFilter(); UpdateActions();
         if (Root is { } root) await (_pending = BrowseAsync(root.Path));
     }
     private void Add_Click(object sender, RoutedEventArgs e) { AddButton.ContextMenu.PlacementTarget = AddButton; AddButton.ContextMenu.IsOpen = true; }
@@ -283,6 +299,30 @@ public partial class CloudView : UserControl, IExtensionContextView
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
     private async void Refresh_Click(object sender, RoutedEventArgs e) { if (_currentPath is { } path) await (_pending = BrowseAsync(path)); }
     private async void Measure_Click(object sender, RoutedEventArgs e) => await (_pending = MeasureAsync());
+    private async void CloudCleanup_Click(object sender, RoutedEventArgs e) => await (_pending = MeasureFolderAsync(reviewCloudSpace: true));
+    private void Provider_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ProviderButton.IsEnabled) return;
+        if (Root?.Provider == "OneDrive")
+        {
+            var menu = (ContextMenu)Resources["OneDriveWebsiteMenu"];
+            menu.PlacementTarget = ProviderButton;
+            menu.IsOpen = true;
+        }
+        else OpenProvider(workOrSchool: false);
+    }
+    private void OneDrivePersonal_Click(object sender, RoutedEventArgs e) => OpenProvider(workOrSchool: false);
+    private void OneDriveWork_Click(object sender, RoutedEventArgs e) => OpenProvider(workOrSchool: true);
+    private void OpenProvider(bool workOrSchool)
+    {
+        if (!ProviderButton.IsEnabled || Root is not { } root || CloudDiscovery.StorageUrl(root.Provider, workOrSchool) is not { } url) return;
+        try { using var browser = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException)
+        {
+            StatusText.Text = $"Could not open {root.Provider}. Open its website in your browser.";
+            _host.Log("cloud-website-open-failed", new { root.Provider, Error = error.Message });
+        }
+    }
     private async void Up_Click(object sender, RoutedEventArgs e) { if (_currentPath is { } path && Path.GetDirectoryName(path) is { } parent) await (_pending = BrowseAsync(parent)); }
     private void Search_Changed(object sender, TextChangedEventArgs e) => ApplyFilter();
     private void File_Changed(object sender, SelectionChangedEventArgs e) => UpdateActions();

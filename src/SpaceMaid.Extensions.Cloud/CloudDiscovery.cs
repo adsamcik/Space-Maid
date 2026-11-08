@@ -19,6 +19,15 @@ internal static class CloudDiscovery
     internal static readonly string[] Providers = ["OneDrive", "Google Drive", "Dropbox", "Proton Drive"];
     private const string SyncRootsKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager";
 
+    internal static string? StorageUrl(string provider, bool workOrSchool) => provider switch
+    {
+        "OneDrive" => workOrSchool ? "https://onedrive.cloud.microsoft/" : "https://onedrive.live.com/?v=managestorage",
+        "Google Drive" => "https://drive.google.com/drive/quota",
+        "Dropbox" => "https://www.dropbox.com/account/plan",
+        "Proton Drive" => "https://drive.proton.me/",
+        _ => null
+    };
+
     internal static CloudDiscoveryResult Find(CancellationToken token, DiskAccess? files = null)
     {
         files ??= DiskAccess.Default;

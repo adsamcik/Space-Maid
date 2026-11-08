@@ -1,6 +1,12 @@
 <UserControl x:Class="SpaceMaid.Extensions.Cloud.CloudView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <ContextMenu x:Key="OneDriveWebsiteMenu">
+            <MenuItem Header="OneDrive personal storage" Click="OneDrivePersonal_Click"/>
+            <MenuItem Header="OneDrive for work or school" Click="OneDriveWork_Click"/>
+        </ContextMenu>
+    </UserControl.Resources>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel Margin="0,0,0,8">
@@ -71,7 +77,11 @@
                 <Button x:Name="OpenFolderButton" Content="Open folder" Click="OpenFolder_Click" IsEnabled="False" Margin="0,0,8,0"/>
                 <Button x:Name="ExplorerButton" Content="Show in Explorer" Click="Explorer_Click" IsEnabled="False" Margin="0,0,8,0" ToolTip="Use the provider’s right-click controls to manage offline availability."/>
                 <Button x:Name="ExploreButton" Content="Explore in Space Maid" Click="Explore_Click" IsEnabled="False" Margin="0,0,8,0"/>
-                <Button x:Name="FreeButton" Content="Free local space…" Click="Free_Click" IsEnabled="False" ToolTip="Review synced files to make online-only. Cloud copies stay."/>
+                <Button x:Name="FreeButton" Content="Free local space…" Click="Free_Click" IsEnabled="False" Margin="0,0,8,0" ToolTip="Review synced files to make online-only. Cloud copies stay."/>
+                <Button x:Name="CloudCleanupButton" Content="Review cloud cleanup" Click="CloudCleanup_Click" IsEnabled="False" Margin="0,0,8,0"
+                        ToolTip="Measure this folder and show the largest files and subfolders first."/>
+                <Button x:Name="ProviderButton" Content="Open provider website" Click="Provider_Click" Visibility="Collapsed"
+                        ToolTip="Open the provider in your browser and verify the account before deleting anything."/>
             </WrapPanel>
             <TextBlock x:Name="ActionHint" Text="Local space only. Cloud quota and files outside these folders are managed in the provider’s app." FontSize="12" Opacity="0.75" TextWrapping="Wrap" Margin="0,7,0,0"/>
             <Expander Header="Details" FontSize="12" Margin="0,6,0,0"><TextBlock x:Name="DetailsText" Text="Measure folders to compare file lengths and reported disk allocation across the folders this provider exposes." TextWrapping="Wrap" Margin="0,5,0,0"/></Expander>

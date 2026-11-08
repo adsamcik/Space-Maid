@@ -14,6 +14,16 @@ public sealed class CloudDiscoveryTests
     public void RegistrationProviderUsesProviderIdOnly(string registration, string? expected)
         => Assert.Equal(expected, CloudDiscovery.ProviderFor(registration));
 
+    [Theory]
+    [InlineData("OneDrive", false, "https://onedrive.live.com/?v=managestorage")]
+    [InlineData("OneDrive", true, "https://onedrive.cloud.microsoft/")]
+    [InlineData("Google Drive", false, "https://drive.google.com/drive/quota")]
+    [InlineData("Dropbox", false, "https://www.dropbox.com/account/plan")]
+    [InlineData("Proton Drive", false, "https://drive.proton.me/")]
+    [InlineData("https://example.com", false, null)]
+    public void StorageLinksUseFixedProviderDestinations(string provider, bool workOrSchool, string? expected)
+        => Assert.Equal(expected, CloudDiscovery.StorageUrl(provider, workOrSchool));
+
     [Fact]
     public void DropboxConfigurationFindsBothAccountsAndIgnoresOtherFields()
     {
