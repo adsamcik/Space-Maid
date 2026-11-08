@@ -134,6 +134,12 @@ public sealed partial class DesktopTests
                     CheckOpportunityCleanup(window, app, artifactRoot: FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "background-recycle")
+                {
+                    BeginWorkflow("Background folder recycling");
+                    CheckBackgroundRecycle(window, app, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-workspace")
                 {
                     BeginWorkflow("Unified cleanup workspace");
@@ -542,7 +548,7 @@ public sealed partial class DesktopTests
                 Assert.Equal("No skipped-path warnings", ((TextBlock)details.FindName("CoverageText")).Text);
                 Assert.Contains(Descendants(startup.Content as DependencyObject).OfType<Button>(), b => Equals(b.Content, "Continue without admin"));
 
-                SetStage("checking current folder contents on demand after invalidation");
+                SetStage("confirming the live folder with a scan estimate after invalidation");
                 var returnToFolder = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
                 PumpUntil(() => returnToFolder.IsCompleted, TimeSpan.FromSeconds(10));
                 returnToFolder.GetAwaiter().GetResult();
@@ -568,7 +574,7 @@ public sealed partial class DesktopTests
                         Assert.Equal("bin", ((TextBlock)dialog.FindName("TargetName")).Text);
                         Assert.False(((Expander)dialog.FindName("DeletionDetails")).IsExpanded);
                         Assert.Equal(Visibility.Collapsed, ((TextBlock)dialog.FindName("PartialScanNote")).Visibility);
-                        Assert.Contains("16 KiB", ((TextBlock)dialog.FindName("TargetSize")).Text);
+                        Assert.Equal("8 KiB · Estimate", ((TextBlock)dialog.FindName("TargetSize")).Text);
                         Render(dialog, Path.Join(FindRepository(), "artifacts", "ui", "recycle-rechecked.png"), 520, 300);
                         confirmed = true;
                     }
@@ -578,7 +584,7 @@ public sealed partial class DesktopTests
                 var deleteKey = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(tree), Environment.TickCount, Key.Delete)
                     { RoutedEvent = Keyboard.PreviewKeyDownEvent };
                 tree.RaiseEvent(deleteKey);
-                PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
+                PumpUntil(() => confirmed || confirmationFailure is not null, TimeSpan.FromSeconds(10));
                 confirmationTimer.Stop();
                 if (confirmationFailure is not null) throw confirmationFailure;
                 Assert.True(deleteKey.Handled, $"Explore: {((RadioButton)window.FindName("ExploreTab")).IsChecked}; modifiers: {Keyboard.Modifiers}; repeat: {deleteKey.IsRepeat}; source: {deleteKey.OriginalSource?.GetType().Name}");
@@ -1040,6 +1046,8 @@ public sealed partial class DesktopTests
                 SetStage("keeping overlapping extension groups and selections separate");
                 CheckOverlappingOpportunityExtensions(window, artifactRoot);
                 BeginWorkflow("Recycle Bin and helper lifecycle");
+                SetStage("browsing and queuing folders during background recycling");
+                CheckBackgroundRecycle(window, app, artifactRoot);
                 SetStage("confirming selected-drive Recycle Bin cleanup without deleting real bin contents");
                 CheckRecycleBinCleanup(window, app, artifactRoot);
                 SetStage("retaining one helper across app scans and closing it with the window");

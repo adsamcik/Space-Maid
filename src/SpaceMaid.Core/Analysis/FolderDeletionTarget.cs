@@ -24,13 +24,6 @@ public sealed class FolderDeletionTarget
     private readonly ulong _volume;
     private readonly DiskAccess _files = DiskAccess.Default;
 
-    private FolderDeletionTarget(string path, ScanEntry entry, bool allocation, FileIdentity identity, ulong volume)
-    {
-        Path = path; LogicalBytes = entry.LogicalBytes; AllocatedBytes = entry.AllocatedBytes;
-        HasAllocationData = allocation; IsIncomplete = entry.IsIncomplete;
-        _identity = identity; _volume = volume;
-    }
-
     private FolderDeletionTarget(string path, long logicalBytes, FileIdentity identity, ulong volume)
     {
         Path = path; LogicalBytes = logicalBytes; _identity = identity; _volume = volume;
@@ -96,15 +89,18 @@ public sealed class FolderDeletionTarget
         return new(path, logicalBytes, live.Identity, live.Volume);
     }
 
-    public static FolderDeletionTarget FromScan(ScanSnapshot scan, int link)
+    public static FolderDeletionTarget FromScan(ScanSnapshot scan, int link) => FromScan(scan, link, DiskAccess.Default);
+
+    public static FolderDeletionTarget FromScan(ScanSnapshot scan, int link, DiskAccess files)
     {
         var (entry, path) = ResolveSelection(scan, link);
-        var live = ReadIdentity(path);
+        var live = ReadIdentityUsing(path, files);
         // Basic enumeration has synthetic IDs. In that mode capture the live
         // identity for the confirmation; otherwise reject a replaced scan entry.
         if (scan.HasAllocationData && live.Identity != scan.Records[entry.FileIndex].Identity)
             throw new InvalidOperationException("This folder has changed since scanning. Rescan before deleting it.");
-        return new(path, entry, scan.HasAllocationData, live.Identity, live.Volume);
+        return new(new FolderDeletionIdentity(path, live.Identity, live.Volume,
+            entry.LogicalBytes, entry.AllocatedBytes, scan.HasAllocationData, entry.IsIncomplete), files);
     }
 
     // Menu eligibility uses snapshot metadata only. Live identity/permissions

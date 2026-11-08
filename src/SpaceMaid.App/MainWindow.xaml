@@ -309,6 +309,10 @@
                 <ToggleButton x:Name="DiagnosticsToggle" Grid.Column="2" Content="Details" Padding="10,4" MinHeight="28" AutomationProperties.Name="Show full status and diagnostics" />
             </Grid>
             <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="20" ClipToBounds="True" Margin="0,6,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
+            <DockPanel x:Name="RecycleActivity" Visibility="Collapsed" Margin="0,6,0,0">
+                <Button x:Name="CancelRecycleButton" DockPanel.Dock="Right" Content="Cancel recycling" Click="CancelRecycle_Click" Padding="10,4" MinHeight="28" Margin="10,0,0,0" ToolTip="Stop the current move and clear queued folders." />
+                <TextBlock x:Name="RecycleStatusText" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
+            </DockPanel>
             <Border x:Name="DiagnosticsPanel" Margin="0,12,0,0">
                 <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=DiagnosticsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
                 <StackPanel>

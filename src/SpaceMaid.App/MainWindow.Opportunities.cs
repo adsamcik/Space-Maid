@@ -11,6 +11,15 @@ public partial class MainWindow
     private IReadOnlyList<OpportunityGroup> _cleanupGroups => OpportunityBrowser?.CleanupGroups ?? _opportunityGroups.Cleanup ?? [];
     private readonly Dictionary<string, GitWorktreeAssessment> _worktreeAssessments = new(StringComparer.Ordinal);
     private bool _changingOpportunitySelection;
+    private bool _recycleGroupsDeferred;
+
+    private void RefreshDeferredRecycleGroups()
+    {
+        if (!_recycleGroupsDeferred || _recycleTask is not null || _work is not null) return;
+        _recycleGroupsDeferred = false;
+        OpportunityBrowser?.RefreshGroups();
+    }
+
     private void ResetOpportunityBrowser()
     { _opportunityGroups = new([], []); _worktreeAssessments.Clear(); _worktreesRequiringCheck.Clear(); OpportunityBrowser?.Reset(); }
     private void PublishOpportunities(ScanSnapshot scan, IReadOnlyList<Opportunity> locations, OpportunityGroupSet groups,
@@ -44,8 +53,12 @@ public partial class MainWindow
     {
         public string ProviderStatus => window._snapshot is { } scan ? window.OpportunityExtensions.Status(scan) : "";
         public IReadOnlyList<OpportunityGroup> BuildCleanupGroups(OpportunityGroupContext context)
-            => window._snapshot is { } scan && window._extensions is not null
-                ? window.OpportunityExtensions.BuildCleanupGroups(scan, window._rows.Select(row => row.Item).ToArray(), window._opportunityGroups, context) : [];
+        {
+            window._recycleGroupsDeferred = false;
+            return window._snapshot is { } scan && window._extensions is not null
+                ? window.OpportunityExtensions.BuildCleanupGroups(scan, window._rows.Select(row => row.Item).ToArray(), window._opportunityGroups, context,
+                    deferIfBusy: window._recycleTask is null ? null : () => window._recycleGroupsDeferred = true) : [];
+        }
         public void SelectionChanged() { if (!window._changingOpportunitySelection) window.UpdateSelection(); }
         public void WorktreePolicyChanged()
         { foreach (string path in window._worktreesRequiringCheck.Keys.ToArray()) window._worktreesRequiringCheck[path] = window.CurrentWorktreePolicy; }

@@ -7,6 +7,14 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
+    private ContextMenu? _activeFolderMenu;
+
+    private void FolderMenuClosed(object sender, RoutedEventArgs e)
+    {
+        if (ReferenceEquals(_activeFolderMenu, sender)) _activeFolderMenu = null;
+        WakeRecycleRefresh();
+    }
+
     private void Tree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
         if (e.Handled) return;
@@ -41,7 +49,7 @@ public partial class MainWindow
                 if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
             };
             string? recycleRoot = RecycleBinService.RootForFolder(path);
-            string? blocked = recycleRoot is not null ? null : FolderDeletionTarget.SelectionBlockReason(scan, link);
+            string? blocked = recycleRoot is not null ? null : RecycleBlockReason(scan, link);
             var recycle = new MenuItem
             {
                 Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
@@ -62,6 +70,9 @@ public partial class MainWindow
         var checking = new MenuItem { Header = "Checking cloud availability…", IsEnabled = false };
         menu.Items.Add(checking);
         var marker = new object(); menu.Tag = marker;
+        _activeFolderMenu = menu;
+        menu.Closed -= FolderMenuClosed;
+        menu.Closed += FolderMenuClosed;
         _ = AddCloudMenuAsync(menu, checking, marker, scan, link, path);
         return true;
     }
@@ -84,7 +95,7 @@ public partial class MainWindow
         if (menu.Items.Count == 0) menu.IsOpen = false;
     }
 
-    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing && !_deleting
+    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing
         && ReferenceEquals(_snapshot, scan);
 
     private bool SelectContextEntry(ScanSnapshot scan, int link)

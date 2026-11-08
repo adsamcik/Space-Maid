@@ -12,8 +12,8 @@ public partial class RecycleFolderWindow : Window
         TargetName.Text = System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(target.Path));
         TargetName.ToolTip = TargetName.Text;
         TargetSize.Text = target.HasAllocationData
-            ? $"{SizeText.Format(target.AllocatedBytes)} · Scanned"
-            : $"{SizeText.Format(target.LogicalBytes)} · Logical";
+            ? $"{SizeText.Format(target.AllocatedBytes)} · Estimate"
+            : $"{SizeText.Format(target.LogicalBytes)} · Logical estimate";
         SizeDetails.Text = target.HasAllocationData
             ? $"Scanned allocation: {SizeText.Format(target.AllocatedBytes)} · Logical: {SizeText.Format(target.LogicalBytes)}"
             : $"Scanned logical size: {SizeText.Format(target.LogicalBytes)} · Allocation unknown";

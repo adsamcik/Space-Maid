@@ -90,6 +90,7 @@ public partial class MainWindow : Window
 
     internal void SetBusy(bool busy)
     {
+        if (busy) { _foregroundWorkVersion++; _recycleRefreshWork?.Cancel(); }
         UpdateExtensionWorkspace();
         _extensions?.SetDiscoveryBusy(busy);
         UpdatePathAvailability(busy);
@@ -102,7 +103,7 @@ public partial class MainWindow : Window
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
-        if (!busy) { DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
+        if (!busy) { WakeRecycleRefresh(); RefreshDeferredRecycleGroups(); DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
     }
 
     private void UpdateFastScanButton(bool busy)
@@ -161,7 +162,7 @@ public partial class MainWindow : Window
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
         var scanHelper = _scanHelper;
         SaveColumnLayout();
-        _closing = true; _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _updateTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        _closing = true; _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _updateTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _recycleWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
         e.Cancel = true;
         bool workersStopped = true;
         try
@@ -183,6 +184,9 @@ public partial class MainWindow : Window
             if (_cleanupTask is not null)
                 try { await _cleanupTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Cleanup shutdown: {error}"); }
+            if (_recycleTask is not null)
+                try { await _recycleTask; }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Recycling shutdown: {error}"); }
             if (_worktreeCheckTask is not null)
                 try { await _worktreeCheckTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Worktree check shutdown: {error}"); }

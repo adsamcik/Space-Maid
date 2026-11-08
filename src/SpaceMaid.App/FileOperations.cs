@@ -55,14 +55,17 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     {
         // Keep the selected identity, but obtain confirmation sizes from just
         // this folder. Unrelated stale inventory does not prevent recycling.
-        var selected = await Task.Run(() => FolderDeletionTarget.FromScan(scan, link), token);
+        var selected = await CaptureRecycleTargetAsync(scan, link, token);
         var current = await MeasureFolderAsync(selected.Path, token, diagnostic, scan);
         return await Task.Run(() =>
         {
             selected.ValidateCurrent();
-            return FolderDeletionTarget.FromScan(current, -1);
+            return FolderDeletionTarget.FromScan(current, -1, Files);
         }, token);
     }
+
+    internal Task<FolderDeletionTarget> CaptureRecycleTargetAsync(ScanSnapshot scan, int link, CancellationToken token)
+        => Task.Run(() => FolderDeletionTarget.FromScan(scan, link, Files), token);
 
     public Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null) => FolderRecycler.RecycleAsync(target, owner, token, diagnostic);

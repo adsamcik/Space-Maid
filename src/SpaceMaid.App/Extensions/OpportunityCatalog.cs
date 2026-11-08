@@ -81,10 +81,15 @@ internal sealed class OpportunityCatalog(Action<string, object>? diagnostic = nu
     }
 
     internal IReadOnlyList<OpportunityGroup> BuildCleanupGroups(ScanSnapshot scan, IReadOnlyList<Opportunity> locations,
-        OpportunityGroupSet groups, OpportunityGroupContext context, CancellationToken token = default)
+        OpportunityGroupSet groups, OpportunityGroupContext context, CancellationToken token = default, Action? deferIfBusy = null)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime);
-        _gate.Wait(linked.Token);
+        if (deferIfBusy is null) _gate.Wait(linked.Token);
+        else if (!_gate.Wait(0, linked.Token))
+        {
+            deferIfBusy();
+            return [];
+        }
         try
         {
             ObjectDisposedException.ThrowIf(_stopped, this);

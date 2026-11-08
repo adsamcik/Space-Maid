@@ -18,11 +18,16 @@ public partial class MainWindow
     private ScanLog StartActionLog(string action, string path)
     {
         var log = new ScanLog(LogDirectory);
+        ShowActionLog(log);
+        log.Record("file-action-start", new { Action = action, Path = path });
+        return log;
+    }
+
+    private void ShowActionLog(ScanLog log)
+    {
         _scanLogPath = log.FilePath;
         OpenLogButton.ToolTip = log.FilePath;
         OpenLogButton.Visibility = log.FilePath is null ? Visibility.Collapsed : Visibility.Visible;
-        log.Record("file-action-start", new { Action = action, Path = path });
-        return log;
     }
 
     internal async Task RecheckFolderAsync(string path)
@@ -49,17 +54,21 @@ public partial class MainWindow
         throw new IOException("The scanned location is no longer available. Scan its drive again.");
     }
 
-    private async Task RefreshAffectedAsync(ScanSnapshot scan, IReadOnlyList<ScanRecheckRequest> requests,
+    private async Task<bool> RefreshAffectedAsync(ScanSnapshot scan, IReadOnlyList<ScanRecheckRequest> requests,
         string note, CancellationToken token, ScanLog log, ScanSnapshot? prechecked = null,
-        IReadOnlyList<Opportunity>? findings = null)
+        IReadOnlyList<Opportunity>? findings = null, bool background = false)
     {
-        var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
-        string? detailPath = OpportunityBrowser?.Detail?.Path;
-        StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
-        foreach (var request in requests) _staleScopes.Add(request);
-        var dirty = _staleScopes.ToArray();
+        int workVersion = _foregroundWorkVersion;
+        if (!background)
+        {
+            StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
+            _staleScopes.UnionWith(requests);
+        }
         var timer = Stopwatch.StartNew();
-        var updated = prechecked ?? await Operations.RecheckAsync(scan, requests, token, log.Record);
+        var updated = prechecked ?? (background
+            ? await Task.Run(() => Operations.RecheckAsync(scan, requests, token, log.Record), token)
+            : await Operations.RecheckAsync(scan, requests, token, log.Record));
+        if (background && (workVersion != _foregroundWorkVersion || !ReferenceEquals(_snapshot, scan))) return false;
         var analysis = await Task.Run(() =>
         {
             var classified = OpportunityExtensions.Analyze(updated, token);
@@ -68,20 +77,33 @@ public partial class MainWindow
                 Total: Operations.EstimateCleanup(updated, opportunities, token), Groups: classified.Groups);
         }, token);
         log.Record("opportunity-extensions", new { Status = OpportunityExtensions.Status(updated), ExtensionLog = _extensions?.LogPath });
-        token.ThrowIfCancellationRequested();
-        if (_closing || !ReferenceEquals(_snapshot, scan)) return;
-        string[] expanded = _explorer?.ExpandedPaths() ?? [];
-        string selected = scan.EntryPath(_selectedLink) ?? scan.RootPath;
-        bool grouped = _selectionIsGroup;
-        var column = _treeSortColumn; bool descending = _treeDescending;
-        // Publish a coherent inventory; finish the bounded UI restore even if
-        // cancellation arrives after the metadata/analysis has completed.
-        var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Kinds,
-            expanded, selected, column, descending, _preferLogicalSize, CancellationToken.None);
-        if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+        PreparedExplorer explorer;
+        ScanSortColumn column;
+        bool descending, grouped;
+        while (true)
+        {
+            if (background) await WaitForRecycleRefreshAsync(token, publishing: true);
+            token.ThrowIfCancellationRequested();
+            if (_closing || !ReferenceEquals(_snapshot, scan) || background && workVersion != _foregroundWorkVersion) return false;
+            int revision = _explorerRevision, selectedLink = _selectedLink;
+            string[] expanded = _explorer?.ExpandedPaths() ?? [];
+            string selected = scan.EntryPath(selectedLink) ?? scan.RootPath;
+            grouped = _selectionIsGroup;
+            column = _treeSortColumn; descending = _treeDescending;
+            // A background refresh may overlap navigation. Only the presentation
+            // needs rebuilding if the user changes the view while it is prepared.
+            explorer = await PrepareExplorerRefreshAsync(updated, analysis.Kinds,
+                expanded, selected, column, descending, _preferLogicalSize,
+                background ? token : CancellationToken.None, background ? _currentPath : null);
+            if (background) token.ThrowIfCancellationRequested();
+            if (_closing || !ReferenceEquals(_snapshot, scan) || background && workVersion != _foregroundWorkVersion) return false;
+            if (!background || (!RecycleRefreshBlocked(publishing: true) && revision == _explorerRevision
+                && selectedLink == _selectedLink && grouped == _selectionIsGroup)) break;
+        }
+        var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
+        string? detailPath = OpportunityBrowser?.Detail?.Path;
         var viewport = CaptureTreeViewport();
         PublishExplorerRefresh(explorer, column, descending, grouped);
-        _staleScopes.UnionWith(dirty);
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
@@ -110,6 +132,7 @@ public partial class MainWindow
         else if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
         UpdateSelection();
         RestoreTreeViewport(viewport);
+        return true;
     }
 
     private void Window_Activated(object? sender, EventArgs e)

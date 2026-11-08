@@ -18,6 +18,7 @@ public partial class MainWindow
     private bool _browsing, _syncTree, _selectionIsGroup;
     private bool _preferLogicalSize, _updatingSizeBasis;
     private int _selectedLink = -1;
+    private int _explorerRevision;
 
     private void ClearExplorer()
     {
@@ -277,6 +278,7 @@ public partial class MainWindow
     {
         if (_snapshot is null || _work is not null || _browsing) return;
         _browsing = true;
+        _explorerRevision++;
         using var work = new CancellationTokenSource();
         _browseWork = work;
         ExplorePanel.IsEnabled = false;
@@ -289,6 +291,7 @@ public partial class MainWindow
         finally
         {
             _browseWork = null; _browsing = false;
+            WakeRecycleRefresh();
             UpdatePathAvailability(_work is not null);
             if (!_closing)
             {
@@ -302,6 +305,7 @@ public partial class MainWindow
     private void SelectTree(int link)
     {
         if (_explorer is null) return;
+        _explorerRevision++;
         _selectedLink = link;
         _selectionIsGroup = false;
         _syncTree = true;

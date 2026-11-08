@@ -27,7 +27,7 @@ public partial class MainWindow
 
     private bool CanRestartForUpdate() => !_closing && _work is null && !_browsing && !_openingPath
         && _extensions?.HasOptimizationWork != true
-        && _cleanupTask is null && _worktreeCheckTask is null
+        && _cleanupTask is null && _recycleTask is null && _worktreeCheckTask is null
         && _extensions?.RecentJobs.Any(job => job.State is ExtensionJobState.Queued or ExtensionJobState.Running) != true;
 
     private void UpdateUpdateButton()
