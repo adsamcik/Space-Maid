@@ -250,6 +250,8 @@ public partial class CloudView : UserControl, IExtensionContextView
         OpenFolderButton.IsEnabled = idle && Selected is { Entry.IsDirectory: true };
         ExplorerButton.IsEnabled = idle && target is not null;
         ExploreButton.IsEnabled = idle && !_hostBusy && target is not null && (_host as IExtensionNavigationHost)?.Navigation is not null;
+        ExploreButton.Content = _reviewingCloudSpace && (_host as IExtensionNavigationHost)?.Navigation is IExtensionSizeNavigation
+            ? "Explore logical size" : "Explore in Space Maid";
         FreeButton.IsEnabled = idle && !_hostBusy && _storage is not null && Selected is { Entry.CanRequestOnlineOnly: true };
         ActionHint.Text = _reviewingCloudSpace
             ? "Sizes cover the sync folder. Check your account and quota in the provider’s website. Deletions there can sync to other devices."
@@ -334,7 +336,10 @@ public partial class CloudView : UserControl, IExtensionContextView
     private async void Explore_Click(object sender, RoutedEventArgs e)
     {
         string? path = Selected is { Entry.IsDirectory: true } row ? row.Entry.Path : _currentPath;
-        if (path is not null && (_host as IExtensionNavigationHost)?.Navigation is { } navigation && !await navigation.ExploreFolderAsync(path))
+        if (path is null || (_host as IExtensionNavigationHost)?.Navigation is not { } navigation) return;
+        bool opened = _reviewingCloudSpace && navigation is IExtensionSizeNavigation sizes
+            ? await sizes.ExploreFolderByLogicalSizeAsync(path) : await navigation.ExploreFolderAsync(path);
+        if (!opened)
             StatusText.Text = "This folder could not be opened. Finish the current operation or use Explorer.";
     }
     private async void Free_Click(object sender, RoutedEventArgs e) => await (_pending = FreeSelectedAsync());

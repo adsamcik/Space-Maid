@@ -69,9 +69,9 @@ public partial class MainWindow
     private ScanSortColumn VisibleTreeSort(ScanSnapshot scan)
     {
         if (TreeColumns.Columns.Contains(_treeColumns[_treeSortColumn])
-            && (_treeSortColumn != ScanSortColumn.Allocated || scan.HasAllocationData)) return _treeSortColumn;
-        if (scan.HasAllocationData && TreeColumns.Columns.Contains(AllocationColumn)) return ScanSortColumn.Allocated;
-        return TreeColumns.Columns.Contains(LogicalColumn) ? ScanSortColumn.Logical : ScanSortColumn.Name;
+            && (_treeSortColumn != ScanSortColumn.Logical || scan.HasAllocationData)) return _treeSortColumn;
+        if (TreeColumns.Columns.Contains(AllocationColumn)) return ScanSortColumn.Allocated;
+        return scan.HasAllocationData && TreeColumns.Columns.Contains(LogicalColumn) ? ScanSortColumn.Logical : ScanSortColumn.Name;
     }
 
     private void FitNameColumn()
@@ -158,9 +158,17 @@ public partial class MainWindow
         foreach (var state in TreeColumnLayout.Default.Columns)
         {
             var column = _treeColumns[state.Id];
-            var item = new MenuItem { Header = state.Id == ScanSortColumn.Share ? "% parent" : state.Id.ToString(),
+            var item = new MenuItem { Header = state.Id switch
+                {
+                    ScanSortColumn.Allocated => UseExplorerAllocation ? "Allocated" : "Logical",
+                    ScanSortColumn.Logical => UseExplorerAllocation ? "Logical" : "Allocated",
+                    ScanSortColumn.Share => "% parent",
+                    _ => state.Id.ToString()
+                },
                 Tag = state.Id, IsCheckable = true, IsChecked = TreeColumns.Columns.Contains(column),
                 IsEnabled = state.Id != ScanSortColumn.Name, StaysOpenOnClick = true };
+            if (state.Id == ScanSortColumn.Allocated) item.ToolTip = "Main size column. Follows the size selector.";
+            if (state.Id == ScanSortColumn.Logical) item.ToolTip = "Shows the other size measurement.";
             item.Click += async (_, _) =>
             {
                 var viewport = CaptureTreeViewport();

@@ -24,3 +24,8 @@ public interface IExtensionNavigation
     // Uses the normal folder navigation/scan flow and its existing safeguards.
     Task<bool> ExploreFolderAsync(string path);
 }
+
+public interface IExtensionSizeNavigation
+{
+    Task<bool> ExploreFolderByLogicalSizeAsync(string path);
+}

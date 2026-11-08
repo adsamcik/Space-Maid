@@ -184,7 +184,7 @@
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="AllocationColumn" Width="96">
                                       <GridViewColumn.Header><GridViewColumnHeader x:Name="AllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
-                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Allocated}" Style="{StaticResource TreeNumberCell}" ToolTip="{Binding SizeNote}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding PrimarySize}" Style="{StaticResource TreeNumberCell}" ToolTip="{Binding SizeNote}" /></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="ModifiedColumn" Width="150">
                                       <GridViewColumn.Header><GridViewColumnHeader x:Name="ModifiedHeader" Content="Modified" Tag="Modified" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" HorizontalContentAlignment="Left" /></GridViewColumn.Header>
@@ -192,7 +192,7 @@
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="LogicalColumn" Width="96">
                                       <GridViewColumn.Header><GridViewColumnHeader x:Name="LogicalHeader" Content="Logical" Tag="Logical" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
-                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Logical}" Style="{StaticResource TreeNumberCell}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                      <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding SecondarySize}" Style="{StaticResource TreeNumberCell}" /></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="ShareColumn" Width="80">
                                       <GridViewColumn.Header><GridViewColumnHeader x:Name="ShareHeader" Content="% parent" Tag="Share" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
@@ -220,6 +220,11 @@
                       <TextBlock x:Name="TreeHint" Text="Scan a drive to explore." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
                       <DockPanel Grid.Row="2" Margin="12,4,8,4">
                           <Button x:Name="ColumnsButton" DockPanel.Dock="Right" Content="Columns" Click="Columns_Click" Style="{StaticResource ColumnHeader}" ToolTip="Choose columns. Drag headers to reorder; drag their edges to resize." AutomationProperties.Name="Choose tree columns" />
+                          <ComboBox x:Name="SizeBasisSelector" DockPanel.Dock="Left" SelectedIndex="0" IsEnabled="False" MinWidth="104"
+                                    Margin="0,0,8,0" AutomationProperties.Name="Size basis" SelectionChanged="SizeBasis_Changed">
+                              <ComboBoxItem Content="Allocated" />
+                              <ComboBoxItem Content="Logical" />
+                          </ComboBox>
                           <TextBlock x:Name="TreeNote" Text="Shared files counted once" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0.65" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
                               <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="Shared files counted once"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
                           </TextBlock>

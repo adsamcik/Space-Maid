@@ -68,6 +68,26 @@ public sealed class ExplorerTests
     }
 
     [Fact]
+    public void LogicalMapWeightsIncludeZeroAllocationAndAttributeSharedNamesOnce()
+    {
+        var builder = new ScanBuilder();
+        builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
+        int online = builder.AddFile(new(new(2), FileAttributes.Offline, 8000, 0, 0));
+        int local = builder.AddFile(new(new(3), FileAttributes.Normal, 1000, 4096, 0));
+        builder.AddLink(online, new(1), "online.bin");
+        builder.AddLink(online, new(1), "alias.bin");
+        builder.AddLink(local, new(1), "local.bin");
+        var scan = builder.Build(@"C:\", "fixture", TimeSpan.Zero, GC.GetTotalAllocatedBytes(), default);
+        var order = scan.SortedChildrenByBasis(scan.RootIndex, ScanSortColumn.Share, true, false, default);
+        var map = TreemapLayout.ContributionsForBasis(scan, scan.RootIndex, order, new Dictionary<int, SpaceKind>(), false);
+
+        Assert.Equal(8000, map[0].Bytes);
+        Assert.Equal(2, map.Count);
+        Assert.Equal(9000, map.Sum(part => part.Bytes));
+        Assert.Equal(4096, scan.AllocatedBytes);
+    }
+
+    [Fact]
     public void ChildrenAreSortedWithoutCountingSharedNamesTwice()
     {
         var builder = new ScanBuilder();

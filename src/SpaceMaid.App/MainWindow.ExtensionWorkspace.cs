@@ -93,12 +93,19 @@ public partial class MainWindow
         }
     }
 
-    private sealed class WorkspaceNavigation(MainWindow window) : IExtensionNavigation
+    private sealed class WorkspaceNavigation(MainWindow window) : IExtensionNavigation, IExtensionSizeNavigation
     {
         public Task<bool> OpenExtensionAsync(string extensionId)
             => OnDispatcherAsync(() => Task.FromResult(window.OpenExtension(extensionId)));
         public Task<bool> ExploreFolderAsync(string path)
             => OnDispatcherAsync(() => window.NavigatePathAsync(path));
+        public Task<bool> ExploreFolderByLogicalSizeAsync(string path) => OnDispatcherAsync(async () =>
+        {
+            if (!await window.NavigatePathAsync(path) || window._snapshot is null
+                || !string.Equals(window._currentPath, path, StringComparison.OrdinalIgnoreCase)) return false;
+            await window.SetExplorerSizeBasisAsync(preferLogicalSize: true);
+            return window._explorer is { UseAllocation: false };
+        });
         private async Task<bool> OnDispatcherAsync(Func<Task<bool>> action)
         {
             if (window.Dispatcher.HasShutdownStarted) return false;

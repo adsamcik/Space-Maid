@@ -176,6 +176,9 @@ public sealed class ScanSnapshot : IOpportunityInventory
         SortedChildren(directoryIndex, ScanSortColumn.Share, descending: true, token);
 
     public int[] SortedChildren(int directoryIndex, ScanSortColumn column, bool descending, CancellationToken token = default)
+        => SortedChildrenByBasis(directoryIndex, column, descending, HasAllocationData, token);
+
+    public int[] SortedChildrenByBasis(int directoryIndex, ScanSortColumn column, bool descending, bool useAllocation, CancellationToken token)
     {
         if ((uint)directoryIndex >= (uint)Records.Length || !Records[directoryIndex].IsDirectory)
             throw new ArgumentOutOfRangeException(nameof(directoryIndex));
@@ -209,7 +212,7 @@ public sealed class ScanSnapshot : IOpportunityInventory
                 ScanSortColumn.Type => TypeLabel(a, fileA).CompareTo(TypeLabel(b, fileB), StringComparison.OrdinalIgnoreCase),
                 ScanSortColumn.Extension => Extension(a, fileA).CompareTo(Extension(b, fileB), StringComparison.OrdinalIgnoreCase),
                 ScanSortColumn.Attributes => ((uint)fileA.Attributes).CompareTo((uint)fileB.Attributes),
-                _ => AttributedBytes(a).CompareTo(AttributedBytes(b))
+                _ => AttributedBytesForBasis(a, useAllocation).CompareTo(AttributedBytesForBasis(b, useAllocation))
             };
             if (comparison != 0) return descending ? -comparison : comparison;
             int name = Name(a).CompareTo(Name(b), StringComparison.OrdinalIgnoreCase);
@@ -225,11 +228,13 @@ public sealed class ScanSnapshot : IOpportunityInventory
         : FileTypeClassifier.Label(FileTypeClassifier.Classify(Name(link)));
     private ReadOnlySpan<char> Extension(int link, FileRecord file) => file.IsDirectory ? [] : Path.GetExtension(Name(link));
 
-    public long AttributedBytes(int linkIndex)
+    public long AttributedBytes(int linkIndex) => AttributedBytesForBasis(linkIndex, HasAllocationData);
+
+    public long AttributedBytesForBasis(int linkIndex, bool useAllocation)
     {
         int file = linkIndex == -1 ? RootIndex : Links[linkIndex].FileIndex;
         return linkIndex != -1 && FirstLinks[file] != linkIndex ? 0
-            : HasAllocationData ? DirectoryAllocated[file] : DirectoryLogical[file];
+            : useAllocation && HasAllocationData ? DirectoryAllocated[file] : DirectoryLogical[file];
     }
 
     internal ReadOnlySpan<char> Name(int linkIndex) =>

@@ -44,15 +44,19 @@ internal static class TreemapLayout
 
     public static IReadOnlyList<SpaceContribution> Contributions(ScanSnapshot scan, int folder, int[] children,
         IReadOnlyDictionary<int, SpaceKind> kinds, int maximum = 64)
+        => ContributionsForBasis(scan, folder, children, kinds, scan.HasAllocationData, maximum);
+
+    public static IReadOnlyList<SpaceContribution> ContributionsForBasis(ScanSnapshot scan, int folder, int[] children,
+        IReadOnlyDictionary<int, SpaceKind> kinds, bool useAllocation, int maximum = 64)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maximum, 1);
         var result = new List<SpaceContribution>();
-        long total = scan.AttributedBytes(scan.PrimaryLink(folder));
+        long total = scan.AttributedBytesForBasis(scan.PrimaryLink(folder), useAllocation);
         long observed = 0, grouped = 0;
         int groupedCount = 0;
         foreach (int link in children)
         {
-            long bytes = scan.AttributedBytes(link);
+            long bytes = scan.AttributedBytesForBasis(link, useAllocation);
             observed = checked(observed + bytes);
             if (bytes <= 0) continue;
             if (result.Count >= maximum - 1 || bytes < total * .005)
@@ -75,6 +79,10 @@ internal static class TreemapLayout
 
     public static IReadOnlyList<SpaceContribution> Nest(ScanSnapshot scan, IReadOnlyList<SpaceContribution> parts,
         IReadOnlyDictionary<int, int[]> childOrders, IReadOnlyDictionary<int, SpaceKind> kinds)
+        => NestForBasis(scan, parts, childOrders, kinds, scan.HasAllocationData);
+
+    public static IReadOnlyList<SpaceContribution> NestForBasis(ScanSnapshot scan, IReadOnlyList<SpaceContribution> parts,
+        IReadOnlyDictionary<int, int[]> childOrders, IReadOnlyDictionary<int, SpaceKind> kinds, bool useAllocation)
     {
         var result = parts.ToArray();
         int remaining = 64 - parts.Count;
@@ -85,7 +93,7 @@ internal static class TreemapLayout
             if (part.Link < 0 || !childOrders.TryGetValue(scan.Entry(part.Link).FileIndex, out var children)) continue;
             int limit = remaining / candidates--;
             if (limit < 2) continue;
-            var nested = Contributions(scan, scan.Entry(part.Link).FileIndex, children, kinds, limit);
+            var nested = ContributionsForBasis(scan, scan.Entry(part.Link).FileIndex, children, kinds, useAllocation, limit);
             if (nested.Count == 0) continue;
             result[i] = part with { Children = nested };
             remaining -= nested.Count;

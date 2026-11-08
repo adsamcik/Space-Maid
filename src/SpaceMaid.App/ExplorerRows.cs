@@ -9,6 +9,8 @@ namespace SpaceMaid.App;
 
 internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth, bool Expanded, int VisibleIndex = -1)
 {
+    internal bool PreferLogicalSize { get; init; }
+    private bool UseAllocation => Scan.HasAllocationData && !PreferLogicalSize;
     public string Name => Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
     public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
@@ -28,20 +30,23 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     public string Glyph => Entry.IsDirectory ? "\uE8B7" : "\uE8A5";
     public string Allocated => Unmeasured ? "Not checked" : Scan.HasAllocationData ? SizeText.Format(Entry.AttributedBytes(true)) : "—";
     public string Logical => Unmeasured ? "Not checked" : SizeText.Format(Entry.LogicalBytes);
+    public string PrimarySize => Unmeasured ? "Not checked" : SizeText.Format(Entry.AttributedBytes(UseAllocation));
+    public string SecondarySize => UseAllocation ? Logical : Allocated;
     public string Share
     {
         get
         {
             if (Entry.ParentIndex < 0 || Unmeasured) return "—";
             var parent = Scan.Entry(Scan.PrimaryLink(Entry.ParentIndex));
-            long total = parent.AttributedBytes(Scan.HasAllocationData);
-            return total == 0 ? "—" : $"{100d * Entry.AttributedBytes(Scan.HasAllocationData) / total:0.#}%";
+            long total = parent.AttributedBytes(UseAllocation);
+            return total == 0 ? "—" : $"{100d * Entry.AttributedBytes(UseAllocation) / total:0.#}%";
         }
     }
     public string Flags => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Unmeasured ? "Not checked" : Entry.IsIncomplete ? "Partial" : null }.OfType<string>());
     public string Description => $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
     public string SizeNote => Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size." : Entry.IsShared
-        ? $"This object has multiple observed names. Its {SizeText.Format(Entry.AllocatedBytes)} allocation is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
+        ? $"This object has multiple observed names. Its {SizeText.Format(UseAllocation ? Entry.AllocatedBytes : Entry.LogicalBytes)} "
+            + $"{(UseAllocation ? "allocation" : "logical size")} is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
         : Entry.IsIncomplete ? "This branch is incomplete. Sizes show only metadata that was read." : "";
 }
 
@@ -53,12 +58,15 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     private readonly List<Position> _visible = [new(-1, 0)];
     private readonly HashSet<int> _expanded = [];
     public ScanSnapshot Scan { get; } = scan;
+    internal bool PreferLogicalSize { get; init; }
+    internal bool UseAllocation => Scan.HasAllocationData && !PreferLogicalSize;
     public int Count => _visible.Count;
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
     public ExplorerRow Row(int index)
     {
         var position = _visible[index];
-        return new ExplorerRow(Scan, Scan.Entry(position.Link), position.Depth, _expanded.Contains(position.Link), index);
+        return new ExplorerRow(Scan, Scan.Entry(position.Link), position.Depth, _expanded.Contains(position.Link), index)
+        { PreferLogicalSize = PreferLogicalSize };
     }
     public int Find(int link) => _visible.FindIndex(position => position.Link == link);
     public bool IsExpanded(int link) => _expanded.Contains(link);

@@ -113,7 +113,8 @@ public partial class MainWindow
             if (_explorer.Find(link) < 0) return false;
         }
         SelectTree(link);
-        EntryDetail.DataContext = new ExplorerRow(scan, scan.Entry(link), 0, _explorer!.IsExpanded(link));
+        EntryDetail.DataContext = new ExplorerRow(scan, scan.Entry(link), 0, _explorer!.IsExpanded(link))
+        { PreferLogicalSize = _explorer.PreferLogicalSize };
         EntryDetail.Visibility = Visibility.Visible;
         SelectedEntryPath.Visibility = scan.EntryPath(link) == _currentPath ? Visibility.Collapsed : Visibility.Visible;
         return true;

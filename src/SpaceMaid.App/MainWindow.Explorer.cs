@@ -16,6 +16,7 @@ public partial class MainWindow
     private IReadOnlyDictionary<int, SpaceKind> _kinds = new Dictionary<int, SpaceKind>();
     private CancellationTokenSource? _browseWork;
     private bool _browsing, _syncTree, _selectionIsGroup;
+    private bool _preferLogicalSize, _updatingSizeBasis;
     private int _selectedLink = -1;
 
     private void ClearExplorer()
@@ -28,6 +29,7 @@ public partial class MainWindow
         ContextMenuService.SetPlacementTarget(SpaceTree, null);
         ClearMap();
         _explorer = null;
+        SizeBasisSelector.IsEnabled = false;
         _selectedLink = -1;
         _selectionIsGroup = false;
         _childOrders.Clear(); _mapOrders.Clear(); _kinds = new Dictionary<int, SpaceKind>();
@@ -45,13 +47,13 @@ public partial class MainWindow
         _snapshot = scan;
         _scanStale = false;
         _staleScopes.Clear();
-        _explorer = new(scan);
+        _explorer = new(scan) { PreferLogicalSize = _preferLogicalSize };
         _kinds = OpportunityKinds(opportunities);
         SpaceTree.ItemsSource = _explorer;
         TreeHint.Visibility = Visibility.Collapsed;
         TreeNote.Text = scan.HasAllocationData ? "Shared files counted once"
             : "Logical sizes only · Physical allocation is unavailable";
-        MapBasis.Text = scan.HasAllocationData ? "Area = allocated size" : "Area = logical size";
+        UpdateExplorerSizeLabels();
         var visibleSort = VisibleTreeSort(scan);
         if (_treeSortColumn != visibleSort) _treeDescending = visibleSort != ScanSortColumn.Name;
         _treeSortColumn = visibleSort;
@@ -81,18 +83,17 @@ public partial class MainWindow
         return kinds;
     }
 
-    private sealed record PreparedExplorer(ExplorerRows Rows, Dictionary<int, SpaceKind> Kinds,
+    private sealed record PreparedExplorer(ExplorerRows Rows, IReadOnlyDictionary<int, SpaceKind> Kinds,
         Dictionary<int, int[]> ChildOrders, Dictionary<int, int[]> MapOrders, ExplorerPresentation Entry);
 
     private async Task<PreparedExplorer> PrepareExplorerRefreshAsync(ScanSnapshot scan,
-        IReadOnlyList<Opportunity> opportunities, string[] expanded, string selected,
-        ScanSortColumn column, bool descending, CancellationToken token)
+        IReadOnlyDictionary<int, SpaceKind> kinds, string[] expanded, string selected,
+        ScanSortColumn column, bool descending, bool preferLogicalSize, CancellationToken token, string? mapPath = null)
     {
         await _classificationReady.WaitAsync(token);
         return await Task.Run(() =>
         {
-            var rows = new ExplorerRows(scan);
-            var kinds = OpportunityKinds(opportunities);
+            var rows = new ExplorerRows(scan) { PreferLogicalSize = preferLogicalSize };
             var childOrders = new Dictionary<int, int[]>();
             var mapOrders = new Dictionary<int, int[]>();
             // Build the compact visible index before attaching it to WPF. None
@@ -102,12 +103,13 @@ public partial class MainWindow
                 token.ThrowIfCancellationRequested();
                 if (scan.FindEntry(path) is not { } link || scan.Entry(link) is not { IsDirectory: true, IsPrimaryName: true } entry
                     || scan.IsUnmeasuredDirectory(entry.FileIndex)) continue;
-                rows.Expand(link, PreparedChildOrder(scan, entry.FileIndex, childOrders, column, descending, token));
+                rows.Expand(link, PreparedChildOrder(scan, entry.FileIndex, childOrders, column, descending, rows.UseAllocation, token));
             }
             while (scan.FindEntry(selected) is null
                 && Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(selected)) is { } parent) selected = parent;
             int selection = scan.FindEntry(selected) ?? -1;
-            var presentation = PrepareEntry(scan, rows, selection, kinds, childOrders, mapOrders, column, descending, token);
+            int? mapFolder = mapPath is null ? null : scan.FindEntry(mapPath);
+            var presentation = PrepareEntry(scan, rows, selection, kinds, childOrders, mapOrders, column, descending, token, mapFolder);
             token.ThrowIfCancellationRequested();
             return new PreparedExplorer(rows, kinds, childOrders, mapOrders, presentation);
         }, token);
@@ -138,6 +140,72 @@ public partial class MainWindow
         finally { _syncTree = false; }
         UpdateTreeSortHeaders();
         ClearPreliminary();
+    }
+
+    internal async Task SetExplorerSizeBasisAsync(bool preferLogicalSize)
+    {
+        if (preferLogicalSize != _preferLogicalSize)
+        {
+            await BrowseAsync(async token =>
+            {
+                var scan = _snapshot!;
+                var column = _treeSortColumn == ScanSortColumn.Logical && TreeColumns.Columns.Contains(AllocationColumn)
+                    ? ScanSortColumn.Allocated : _treeSortColumn;
+                bool descending = _treeDescending, grouped = _selectionIsGroup;
+                // Context selection can change the highlighted row without
+                // changing the folder shown by the map and breadcrumb.
+                var prepared = await PrepareExplorerRefreshAsync(scan, _kinds,
+                    _explorer!.ExpandedPaths(), scan.EntryPath(_selectedLink) ?? scan.RootPath,
+                    column, descending, preferLogicalSize, token, _currentPath);
+                token.ThrowIfCancellationRequested();
+                if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+                var viewport = CaptureTreeViewport();
+                _preferLogicalSize = preferLogicalSize;
+                PublishExplorerRefresh(prepared, column, descending, grouped);
+                UpdateExplorerSizeLabels();
+                RestoreTreeViewport(viewport);
+            });
+        }
+        SyncSizeBasisSelector();
+    }
+
+    private async void SizeBasis_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_updatingSizeBasis && _explorer is not null && SizeBasisSelector.SelectedIndex >= 0)
+        {
+            bool hadFocus = SizeBasisSelector.IsKeyboardFocusWithin;
+            await SetExplorerSizeBasisAsync(SizeBasisSelector.SelectedIndex == 1);
+            if (hadFocus && !_closing && SizeBasisSelector.IsVisible && SizeBasisSelector.IsEnabled)
+                SizeBasisSelector.Focus();
+        }
+    }
+
+    private void UpdateExplorerSizeLabels()
+    {
+        if (_explorer is not { } rows) return;
+        var scan = rows.Scan;
+        bool allocated = rows.UseAllocation;
+        string basis = allocated ? "allocated size" : "logical size";
+        ScannedSizeText.Text = SizeText.Format(allocated ? scan.AllocatedBytes : scan.LogicalBytes);
+        string caption = allocated ? "On disk" : scan.HasAllocationData ? "Logical size" : "Logical · Size on disk unavailable";
+        ScannedSizeCaption.Text = caption + (_scanStale ? " · Out of date" : scan.LastRecheckUtc is not null ? " · Partially refreshed" : "");
+        MapBasis.Text = _scanStale ? $"Previous scan · {basis}" : $"Area = {basis}"
+            + (scan.LastRecheckUtc is not null ? " · Partial refresh" : "");
+        SizeBasisSelector.ToolTip = !scan.HasAllocationData ? "Allocation is unavailable for this scan. Showing logical sizes."
+            : "Choose the size used by the tree, map, and scanned total.";
+        SyncSizeBasisSelector();
+    }
+
+    private void SyncSizeBasisSelector()
+    {
+        if (_explorer is not { } rows) return;
+        _updatingSizeBasis = true;
+        try
+        {
+            SizeBasisSelector.IsEnabled = rows.Scan.HasAllocationData;
+            SizeBasisSelector.SelectedIndex = rows.UseAllocation ? 0 : 1;
+        }
+        finally { _updatingSizeBasis = false; }
     }
 
     private void PublishExplorerOrders(Dictionary<int, int[]> childOrders, Dictionary<int, int[]> mapOrders)
@@ -198,7 +266,8 @@ public partial class MainWindow
         var scan = _snapshot!;
         var column = _treeSortColumn;
         bool descending = _treeDescending;
-        var children = await Task.Run(() => scan.SortedChildren(directory, column, descending, token), token);
+        bool useAllocation = UseExplorerAllocation;
+        var children = await Task.Run(() => SortExplorerChildren(scan, directory, column, descending, useAllocation, token), token);
         token.ThrowIfCancellationRequested();
         _childOrders[directory] = children;
         return children;

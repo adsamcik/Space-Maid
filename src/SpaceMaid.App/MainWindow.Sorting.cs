@@ -12,6 +12,21 @@ public partial class MainWindow
     private bool _treeDescending = true;
     private ScanSortColumn _preliminarySortColumn = ScanSortColumn.Allocated;
     private bool _preliminaryDescending = true, _preliminaryUserSorted;
+    private bool UseExplorerAllocation => _explorer?.UseAllocation ?? !_preferLogicalSize;
+
+    private static int[] SortExplorerChildren(ScanSnapshot scan, int directory, ScanSortColumn column,
+        bool descending, bool useAllocation, CancellationToken token)
+    {
+        // Retain the saved column IDs. The first size column follows the view
+        // basis and the optional second column shows the other measurement.
+        var sort = column switch
+        {
+            ScanSortColumn.Allocated => ScanSortColumn.Share,
+            ScanSortColumn.Logical when !useAllocation => ScanSortColumn.Allocated,
+            _ => column
+        };
+        return scan.SortedChildrenByBasis(directory, sort, descending, useAllocation, token);
+    }
 
     private async void TreeSort_Click(object sender, RoutedEventArgs e)
     {
@@ -24,8 +39,9 @@ public partial class MainWindow
         var scan = _snapshot!;
         bool descending = _treeSortColumn == column ? !_treeDescending : column is ScanSortColumn.Allocated or ScanSortColumn.Logical or ScanSortColumn.Share or ScanSortColumn.Modified or ScanSortColumn.Created;
         var directories = _childOrders.Keys.ToArray();
+        bool useAllocation = UseExplorerAllocation;
         var orders = await Task.Run(() => directories.ToDictionary(directory => directory,
-            directory => scan.SortedChildren(directory, column, descending, token)), token);
+            directory => SortExplorerChildren(scan, directory, column, descending, useAllocation, token)), token);
         token.ThrowIfCancellationRequested();
         int selected = _selectedLink;
         bool grouped = _selectionIsGroup;
@@ -49,8 +65,8 @@ public partial class MainWindow
     private void UpdateTreeSortHeaders()
     {
         SetSortHeader(NameHeader, "Name", ScanSortColumn.Name, _treeSortColumn, _treeDescending);
-        SetSortHeader(AllocationHeader, "Allocated", ScanSortColumn.Allocated, _treeSortColumn, _treeDescending);
-        SetSortHeader(LogicalHeader, "Logical", ScanSortColumn.Logical, _treeSortColumn, _treeDescending);
+        SetSortHeader(AllocationHeader, UseExplorerAllocation ? "Allocated" : "Logical", ScanSortColumn.Allocated, _treeSortColumn, _treeDescending);
+        SetSortHeader(LogicalHeader, UseExplorerAllocation ? "Logical" : "Allocated", ScanSortColumn.Logical, _treeSortColumn, _treeDescending);
         SetSortHeader(ShareHeader, "% parent", ScanSortColumn.Share, _treeSortColumn, _treeDescending);
         SetSortHeader(ModifiedHeader, "Modified", ScanSortColumn.Modified, _treeSortColumn, _treeDescending);
         SetSortHeader(CreatedHeader, "Created", ScanSortColumn.Created, _treeSortColumn, _treeDescending);

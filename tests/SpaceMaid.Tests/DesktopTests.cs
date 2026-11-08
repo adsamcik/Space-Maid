@@ -115,6 +115,8 @@ public sealed partial class DesktopTests
                 }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cloud")
                 {
+                    BeginWorkflow("Explorer allocated and logical size");
+                    CheckExplorerSizeBasis(window, FindRepository());
                     BeginWorkflow("Cloud drive browsing, folder usage and online-only review");
                     CheckCloudDrives(window, app, FindRepository());
                     return;

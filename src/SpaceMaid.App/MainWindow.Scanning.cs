@@ -109,13 +109,10 @@ public partial class MainWindow
             log.Record("explorer-start", new { Root = scan.RootPath });
             PublishOpportunities(scan, result.Opportunities, result.Groups);
             ScannedSizeLabel.Text = "Scanned";
-            ScannedSizeText.Text = SizeText.Format(scan.HasAllocationData ? scan.AllocatedBytes : scan.LogicalBytes);
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
             CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
-            ScannedSizeCaption.Text = scan.HasAllocationData ? "On disk"
-                : "Logical · Size on disk unavailable";
             _presentationElapsed = presentation.Elapsed;
             using var diagnosticProcess = Process.GetCurrentProcess();
             log.Record("app-scan-complete", new { scan.Backend, scan.FallbackReason, scan.FileCount, scan.NameCount,

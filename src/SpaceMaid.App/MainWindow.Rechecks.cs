@@ -64,7 +64,8 @@ public partial class MainWindow
         {
             var classified = OpportunityExtensions.Analyze(updated, token);
             var opportunities = findings ?? classified.Findings;
-            return (Opportunities: opportunities, Total: Operations.EstimateCleanup(updated, opportunities, token), Groups: classified.Groups);
+            return (Opportunities: opportunities, Kinds: OpportunityKinds(opportunities),
+                Total: Operations.EstimateCleanup(updated, opportunities, token), Groups: classified.Groups);
         }, token);
         log.Record("opportunity-extensions", new { Status = OpportunityExtensions.Status(updated), ExtensionLog = _extensions?.LogPath });
         token.ThrowIfCancellationRequested();
@@ -75,8 +76,8 @@ public partial class MainWindow
         var column = _treeSortColumn; bool descending = _treeDescending;
         // Publish a coherent inventory; finish the bounded UI restore even if
         // cancellation arrives after the metadata/analysis has completed.
-        var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
-            expanded, selected, column, descending, CancellationToken.None);
+        var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Kinds,
+            expanded, selected, column, descending, _preferLogicalSize, CancellationToken.None);
         if (_closing || !ReferenceEquals(_snapshot, scan)) return;
         var viewport = CaptureTreeViewport();
         PublishExplorerRefresh(explorer, column, descending, grouped);
@@ -86,10 +87,7 @@ public partial class MainWindow
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
         CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
         ScannedSizeLabel.Text = "Scanned";
-        ScannedSizeText.Text = SizeText.Format(updated.AllocatedBytes);
-        ScannedSizeCaption.Text = "Partially refreshed";
         TreeNote.Text = $"Partial refresh · {updated.LastRecheckUtc!.Value.ToLocalTime():HH:mm:ss}";
-        MapBasis.Text = "Area = allocated size · Partial refresh";
         RefreshPathDriveSpace();
         _staleScopes.RemoveWhere(scope => requests.Any(request =>
             scope.Path.Equals(request.Path, StringComparison.Ordinal) && (!scope.Recursive || request.Recursive)
@@ -97,6 +95,7 @@ public partial class MainWindow
                 ? request.Path : request.Path + Path.DirectorySeparatorChar, StringComparison.Ordinal)));
         _staleScopes.UnionWith(updated.IncompleteRecheckScopes);
         _scanStale = _staleScopes.Count > 0;
+        UpdateExplorerSizeLabels();
         _scanStatus = note + $" Updated {updated.RecheckedPaths.Count:N0} locations in {timer.Elapsed.TotalSeconds:0.00}s; other folders retain earlier scan data.";
         string extensionStatus = OpportunityExtensions.Status(updated);
         if (extensionStatus.Length > 0) _scanStatus += " " + extensionStatus;

@@ -9,56 +9,58 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
-    private sealed record ExplorerPresentation(ScanSnapshot Scan, ScanEntry Selected, bool Expanded,
+    private sealed record ExplorerPresentation(ScanSnapshot Scan, bool PreferLogicalSize, ScanEntry Selected, bool Expanded,
         ScanEntry Folder, int ChildCount, IReadOnlyList<SpaceContribution> Contributions);
 
     private static int[] PreparedChildOrder(ScanSnapshot scan, int directory, Dictionary<int, int[]> orders,
-        ScanSortColumn column, bool descending, CancellationToken token)
+        ScanSortColumn column, bool descending, bool useAllocation, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (orders.TryGetValue(directory, out var cached)) return cached;
-        return orders[directory] = scan.SortedChildren(directory, column, descending, token);
+        return orders[directory] = SortExplorerChildren(scan, directory, column, descending, useAllocation, token);
     }
 
     private static ExplorerPresentation PrepareEntry(ScanSnapshot scan, ExplorerRows explorer, int link,
         IReadOnlyDictionary<int, SpaceKind> kinds, Dictionary<int, int[]> childOrders, Dictionary<int, int[]> mapOrders,
-        ScanSortColumn column, bool descending, CancellationToken token)
+        ScanSortColumn column, bool descending, CancellationToken token, int? mapFolder = null)
     {
         var selected = scan.Entry(link);
-        var folder = selected.IsDirectory && selected.IsPrimaryName ? selected : scan.Entry(scan.PrimaryLink(selected.ParentIndex));
-        PreparedChildOrder(scan, folder.FileIndex, childOrders, column, descending, token);
+        var folder = mapFolder is { } folderLink ? scan.Entry(folderLink)
+            : selected.IsDirectory && selected.IsPrimaryName ? selected : scan.Entry(scan.PrimaryLink(selected.ParentIndex));
+        bool useAllocation = explorer.UseAllocation;
+        PreparedChildOrder(scan, folder.FileIndex, childOrders, column, descending, useAllocation, token);
         var children = MapOrder(folder.FileIndex);
-        long total = folder.AttributedBytes(scan.HasAllocationData);
-        var contributions = TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds);
+        long total = folder.AttributedBytes(useAllocation);
+        var contributions = TreemapLayout.ContributionsForBasis(scan, folder.FileIndex, children, kinds, useAllocation);
         if (contributions.Count > 32 && contributions.Any(part => TreemapLayout.CanNest(scan, part, total)))
-            contributions = TreemapLayout.Contributions(scan, folder.FileIndex, children, kinds, maximum: 32);
+            contributions = TreemapLayout.ContributionsForBasis(scan, folder.FileIndex, children, kinds, useAllocation, maximum: 32);
         var nestedOrders = new Dictionary<int, int[]>();
         foreach (var part in contributions.Where(part => TreemapLayout.CanNest(scan, part, total)))
         {
             int directory = scan.Entry(part.Link).FileIndex;
-            PreparedChildOrder(scan, directory, childOrders, column, descending, token);
+            PreparedChildOrder(scan, directory, childOrders, column, descending, useAllocation, token);
             nestedOrders[directory] = MapOrder(directory);
         }
-        contributions = TreemapLayout.Nest(scan, contributions, nestedOrders, kinds);
+        contributions = TreemapLayout.NestForBasis(scan, contributions, nestedOrders, kinds, useAllocation);
         token.ThrowIfCancellationRequested();
-        return new(scan, selected, explorer.IsExpanded(link), folder, children.Length, contributions);
+        return new(scan, explorer.PreferLogicalSize, selected, explorer.IsExpanded(link), folder, children.Length, contributions);
 
         int[] MapOrder(int directory)
         {
             token.ThrowIfCancellationRequested();
             if (mapOrders.TryGetValue(directory, out var cached)) return cached;
-            return mapOrders[directory] = descending && (column == ScanSortColumn.Share
-                || column == ScanSortColumn.Allocated && scan.HasAllocationData)
+            return mapOrders[directory] = descending && (column is ScanSortColumn.Share or ScanSortColumn.Allocated)
                 && childOrders.TryGetValue(directory, out var treeOrder)
-                ? treeOrder : scan.SortedChildren(directory, token);
+                ? treeOrder : scan.SortedChildrenByBasis(directory, ScanSortColumn.Share, true, useAllocation, token);
         }
     }
 
     private void PublishEntry(ExplorerPresentation presentation)
     {
-        var (scan, selected, expanded, folder, childCount, contributions) = presentation;
-        long total = folder.AttributedBytes(scan.HasAllocationData);
-        EntryDetail.DataContext = new ExplorerRow(scan, selected, 0, expanded);
+        var (scan, preferLogicalSize, selected, expanded, folder, childCount, contributions) = presentation;
+        bool useAllocation = scan.HasAllocationData && !preferLogicalSize;
+        long total = folder.AttributedBytes(useAllocation);
+        EntryDetail.DataContext = new ExplorerRow(scan, selected, 0, expanded) { PreferLogicalSize = preferLogicalSize };
         EntryDetail.Visibility = Visibility.Visible;
         ShowPath(scan.EntryPath(folder.LinkIndex)!);
         SelectedEntryPath.Visibility = scan.EntryPath(selected.LinkIndex) == _currentPath ? Visibility.Collapsed : Visibility.Visible;
@@ -91,7 +93,7 @@ public partial class MainWindow
         }
         SpaceMap.InvalidateMeasure();
         MapHint.Text = unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure them."
-            : scan.HasAllocationData ? "No observed allocation in this folder." : "No observed logical bytes in this folder.";
+            : useAllocation ? "No observed allocation in this folder." : "No observed logical bytes in this folder.";
         MapHint.Visibility = contributions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateMapColors();
     }

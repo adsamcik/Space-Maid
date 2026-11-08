@@ -12,6 +12,60 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckExplorerSizeBasis(MainWindow window, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        string online = Path.Join(fixture.Path, "online.bin");
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "Other folder")).FullName;
+        const int logicalBytes = 8 * 1024 * 1024;
+        using (var stream = File.Create(online)) stream.SetLength(logicalBytes);
+        File.WriteAllBytes(Path.Join(fixture.Path, "local.bin"), new byte[4096]);
+        using var registration = CloudFilesTests.RegisterSyncedFixture(fixture.Path, online, onlineOnly: true);
+        var navigation = window.NavigatePathAsync(fixture.Path);
+        PumpUntil(() => navigation.IsCompleted, TimeSpan.FromSeconds(15));
+        Assert.True(navigation.GetAwaiter().GetResult());
+
+        var tree = (ListView)window.FindName("SpaceTree");
+        var map = (TreemapPanel)window.FindName("SpaceMap");
+        var selector = (ComboBox)window.FindName("SizeBasisSelector");
+        var total = (TextBlock)window.FindName("ScannedSizeText");
+        var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+        var scan = rows.Scan;
+        int link = scan.FindEntry(online)!.Value;
+        Assert.Equal(0, selector.SelectedIndex);
+        Assert.Equal(SizeText.Format(scan.AllocatedBytes), total.Text);
+        Assert.DoesNotContain(map.Buttons, button => button.DataContext is SpaceContribution part && part.Link == link);
+
+        int selectedLink = scan.FindEntry(folder)!.Value;
+        Assert.True((bool)typeof(MainWindow).GetMethod("SelectContextEntry", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [scan, selectedLink])!);
+        selector.SelectedIndex = 1;
+        PumpUntil(() => tree.ItemsSource is ExplorerRows { UseAllocation: false } && selector.IsEnabled, TimeSpan.FromSeconds(10));
+        Assert.Same(scan, ((ExplorerRows)tree.ItemsSource).Scan);
+        Assert.Equal(selectedLink, Assert.IsType<ExplorerRow>(tree.SelectedItem).Entry.LinkIndex);
+        var logicalRows = (ExplorerRows)tree.ItemsSource;
+        Assert.Equal(SizeText.Format(logicalBytes), logicalRows.Row(logicalRows.Find(link)).PrimarySize);
+        Assert.Equal(SizeText.Format(scan.LogicalBytes), total.Text);
+        Assert.Contains(map.Buttons, button => button.DataContext is SpaceContribution part && part.Link == link && part.Bytes == logicalBytes);
+        Assert.Equal("Area = logical size", ((TextBlock)window.FindName("MapBasis")).Text);
+        Assert.Equal(0, CloudFiles.Inspect(online)!.LocalBytes);
+        foreach (var size in new[] { (1220, 940), (1020, 820) })
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"explorer-logical-{size.Item1}.png"), size.Item1, size.Item2);
+
+        var recheck = window.RecheckFolderAsync(fixture.Path);
+        PumpUntil(() => recheck.IsCompleted, TimeSpan.FromSeconds(15));
+        recheck.GetAwaiter().GetResult();
+        var refreshed = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+        Assert.NotNull(refreshed.Scan.LastRecheckUtc);
+        Assert.False(refreshed.UseAllocation);
+        Assert.Equal("Logical size · Partially refreshed", ((TextBlock)window.FindName("ScannedSizeCaption")).Text);
+
+        selector.SelectedIndex = 0;
+        PumpUntil(() => tree.ItemsSource is ExplorerRows { UseAllocation: true } && selector.IsEnabled, TimeSpan.FromSeconds(10));
+        Assert.Equal(folder, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+        Assert.Equal(SizeText.Format(refreshed.Scan.AllocatedBytes), total.Text);
+    }
+
     private static void CheckCloudDrives(MainWindow window, Application app, string artifactRoot)
     {
         using var fixture = new TestDirectory();
@@ -74,6 +128,16 @@ public sealed partial class DesktopTests
             }
         }
 #pragma warning restore WPF0001
+        var explore = (Button)view.FindName("ExploreButton");
+        Assert.Equal("Explore logical size", explore.Content);
+        explore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var sizeBasis = (ComboBox)window.FindName("SizeBasisSelector");
+        PumpUntil(() => sizeBasis.SelectedIndex == 1 && sizeBasis.IsEnabled, TimeSpan.FromSeconds(15));
+        var explorerTree = (ListView)window.FindName("SpaceTree");
+        Assert.Equal(root, Assert.IsType<ExplorerRow>(explorerTree.SelectedItem).Path);
+        sizeBasis.SelectedIndex = 0;
+        PumpUntil(() => explorerTree.ItemsSource is ExplorerRows { UseAllocation: true } && sizeBasis.IsEnabled, TimeSpan.FromSeconds(10));
+        Assert.True(window.OpenExtension(entry.Id));
         void AnswerConfirmation(bool confirm)
         {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
