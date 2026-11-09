@@ -1,7 +1,9 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -18,21 +20,23 @@ internal sealed record RecycleSelectionReview(FolderDeletionTarget[] Targets, Re
 
 public partial class MainWindow
 {
-    private sealed record RecycleJob(FolderDeletionTarget Target)
+    private sealed class RecycleJob(FolderDeletionTarget target)
     {
+        public FolderDeletionTarget Target { get; } = target;
+        public string FolderName => Path.GetFileName(Target.Path);
         internal TaskCompletionSource<RecycleResult?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed record RecycleAttempt(RecycleJob Job, RecycleResult? Result, string? Error, bool CancelledBeforeMove = false);
 
-    private readonly Queue<RecycleJob> _queuedRecycles = new();
+    private readonly ObservableCollection<RecycleJob> _queuedRecycles = [];
     private RecycleJob? _activeRecycle;
     private Task? _recycleTask;
     private CancellationTokenSource? _recycleWork;
     private CancellationTokenSource? _recycleRefreshWork;
     private TaskCompletionSource? _recycleStateChanged;
     private bool _scanStale;
-    private int _queuedRecyclesCancelled, _foregroundWorkVersion;
+    private int _queuedRecyclesCancelled, _queuedRecyclesRemoved, _foregroundWorkVersion;
     private (string Status, string? Path)? _recycleCheck;
     private string? _recycleSummary, _recycleDetails;
 
@@ -141,7 +145,7 @@ public partial class MainWindow
         }
 
         var jobs = review.Targets.Select(target => new RecycleJob(target)).ToArray();
-        foreach (var job in jobs) _queuedRecycles.Enqueue(job);
+        foreach (var job in jobs) _queuedRecycles.Add(job);
         _recycleRefreshWork?.Cancel();
         SignalRecycleStateChange();
         if (_recycleTask is null)
@@ -248,9 +252,9 @@ public partial class MainWindow
         finally
         {
             foreach (var attempt in attempts) attempt.Job.Completion.TrySetResult(null);
-            while (_queuedRecycles.TryDequeue(out var job)) job.Completion.TrySetResult(null);
+            DiscardWaitingRecycles();
             _recycleTask = null;
-            _queuedRecyclesCancelled = 0;
+            _queuedRecyclesCancelled = _queuedRecyclesRemoved = 0;
             SignalRecycleStateChange();
             if (!_closing) { UpdateRecycleActivity(); UpdateUpdateButton(); RefreshDeferredRecycleGroups(); }
         }
@@ -258,13 +262,15 @@ public partial class MainWindow
 
     private async Task MoveQueuedFoldersAsync(List<RecycleAttempt> attempts, ScanLog log)
     {
-        while (!_closing && _queuedRecycles.TryDequeue(out var job))
+        while (!_closing && _queuedRecycles.Count > 0)
         {
+            var job = _queuedRecycles[0];
             using var work = new CancellationTokenSource();
             _activeRecycle = job;
             _recycleWork = work;
             try
             {
+                RemoveWaitingRecycleAt(0);
                 UpdateRecycleActivity();
                 attempts.Add(await RecycleOneAsync(job, work.Token, log));
             }
@@ -284,6 +290,7 @@ public partial class MainWindow
             summary.Add("Move stopped. Some contents may have moved");
         int skipped = _queuedRecyclesCancelled + attempts.Count(attempt => attempt.CancelledBeforeMove);
         if (skipped > 0) summary.Add($"{FolderCount(skipped)} cancelled before moving");
+        if (_queuedRecyclesRemoved > 0) summary.Add($"{FolderCount(_queuedRecyclesRemoved)} removed from the queue");
         int failed = attempts.Count(attempt => attempt.Error is not null);
         if (attempts.FirstOrDefault(attempt => attempt.Error is not null) is { } failure)
         {
@@ -456,6 +463,7 @@ public partial class MainWindow
         else status = _recycleCheck?.Status ?? _recycleSummary;
 
         CancelRecycleButton.Visibility = canCancel ? Visibility.Visible : Visibility.Collapsed;
+        RecycleQueueButton.Visibility = queued > 0 || RecycleQueuePopup.IsOpen ? Visibility.Visible : Visibility.Collapsed;
         RecycleStatusText.Text = status ?? "";
         RecycleStatusText.ToolTip = path ?? (_recycleTask is null ? _recycleDetails : null);
         RecycleActivity.Visibility = string.IsNullOrEmpty(status) ? Visibility.Collapsed : Visibility.Visible;
@@ -465,8 +473,73 @@ public partial class MainWindow
     {
         _recycleWork?.Cancel();
         _queuedRecyclesCancelled += _queuedRecycles.Count;
-        while (_queuedRecycles.TryDequeue(out var job)) job.Completion.TrySetResult(null);
+        DiscardWaitingRecycles();
         UpdateRecycleActivity();
+    }
+
+    private void DiscardWaitingRecycles()
+    {
+        if (_queuedRecycles.Count == 0) return;
+        bool restoreFocus = RecycleQueueList.IsKeyboardFocusWithin;
+        foreach (var job in _queuedRecycles) job.Completion.TrySetResult(null);
+        _queuedRecycles.Clear();
+        if (restoreFocus) FocusRecycleQueue();
+    }
+
+    private void ShowRecycleQueue_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_closing && _queuedRecycles.Count > 0) RecycleQueuePopup.IsOpen = true;
+    }
+
+    private void RecycleQueue_Opened(object? sender, EventArgs e)
+    {
+        RecycleQueueList.ItemsSource = _queuedRecycles;
+        FocusRecycleQueue();
+    }
+
+    private void RecycleQueue_Closed(object? sender, EventArgs e)
+    {
+        RecycleQueueList.ItemsSource = null;
+        if (!_closing) UpdateRecycleActivity();
+    }
+
+    private void RecycleQueue_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        e.Handled = true;
+        RecycleQueuePopup.IsOpen = false;
+        if (_queuedRecycles.Count > 0 && RecycleQueueButton.IsVisible) RecycleQueueButton.Focus();
+        else if (ExploreTab.IsChecked == true && ExplorePanel.IsEnabled) RestoreExplorerFocus(new(null));
+        else DiagnosticsToggle.Focus();
+    }
+
+    private void RemoveQueuedRecycle_Click(object sender, RoutedEventArgs e)
+    {
+        // A click can outlive its row. Match the specific waiting job, so an
+        // item that has started or has since been requeued is unaffected.
+        if (_closing || sender is not Button { DataContext: RecycleJob job }) return;
+        int index = _queuedRecycles.IndexOf(job);
+        if (index < 0) return;
+        RemoveWaitingRecycleAt(index);
+        _queuedRecyclesRemoved++;
+        job.Completion.TrySetResult(null);
+        UpdateRecycleActivity();
+    }
+
+    private void RemoveWaitingRecycleAt(int index)
+    {
+        bool restoreFocus = RecycleQueueList.IsKeyboardFocusWithin && Keyboard.FocusedElement is DependencyObject focused
+            && ItemsControl.ContainerFromElement(RecycleQueueList, focused) is ListBoxItem { DataContext: RecycleJob focusedJob }
+            && ReferenceEquals(focusedJob, _queuedRecycles[index]);
+        _queuedRecycles.RemoveAt(index);
+        if (restoreFocus) FocusRecycleQueue();
+    }
+
+    private void FocusRecycleQueue()
+    {
+        if (!RecycleQueuePopup.IsOpen || _closing) return;
+        if (_queuedRecycles.Count > 0) RecycleQueueList.Focus();
+        else RecycleQueuePanel.Focus();
     }
 
     internal void MarkScanStale(string message, IEnumerable<ScanRecheckRequest>? scopes = null)

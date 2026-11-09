@@ -311,8 +311,43 @@
             <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="20" ClipToBounds="True" Margin="0,6,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
             <DockPanel x:Name="RecycleActivity" Visibility="Collapsed" Margin="0,6,0,0">
                 <Button x:Name="CancelRecycleButton" DockPanel.Dock="Right" Content="Cancel recycling" Click="CancelRecycle_Click" Padding="10,4" MinHeight="28" Margin="10,0,0,0" ToolTip="Stop the current move and clear queued folders." />
+                <Button x:Name="RecycleQueueButton" DockPanel.Dock="Right" Content="View queue" Visibility="Collapsed" Click="ShowRecycleQueue_Click" Padding="10,4" MinHeight="28" Margin="10,0,0,0" AutomationProperties.Name="View folders waiting to recycle" />
                 <TextBlock x:Name="RecycleStatusText" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" AutomationProperties.HelpText="{Binding ToolTip, RelativeSource={RelativeSource Self}}" />
             </DockPanel>
+            <Popup x:Name="RecycleQueuePopup" Placement="Top" PlacementTarget="{Binding ElementName=RecycleQueueButton}" StaysOpen="False"
+                   AllowsTransparency="True" Opened="RecycleQueue_Opened" Closed="RecycleQueue_Closed">
+                <Border x:Name="RecycleQueuePanel" Style="{StaticResource Card}" Background="{DynamicResource WindowBackground}" Width="440" Padding="10"
+                        Focusable="True" KeyboardNavigation.TabNavigation="Cycle" PreviewKeyDown="RecycleQueue_KeyDown">
+                    <StackPanel>
+                        <TextBlock Text="Waiting folders" FontWeight="SemiBold" Margin="4,0,0,6" />
+                        <TextBlock Text="No folders waiting" Margin="4,2,0,4" AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers><DataTrigger Binding="{Binding HasItems, ElementName=RecycleQueueList}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ListBox x:Name="RecycleQueueList" BorderThickness="0" Background="Transparent" MaxHeight="220"
+                                 ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Standard" AutomationProperties.Name="Waiting folders in recycle order">
+                            <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /></Style></ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="3,3">
+                                        <Button DockPanel.Dock="Right" Content="Remove" Click="RemoveQueuedRecycle_Click" Padding="8,3" MinHeight="28" Margin="10,0,0,0"
+                                                VerticalAlignment="Center" AutomationProperties.Name="{Binding Target.Path, StringFormat='Remove {0} from the recycle queue'}" />
+                                        <StackPanel ToolTip="{Binding Target.Path}">
+                                            <TextBlock Text="{Binding FolderName}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Target.Path}" FontSize="11" Opacity="0.72" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+                </Border>
+            </Popup>
             <Border x:Name="DiagnosticsPanel" Margin="0,12,0,0">
                 <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=DiagnosticsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
                 <StackPanel>

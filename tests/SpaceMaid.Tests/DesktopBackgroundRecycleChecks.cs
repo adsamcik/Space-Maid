@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -191,6 +192,7 @@ public sealed partial class DesktopTests
             string sibling = Folder("batch-sibling", 8192);
             string background = Folder("batch-background", 4096);
             string pending = Folder("batch-pending", 4096);
+            string removed = Folder("batch-keep", 2048);
             string file = Path.Join(fixture.Path, "batch-file.txt");
             File.WriteAllText(file, "Keep this file");
             window.SetScanTarget(fixture.Path);
@@ -228,24 +230,66 @@ public sealed partial class DesktopTests
 
             HoldMutationLease();
             var pendingJob = Queue(pending);
-            Select(parent, nested, sibling, file, pending);
-            var batchPaths = BatchPathsInTreeOrder();
+            Select(parent, nested, sibling, file, pending, removed);
+            var batchPaths = BatchPathsInTreeOrder(parent, sibling, removed);
             Task<RecycleResult?[]>? batch = null;
             ReviewBatch(() =>
             {
                 batch = window.RecycleSelectedFoldersAsync();
                 for (int index = 0; index < batchPaths.Length; index++) jobs.Add((batchPaths[index], ResultAt(batch, index)));
-            }, approve: true, skipped: [file, pending]);
-            PumpUntil(() => status.Text == "Recycling batch-pending… · 2 queued", TimeSpan.FromSeconds(5));
+            }, approve: true, skipped: [file, pending], expected: batchPaths);
+            PumpUntil(() => status.Text == "Recycling batch-pending… · 3 queued", TimeSpan.FromSeconds(5));
+            CheckQueueRemoval(batchPaths, removed);
+            Assert.False(pendingJob.IsCompleted);
+            Assert.Equal("Recycling batch-pending… · 2 queued", status.Text);
             Assert.True(((Grid)window.FindName("ExplorePanel")).IsEnabled);
             ReleaseMutationLease();
             Assert.False(Assert.IsType<RecycleResult>(Finish(pendingJob)).Cancelled);
             var results = Finish(batch!);
-            Assert.Equal(2, results.Length);
-            Assert.All(results, result => Assert.False(Assert.IsType<RecycleResult>(result).Cancelled));
+            Assert.Equal(3, results.Length);
+            for (int index = 0; index < batchPaths.Length; index++)
+                if (batchPaths[index] == removed) Assert.Null(results[index]);
+                else Assert.False(Assert.IsType<RecycleResult>(results[index]).Cancelled);
             Assert.False(Directory.Exists(parent) || Directory.Exists(sibling));
             Assert.True(File.Exists(file));
-            AssertSelection(file);
+            Assert.True(File.Exists(Path.Join(removed, "payload.bin")));
+            Assert.Contains("1 folder removed from the queue", status.Text);
+            AssertSelection(file, removed);
+
+            void CheckQueueRemoval(string[] waitingPaths, string pathToRemove)
+            {
+                var queueButton = (Button)window.FindName("RecycleQueueButton");
+                var popup = (Popup)window.FindName("RecycleQueuePopup");
+                var panel = (Border)window.FindName("RecycleQueuePanel");
+                var list = (ListBox)window.FindName("RecycleQueueList");
+                Assert.True(queueButton.IsVisible);
+                Assert.True(queueButton.Focus());
+                queueButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => popup.IsOpen && RemoveButtons().Length == waitingPaths.Length, TimeSpan.FromSeconds(5));
+                Assert.Equal(waitingPaths.Select(RemoveName), RemoveButtons().Select(AutomationProperties.GetName));
+                Assert.True(panel.IsKeyboardFocusWithin);
+                RenderMenu(panel, Path.Join(artifactRoot, "artifacts", "ui", "recycle-waiting-queue.png"));
+
+                var remove = RemoveButtons().Single(button => AutomationProperties.GetName(button) == RemoveName(pathToRemove));
+                Assert.True(remove.Focus());
+                remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.True(popup.IsOpen);
+                Assert.True(panel.IsKeyboardFocusWithin);
+                Assert.Equal(waitingPaths.Length - 1, list.Items.Count);
+                remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); // An obsolete row cannot remove another job.
+                panel.UpdateLayout();
+                Assert.Equal(waitingPaths.Where(path => path != pathToRemove).Select(RemoveName), RemoveButtons().Select(AutomationProperties.GetName));
+
+                var escape = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(panel), Environment.TickCount, Key.Escape)
+                    { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                panel.RaiseEvent(escape);
+                Assert.True(escape.Handled);
+                Assert.False(popup.IsOpen);
+                Assert.True(queueButton.IsKeyboardFocused);
+
+                Button[] RemoveButtons() => Descendants(list).OfType<Button>().Where(button => Equals(button.Content, "Remove")).ToArray();
+                static string RemoveName(string path) => $"Remove {path} from the recycle queue";
+            }
 
             void Select(string first, params string[] others)
             {
@@ -266,9 +310,9 @@ public sealed partial class DesktopTests
                 return Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(index));
             }
 
-            void ReviewBatch(Action request, bool approve, string[] skipped)
+            void ReviewBatch(Action request, bool approve, string[] skipped, string[]? expected = null)
             {
-                var expected = BatchPathsInTreeOrder();
+                var targetPaths = expected ?? BatchPathsInTreeOrder(parent, sibling);
                 int reviewed = 0;
                 Exception? failure = null;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
@@ -280,7 +324,7 @@ public sealed partial class DesktopTests
                     reviewed++;
                     try
                     {
-                        Assert.Equal(expected, ((TextBox)dialog.FindName("TargetPath")).Text.Split(Environment.NewLine));
+                        Assert.Equal(targetPaths, ((TextBox)dialog.FindName("TargetPath")).Text.Split(Environment.NewLine));
                         Assert.Contains("1 included with selected parents", ((TextBlock)dialog.FindName("SelectionNote")).Text);
                         Assert.Contains($"{skipped.Length} skipped", ((TextBlock)dialog.FindName("SelectionNote")).Text);
                         foreach (string path in skipped) Assert.Contains(path, ((TextBox)dialog.FindName("SkippedEntries")).Text);
@@ -303,10 +347,10 @@ public sealed partial class DesktopTests
                 Assert.Equal(1, reviewed);
             }
 
-            string[] BatchPathsInTreeOrder()
+            string[] BatchPathsInTreeOrder(params string[] paths)
             {
                 var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
-                return new[] { parent, sibling }.OrderBy(path => rows.Find(rows.Scan.FindEntry(path)!.Value)).ToArray();
+                return paths.OrderBy(path => rows.Find(rows.Scan.FindEntry(path)!.Value)).ToArray();
             }
 
             static async Task<RecycleResult?> ResultAt(Task<RecycleResult?[]> results, int index) => (await results).ElementAtOrDefault(index);

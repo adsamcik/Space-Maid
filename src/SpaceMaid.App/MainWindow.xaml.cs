@@ -163,6 +163,7 @@ public partial class MainWindow : Window
         var scanHelper = _scanHelper;
         SaveColumnLayout();
         _closing = true; _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _updateTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _recycleWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
+        RecycleQueuePopup.IsOpen = false;
         e.Cancel = true;
         bool workersStopped = true;
         try
