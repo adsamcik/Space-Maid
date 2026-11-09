@@ -37,6 +37,11 @@ public partial class RecycleLeftoversWindow : Window
         _read = read;
         InitializeComponent();
         ScopeText.Text = $"Recycle Bin leftovers on {drive} · Your Windows account";
+        var closeOnStop = lifetime.Register(() => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (IsVisible) Close();
+        })));
+        Closed += (_, _) => closeOnStop.Dispose();
     }
 
     private async void Load_Click(object sender, RoutedEventArgs e) => await RunAsync(async token =>
@@ -109,7 +114,12 @@ public partial class RecycleLeftoversWindow : Window
         catch (OperationCanceledException) { if (_review is null) _message = "Review stopped. Refresh to try again."; }
         catch (Exception error) when (CleanupBatch.IsExpected(error) || error is OverflowException)
         { _message = error.Message; }
-        finally { _work = null; UpdateActions(); }
+        finally
+        {
+            _work = null;
+            if (_lifetime.IsCancellationRequested && IsVisible) Close();
+            else UpdateActions();
+        }
     }
 
     private void UpdateActions()

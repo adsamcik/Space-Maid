@@ -1,4 +1,3 @@
-using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Contracts;
 using System.IO;
 using System.Security.Principal;
@@ -13,7 +12,7 @@ public partial class MainWindow
     private RecycleBinSnapshot? _recycleBin;
     private int _recycleBinVersion;
     private OpportunityRecycleBinState? _recycleBinPresentation;
-    private void ShowRecycleBin(string root, string size, string count, bool canEmpty, string hint = "Your Recycle Bin on this drive. Emptying permanently deletes its current contents.")
+    private void ShowRecycleBin(string root, string size, string count, bool canEmpty, string hint = "Size and count reported by Windows for your account. Cleanup also checks for leftovers.")
     {
         _recycleBinPresentation = new("Recycle Bin · " + root, size, count, hint, canEmpty);
         OpportunityBrowser?.UpdateRecycleBin(_recycleBinPresentation);
@@ -34,8 +33,8 @@ public partial class MainWindow
             var bin = await Operations.QueryRecycleBinAsync(root);
             if (_closing || version != _recycleBinVersion) return;
             _recycleBin = bin;
-            ShowRecycleBin(root, SizeText.Format(bin.Bytes), bin.Items == 0 ? "Empty" : $"{bin.Items:N0} {(bin.Items == 1 ? "item" : "items")}",
-                bin.Items > 0 && _work is null && !_browsing && !_openingPath);
+            ShowRecycleBin(root, SizeText.Format(bin.Bytes), bin.Items == 0 ? "No listed items" : $"{bin.Items:N0} {(bin.Items == 1 ? "item" : "items")}",
+                _work is null && !_browsing && !_openingPath);
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {
@@ -69,6 +68,11 @@ public partial class MainWindow
     private async Task EmptyRecycleBinAsync(string root)
     {
         if (_closing || _work is not null || _browsing || _openingPath) return;
+        if (_recycleTask is not null)
+        {
+            StatusText.Text = "Wait for queued moves to finish before cleaning up the Recycle Bin.";
+            return;
+        }
         var task = EmptyRecycleBinCoreAsync(root); _cleanupTask = task;
         try { await task; }
         finally { if (ReferenceEquals(_cleanupTask, task)) _cleanupTask = null; UpdateUpdateButton(); }
@@ -76,38 +80,61 @@ public partial class MainWindow
 
     private async Task EmptyRecycleBinCoreAsync(string root)
     {
-        const string emptyMessage = "Windows reports your Recycle Bin is empty.";
+        const string emptyMessage = "Windows lists no items in your Recycle Bin.";
         var scan = _snapshot; string? scannedVolume = _snapshotVolumeId, confirmedVolume = null;
         var operations = Operations;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("empty-recycle-bin", root);
         _work = work; ++_recycleBinVersion;
         SetBusy(true);
-        bool started = false;
+        bool started = false, leftoversChanged = false;
         string message = "Recycle Bin unchanged.";
         try
         {
             StatusText.Text = "Checking Recycle Bin…";
             var bin = await operations.QueryRecycleBinAsync(root); confirmedVolume = bin.VolumeId;
             if (_closing || work.IsCancellationRequested) return;
-            if (bin.Items == 0) { message = emptyMessage; return; }
-            var confirmation = new EmptyRecycleBinWindow(bin) { Owner = this };
-            bool accepted;
-            using (work.Token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
-                { if (confirmation.IsVisible) confirmation.Close(); }))))
-                accepted = confirmation.ShowDialog() == true;
-            if (!accepted || _closing || work.IsCancellationRequested) return;
-            log.Record("recycle-bin-confirmed", bin);
-            // Windows owns its progress UI. Its Shell call has no managed
-            // cancellation hook, so keep the owner alive until the call returns.
-            CancelButton.Visibility = Visibility.Collapsed;
-            StatusText.Text = "Emptying Recycle Bin on " + bin.RootPath + "…";
-            started = true;
-            var result = await operations.EmptyRecycleBinAsync(bin, new WindowInteropHelper(this).Handle, work.Token, log.Record);
-            message = result.Remaining.Items == 0 ? emptyMessage
-                : $"{result.Remaining.Items:N0} items remain in the Recycle Bin.";
-            if (result.Cancelled) message = "Cleanup cancelled. " + message;
-            log.Record("recycle-bin-result", result);
+            if (bin.Items > 0)
+            {
+                var binLink = string.Equals(scannedVolume, bin.VolumeId, StringComparison.OrdinalIgnoreCase)
+                    ? scan?.FindEntry(Path.Combine(root, "$Recycle.Bin")) ?? scan?.FindEntry(Path.Combine(root, "Recycler")) : null;
+                long? scanBytes = scan is not null && binLink is { } link && scan.Entry(link) is { IsDirectory: true } entry
+                    ? scan.HasAllocationData ? entry.AllocatedBytes : entry.LogicalBytes : null;
+                if (!Confirm(new(bin, scanBytes, scan?.HasAllocationData == true))) return;
+                log.Record("recycle-bin-confirmed", bin);
+                // The Shell call has no managed cancellation hook. Retain its owner until it returns.
+                CancelButton.Visibility = Visibility.Collapsed;
+                StatusText.Text = "Emptying Recycle Bin on " + bin.RootPath + "…";
+                started = true;
+                var result = await operations.EmptyRecycleBinAsync(bin, new WindowInteropHelper(this).Handle, work.Token, log.Record);
+                message = result.Remaining.Items == 0 ? "Windows-listed items cleared."
+                    : $"Windows still lists {result.Remaining.Items:N0} items in your Recycle Bin.";
+                log.Record("recycle-bin-result", result);
+                if (result.Cancelled) { message = "Cleanup cancelled. " + message; return; }
+                if (result.Remaining.Items > 0) return;
+                bin = result.Remaining;
+            }
+            else message = emptyMessage;
+
+            if (_closing || work.IsCancellationRequested) return;
+            CancelButton.Visibility = Visibility.Visible;
+            StatusText.Text = "Checking for Recycle Bin leftovers…";
+            try
+            {
+                if (!await operations.HasRecycleLeftoversAsync(bin, work.Token) || _closing || work.IsCancellationRequested) return;
+                if (!Confirm(new(bin.RootPath))) { message += " Leftovers kept."; return; }
+
+                var review = new RecycleLeftoversWindow(operations, bin.RootPath, work.Token,
+                    token => operations.ReviewRecycleLeftovers(bin, token)) { Owner = this };
+                review.ShowDialog();
+                leftoversChanged = review.Changed;
+                if (leftoversChanged) message += " Leftover storage updated.";
+            }
+            catch (Exception error) when (CleanupBatch.IsExpected(error))
+            {
+                log.Record("recycle-bin-leftovers-check-failed", new { Error = error.ToString() });
+                message += error is OperationCanceledException ? " Leftover check stopped." : " Could not check leftovers. See Details.";
+            }
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {
@@ -122,7 +149,7 @@ public partial class MainWindow
                 if (!_closing)
                 {
                     RefreshPathDriveSpace();
-                    if (started && scan is not null && ReferenceEquals(scan, _snapshot))
+                    if ((started || leftoversChanged) && scan is not null && ReferenceEquals(scan, _snapshot))
                     {
                         string binPath = Path.Combine(root, "$Recycle.Bin");
                         IReadOnlyList<ScanRecheckRequest> requests = [];
@@ -131,7 +158,7 @@ public partial class MainWindow
                             using var identity = WindowsIdentity.GetCurrent();
                             string sid = identity.User?.Value ?? throw new IOException("Windows account could not be checked.");
                             string userBin = Path.Combine(binPath, sid);
-                            requests = RecycleBinRefreshScopes(scan, binPath, userBin, DiskAccess.Default.DirectoryExists(userBin), DiskAccess.Default.DirectoryExists(binPath));
+                            requests = RecycleBinRefreshScopes(scan, binPath, userBin, operations.Files.DirectoryExists(userBin), operations.Files.DirectoryExists(binPath));
                             if (requests.Count > 0)
                             {
                                 var current = await operations.QueryRecycleBinAsync(root);
@@ -148,7 +175,7 @@ public partial class MainWindow
                                 MarkScanStale(message + " Recheck to update results.", requests.Count > 0 ? requests : [new(binPath)]);
                         }
                     }
-                    StatusText.Text = message + (_scanStale && started ? " Recheck to update results." : "");
+                    StatusText.Text = message + (_scanStale && (started || leftoversChanged) ? " Recheck to update results." : "");
                     ShowActionLogError(log);
                 }
             }
@@ -157,6 +184,14 @@ public partial class MainWindow
                 _work = null;
                 if (!_closing) SetBusy(false);
             }
+        }
+
+        bool Confirm(EmptyRecycleBinWindow dialog)
+        {
+            dialog.Owner = this;
+            using var registration = work.Token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
+                { if (dialog.IsVisible) dialog.Close(); })));
+            return dialog.ShowDialog() == true && !_closing && !work.IsCancellationRequested;
         }
     }
 

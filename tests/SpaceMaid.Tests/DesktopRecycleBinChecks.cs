@@ -84,11 +84,11 @@ public sealed partial class DesktopTests
         var row = rows.Row(rows.Find(scan.PrimaryLink(bin)));
         Assert.Equal("Recycle Bin storage", row.Name);
         Assert.Equal("6 GiB", row.Allocated);
-        Assert.Contains("Cleanup shows the items Windows lists for your account", row.SizeNote);
+        Assert.Contains("Cleanup checks your account", row.SizeNote);
         var map = (TreemapPanel)window.FindName("SpaceMap");
         var tile = map.Buttons.Single(button => ((SpaceContribution)button.DataContext).Path == root + "$Recycle.Bin");
         Assert.StartsWith("Recycle Bin storage, 6 GiB", AutomationProperties.GetName(tile));
-        Assert.Contains("leftover files and other accounts", Assert.IsType<TextBlock>(tile.ToolTip).Text);
+        Assert.Contains("leftover files and other Windows accounts", Assert.IsType<TextBlock>(tile.ToolTip).Text);
         foreach (var size in new[] { (1220, 910), (1020, 790) })
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-bin-storage-{size.Item1}.png"), size.Item1, size.Item2);
 
@@ -97,17 +97,24 @@ public sealed partial class DesktopTests
         var refreshed = window.RefreshRecycleBinAsync();
         PumpUntil(() => refreshed.IsCompleted, TimeSpan.FromSeconds(3));
         refreshed.GetAwaiter().GetResult();
-        Assert.Equal("Empty", ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text);
-        Assert.False(((Button)OpportunityControl(window, "EmptyRecycleBinButton")).IsEnabled);
+        Assert.Equal("No listed items", ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text);
+        Assert.True(((Button)OpportunityControl(window, "EmptyRecycleBinButton")).IsEnabled);
     }
 
     private static void CheckRecycleBinCleanup(MainWindow window, Application app, string artifactRoot)
     {
+        using var fixture = new TestDirectory();
+        string payload = Path.Join(fixture.Path, "$Rleftover.txt");
         string root = Path.GetPathRoot(window.CurrentPath)!;
         long items = 3, bytes = GiB(6); int emptyCalls = 0;
+        int leftoverChecks = 0;
         var roots = new List<string>();
         var operations = new FileOperations(recycleBins: new(path => "fixture-" + path, _ => (bytes, items), (_, path) =>
-        { roots.Add(path); emptyCalls++; bytes = 0; items = 0; return 0; }));
+        { roots.Add(path); emptyCalls++; bytes = 0; items = 0; return 0; }, (files, _, token) =>
+        {
+            Interlocked.Increment(ref leftoverChecks);
+            return files.HasRecycleLeftoversAt(fixture.Path, token);
+        }, (files, _, token) => files.ReviewRecycleLeftoversAt(fixture.Path, DateTime.UtcNow.AddMinutes(1), token)));
         window.Operations = operations;
         ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
         ((ComboBox)OpportunityControl(window, "OpportunityGroupingPicker")).SelectedIndex = 0;
@@ -128,14 +135,15 @@ public sealed partial class DesktopTests
         }
 #pragma warning restore WPF0001
         RunConfirmation(accept: false);
-        Assert.Equal(0, emptyCalls); Assert.Equal(3, items);
+        Assert.Equal(0, emptyCalls); Assert.Equal(3, items); Assert.Equal(0, leftoverChecks);
         RunConfirmation(accept: false, cancelWork: true);
-        Assert.Equal(0, emptyCalls); Assert.Equal(3, items);
+        Assert.Equal(0, emptyCalls); Assert.Equal(3, items); Assert.Equal(0, leftoverChecks);
         window.DriveSpaceProvider = _ => (GiB(500), GiB(24));
         RunConfirmation(accept: true);
-        PumpUntil(() => ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text == "Empty", TimeSpan.FromSeconds(3));
-        Assert.False(empty.IsEnabled); Assert.Equal(1, emptyCalls); Assert.Equal(root, Assert.Single(roots));
-        Assert.Contains("empty", ((TextBlock)window.FindName("StatusText")).Text, StringComparison.OrdinalIgnoreCase);
+        PumpUntil(() => ((TextBlock)OpportunityControl(window, "RecycleBinCount")).Text == "No listed items", TimeSpan.FromSeconds(3));
+        Assert.True(empty.IsEnabled); Assert.Equal(1, emptyCalls); Assert.Equal(root, Assert.Single(roots));
+        Assert.Equal(1, leftoverChecks);
+        Assert.Contains("Windows-listed items cleared", ((TextBlock)window.FindName("StatusText")).Text);
         PumpUntil(() => ((TextBlock)window.FindName("FreeSpaceText")).Text == "24 GiB", TimeSpan.FromSeconds(3));
         Assert.Contains("recycle-bin-native-finish", File.ReadAllText(Assert.IsType<string>(((Button)window.FindName("OpenLogButton")).ToolTip)));
         window.Operations = new(recycleBins: new(_ => null, _ => throw new InvalidOperationException("Unavailable query must not run."),
@@ -154,7 +162,7 @@ public sealed partial class DesktopTests
         var builder = new ScanBuilder();
         builder.RootIndex = builder.AddFile(new(new(1), FileAttributes.Directory, 0, 0, 0));
         int bin = builder.AddFile(new(new(2), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(bin, new(1), "$Recycle.Bin");
-        int recycled = builder.AddFile(new(new(3), FileAttributes.Normal, GiB(6), GiB(6), 0)); builder.AddLink(recycled, new(2), "$Rfixture");
+        int recycled = builder.AddFile(new(new(3), FileAttributes.Normal, GiB(39), GiB(39), 0)); builder.AddLink(recycled, new(2), "$Rfixture");
         int folder = builder.AddFile(new(new(4), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(folder, new(1), "Projects");
         int file = builder.AddFile(new(new(5), FileAttributes.Normal, GiB(2), GiB(2), 0)); builder.AddLink(file, new(4), "sample.bin");
         int legacy = builder.AddFile(new(new(6), FileAttributes.Directory, 0, 0, 0)); builder.AddLink(legacy, new(1), "Recycler");
@@ -162,6 +170,7 @@ public sealed partial class DesktopTests
         ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
         var initialized = window.InitializeExplorerAsync(scan, [], default);
         PumpUntil(() => initialized.IsCompleted, TimeSpan.FromSeconds(3)); initialized.GetAwaiter().GetResult();
+        typeof(MainWindow).GetField("_snapshotVolumeId", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, "fixture-" + root);
         var tree = (ListBox)window.FindName("SpaceTree");
         var explorer = Assert.IsType<ExplorerRows>(tree.ItemsSource);
         foreach (int directory in new[] { folder, legacy, bin })
@@ -193,50 +202,95 @@ public sealed partial class DesktopTests
         var capturedEmpty = Assert.IsType<MenuItem>(binTile.ContextMenu.Items[1]);
         Assert.Equal("Empty Recycle Bin…", capturedEmpty.Header);
         binTile.ContextMenu.IsOpen = false;
-        RunConfirmation(accept: false, menuItem: capturedEmpty);
+        RunConfirmation(accept: false, menuItem: capturedEmpty, scannedSize: "39 GiB");
         Assert.Equal(0, emptyCalls); Assert.Equal(3, items);
-        RunConfirmation(accept: true, menuItem: capturedEmpty);
+        File.WriteAllText(payload, "Keep this orphaned payload");
+        RunConfirmation(accept: true, menuItem: capturedEmpty, scannedSize: "39 GiB", reviewLeftovers: false);
         Assert.Equal(1, emptyCalls); Assert.Equal(root, Assert.Single(roots)); Assert.Equal(0, items);
+        Assert.Contains("Leftovers kept", ((TextBlock)window.FindName("StatusText")).Text);
+        RunConfirmation(accept: null, reviewLeftovers: true);
+        Assert.Equal(1, emptyCalls); // Windows already lists zero items, so review without another purge.
+        Assert.Equal(3, leftoverChecks);
+        Assert.Equal("Keep this orphaned payload", File.ReadAllText(payload));
         window.SetScanTarget(previousRoot);
         capturedEmpty.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         Assert.Equal(1, emptyCalls); // An old menu cannot empty a newly selected drive.
 
-        void RunConfirmation(bool accept, bool cancelWork = false, MenuItem? menuItem = null)
+        void RunConfirmation(bool? accept, bool cancelWork = false, MenuItem? menuItem = null,
+            string? scannedSize = null, bool? reviewLeftovers = null)
         {
-            Exception? failure = null; bool seen = false;
+            Exception? failure = null;
+            bool seen = false, sawAlert = false, sawReview = false;
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
             timer.Tick += (_, _) =>
             {
+                var review = app.Windows.OfType<RecycleLeftoversWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+                if (review is not null)
+                {
+                    if (!((Button)review.FindName("RefreshButton")).IsEnabled) return;
+                    try
+                    {
+                        Assert.Single(((DataGrid)review.FindName("EntryList")).Items);
+                        Assert.False(((Button)review.FindName("DeleteButton")).IsEnabled);
+                        sawReview = true;
+                    }
+                    catch (Exception error) { failure = error; timer.Stop(); }
+                    review.Close();
+                    return;
+                }
                 var dialog = app.Windows.OfType<EmptyRecycleBinWindow>().FirstOrDefault(candidate => candidate.IsVisible);
                 if (dialog is null) return;
-                timer.Stop(); seen = true;
                 try
                 {
                     Assert.True(((Button)dialog.FindName("KeepButton")).IsDefault);
                     Assert.Contains(root, ((TextBlock)dialog.FindName("BinScope")).Text);
-                    Assert.Contains("3 items", ((TextBlock)dialog.FindName("BinScope")).Text);
+                    if (dialog.Title == "Recycle Bin leftovers found")
+                    {
+                        Assert.False(sawAlert);
+                        sawAlert = true;
+                        Assert.True(reviewLeftovers.HasValue);
+                        Assert.Equal(0, items);
+                        Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "recycle-bin-leftovers-alert.png"), 460, 250);
+                        if (reviewLeftovers == true) ((Button)dialog.FindName("EmptyButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        else dialog.Close();
+                        return;
+                    }
+                    Assert.False(seen);
+                    seen = true;
+                    Assert.True(accept.HasValue);
+                    Assert.Contains("3 items listed by Windows", ((TextBlock)dialog.FindName("BinScope")).Text);
+                    Assert.Equal("6 GiB", ((TextBlock)dialog.FindName("BinSize")).Text);
+                    if (scannedSize is not null) Assert.Equal(scannedSize, ((TextBlock)dialog.FindName("ScanSize")).Text);
 #pragma warning disable WPF0001
                     foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
                     {
                         app.ThemeMode = theme;
-                        Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"empty-recycle-bin-{theme}.png"), 440, 250);
+                        Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"empty-recycle-bin-{theme}.png"), 460, 270);
+                        if (scannedSize is not null)
+                            Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"empty-recycle-bin-owner-{theme}.png"), 1220, 910);
                     }
 #pragma warning restore WPF0001
-                    if (cancelWork) ((Button)window.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                    else if (accept) ((Button)dialog.FindName("EmptyButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (cancelWork)
+                    {
+                        timer.Stop();
+                        ((Button)window.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    else if (accept == true) ((Button)dialog.FindName("EmptyButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     else dialog.Close();
                 }
-                catch (Exception error) { failure = error; dialog.Close(); }
+                catch (Exception error) { failure = error; timer.Stop(); dialog.Close(); }
             };
             timer.Start();
             try
             {
                 var action = menuItem is null ? window.EmptySelectedRecycleBinAsync() : null;
                 menuItem?.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-                PumpUntil(() => action?.IsCompleted ?? ((Button)window.FindName("ScanButton")).IsEnabled, TimeSpan.FromSeconds(5));
+                PumpUntil(() => action?.IsCompleted ?? ((Button)window.FindName("ScanButton")).IsEnabled, TimeSpan.FromSeconds(10));
                 action?.GetAwaiter().GetResult();
                 if (failure is not null) throw failure;
-                Assert.True(seen);
+                Assert.Equal(accept.HasValue, seen);
+                Assert.Equal(reviewLeftovers.HasValue, sawAlert);
+                Assert.Equal(reviewLeftovers == true, sawReview);
             }
             finally { timer.Stop(); }
         }

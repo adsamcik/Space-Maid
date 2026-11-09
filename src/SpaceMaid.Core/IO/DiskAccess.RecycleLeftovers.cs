@@ -12,12 +12,35 @@ public sealed partial class DiskAccess
 {
     public RecycleLeftoverReview ReviewRecycleLeftovers(string drive, CancellationToken token)
     {
-        if (drive.Length != 3 || !char.IsAsciiLetter(drive[0]) || drive[1] != ':' || drive[2] != '\\'
-            || GetDrive(drive).DriveType != DriveType.Fixed || !CanUseNtfs(drive))
+        if (!SupportsRecycleLeftovers(drive))
             throw new IOException("Choose a local fixed NTFS drive.");
+        return ReviewRecycleLeftoversAt(AccountRecycleBinPath(drive), DateTime.UtcNow.AddDays(-1), token);
+    }
+
+    public bool HasRecycleLeftovers(string drive, CancellationToken token)
+        => SupportsRecycleLeftovers(drive) && HasRecycleLeftoversAt(AccountRecycleBinPath(drive), token);
+
+    internal bool HasRecycleLeftoversAt(string bin, CancellationToken token)
+    {
+        LeftoverDirectoryLease directories;
+        try { directories = PinLeftoverDirectories(bin, destination: false, token); }
+        catch (Win32Exception error) when (error.NativeErrorCode is 2 or 3) { return false; }
+        using (directories)
+        {
+            int budget = 250_000;
+            return ReadUnmatchedLeftoverNames(directories.Last, ref budget, token).Any();
+        }
+    }
+
+    private bool SupportsRecycleLeftovers(string drive)
+        => drive.Length == 3 && char.IsAsciiLetter(drive[0]) && drive[1] == ':' && drive[2] == '\\'
+            && GetDrive(drive).DriveType == DriveType.Fixed && CanUseNtfs(drive);
+
+    private static string AccountRecycleBinPath(string drive)
+    {
         using var account = WindowsIdentity.GetCurrent();
         string sid = account.User?.Value ?? throw new IOException("Windows account could not be identified.");
-        return ReviewRecycleLeftoversAt(Path.Join(drive, "$Recycle.Bin", sid), DateTime.UtcNow.AddDays(-1), token);
+        return Path.Join(drive, "$Recycle.Bin", sid);
     }
 
     // Separate fixture entry point. The public path is always the current SID's
@@ -26,18 +49,13 @@ public sealed partial class DiskAccess
     {
         using var directories = PinLeftoverDirectories(bin, destination: false, token);
         var scope = InspectPermanentDeleteHandle(directories.Last);
-        CheckBinNameLookup(directories.Last);
         int budget = 250_000;
-        var names = ReadLeftoverNames(directories.Last, ref budget, token);
-        var allNames = names.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var names = ReadUnmatchedLeftoverNames(directories.Last, ref budget, token);
         var rows = new List<RecycleLeftover>();
         long cutoff = changedBefore.ToFileTimeUtc();
         foreach (var item in names)
         {
             token.ThrowIfCancellationRequested();
-            if (!item.Name.StartsWith("$R", StringComparison.OrdinalIgnoreCase) || item.Name.Length <= 2
-                || allNames.Contains(MateName(item.Name)) || !SafeLeftoverName(item.Name)) continue;
-
             var record = item.Record;
             long changed = item.Changed;
             ScanSnapshot? contents = null;
@@ -286,6 +304,15 @@ public sealed partial class DiskAccess
     }
 
     private sealed record LeftoverName(string Name, FileRecord Record, long Changed);
+
+    private IEnumerable<LeftoverName> ReadUnmatchedLeftoverNames(SafeFileHandle directory, ref int budget, CancellationToken token)
+    {
+        CheckBinNameLookup(directory);
+        var names = ReadLeftoverNames(directory, ref budget, token);
+        var allNames = names.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return names.Where(item => item.Name.Length > 2 && item.Name.StartsWith("$R", StringComparison.OrdinalIgnoreCase)
+            && SafeLeftoverName(item.Name) && !allNames.Contains(MateName(item.Name)));
+    }
 
     private List<LeftoverName> ReadLeftoverNames(SafeFileHandle directory, ref int budget, CancellationToken token)
     {

@@ -80,6 +80,19 @@ public sealed class RecycleBinTests
     }
 
     [Fact]
+    public async Task ChangedVolumeDiscardsLeftoverProbeAndPreventsReview()
+    {
+        string volume = "original";
+        var operations = new FileOperations(recycleBins: new(_ => volume, _ => (0, 0),
+            (_, _) => throw new InvalidOperationException("The Shell should not empty the bin."),
+            (_, _, _) => { volume = "replacement"; return true; },
+            (_, _, _) => throw new InvalidOperationException("The replacement volume should not be reviewed.")));
+        var bin = await operations.QueryRecycleBinAsync(@"G:\");
+        await Assert.ThrowsAsync<IOException>(() => operations.HasRecycleLeftoversAsync(bin, default));
+        Assert.Throws<IOException>(() => operations.ReviewRecycleLeftovers(bin, default));
+    }
+
+    [Fact]
     public async Task PartialAndNativeCancellationResultsNeverClaimAnEmptyBin()
     {
         long items = 2;

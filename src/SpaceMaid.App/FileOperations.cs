@@ -98,6 +98,10 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
             : CleanupMutationLease.RunAsync(() => Task.Run(() => CloudFiles.Execute(plan, progress, token, Files)), token);
 
     public Task<RecycleBinSnapshot> QueryRecycleBinAsync(string root) => _recycleBins.QueryAsync(root);
+    public Task<bool> HasRecycleLeftoversAsync(RecycleBinSnapshot confirmed, CancellationToken token)
+        => _recycleBins.HasLeftoversAsync(Files, confirmed, token);
+    public DiskAccess.RecycleLeftoverReview ReviewRecycleLeftovers(RecycleBinSnapshot confirmed, CancellationToken token)
+        => _recycleBins.ReviewLeftovers(Files, confirmed, token);
 
     public Task<RecycleBinCleanupResult> EmptyRecycleBinAsync(RecycleBinSnapshot confirmed, nint owner,
         CancellationToken token, Action<string, object>? diagnostic = null)

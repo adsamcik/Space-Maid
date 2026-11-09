@@ -168,6 +168,18 @@
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
                                ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Ctrl or Shift to select multiple entries. Use Left and Right to collapse and expand folders. Delete reviews selected folders for recycling.">
+                          <!-- Keep the themed tree readable while a foreground operation disables input. -->
+                          <ListView.Template>
+                              <ControlTemplate TargetType="ListView">
+                                  <ScrollViewer Style="{DynamicResource {x:Static GridView.GridViewScrollViewerStyleKey}}"
+                                                Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                                                CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                                                HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                                                VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}" Focusable="False">
+                                      <ItemsPresenter SnapsToDevicePixels="True" />
+                                  </ScrollViewer>
+                              </ControlTemplate>
+                          </ListView.Template>
                           <ListView.ContextMenu><ContextMenu /></ListView.ContextMenu>
                           <ListView.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
                           <ListView.ItemContainerStyle><Style TargetType="ListViewItem" BasedOn="{StaticResource TreeRow}" /></ListView.ItemContainerStyle>

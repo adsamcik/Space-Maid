@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using SpaceMaid.Core.IO;
 
 namespace SpaceMaid.App;
 
@@ -10,17 +11,47 @@ internal sealed record RecycleBinCleanupResult(bool Cancelled, RecycleBinSnapsho
 internal sealed class RecycleBinService
 {
     internal const string StorageName = "Recycle Bin storage";
-    internal const string StorageDescription = "Scanned storage on this drive can include leftover files and other accounts. Cleanup shows the items Windows lists for your account.";
+    internal const string StorageDescription = "Scanned storage can include leftover files and other Windows accounts. Cleanup checks your account for both Windows-listed items and leftovers.";
     private readonly Func<string, string?> _volume;
     private readonly Func<string, (long Bytes, long Items)> _query;
     private readonly Func<nint, string, int> _empty;
+    private readonly Func<DiskAccess, string, CancellationToken, bool> _hasLeftovers;
+    private readonly Func<DiskAccess, string, CancellationToken, DiskAccess.RecycleLeftoverReview> _reviewLeftovers;
     internal RecycleBinService() : this(DriveDiscovery.VolumeId, QueryNative,
         (owner, root) => SHEmptyRecycleBinW(owner, root, 0x1 | 0x4)) { }
     internal RecycleBinService(Func<string, string?> volume, Func<string, (long Bytes, long Items)> query,
         Func<nint, string, int> empty)
-    { _volume = volume; _query = query; _empty = empty; }
+        : this(volume, query, empty, (files, root, token) => files.HasRecycleLeftovers(root, token)) { }
+
+    internal RecycleBinService(Func<string, string?> volume, Func<string, (long Bytes, long Items)> query,
+        Func<nint, string, int> empty, Func<DiskAccess, string, CancellationToken, bool> hasLeftovers,
+        Func<DiskAccess, string, CancellationToken, DiskAccess.RecycleLeftoverReview>? reviewLeftovers = null)
+    {
+        _volume = volume; _query = query; _empty = empty; _hasLeftovers = hasLeftovers;
+        _reviewLeftovers = reviewLeftovers ?? ((files, root, token) => files.ReviewRecycleLeftovers(root, token));
+    }
 
     internal Task<RecycleBinSnapshot> QueryAsync(string root) => Task.Run(() => Query(root));
+    internal Task<bool> HasLeftoversAsync(DiskAccess files, RecycleBinSnapshot confirmed, CancellationToken token)
+        => Task.Run(() => OnConfirmedVolume(confirmed, root => _hasLeftovers(files, root, token)), token);
+
+    internal DiskAccess.RecycleLeftoverReview ReviewLeftovers(DiskAccess files, RecycleBinSnapshot confirmed, CancellationToken token)
+        => OnConfirmedVolume(confirmed, root => _reviewLeftovers(files, root, token));
+
+    private T OnConfirmedVolume<T>(RecycleBinSnapshot confirmed, Func<string, T> read)
+    {
+        string root = ValidateRoot(confirmed.RootPath);
+        RequireSameVolume();
+        T result = read(root);
+        RequireSameVolume();
+        return result;
+
+        void RequireSameVolume()
+        {
+            if (!confirmed.VolumeId.Equals(_volume(root), StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Drive changed. Check its Recycle Bin again.");
+        }
+    }
     private RecycleBinSnapshot Query(string root)
     {
         root = ValidateRoot(root);

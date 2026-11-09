@@ -126,6 +126,9 @@ public sealed partial class DesktopTests
                     BeginWorkflow("Recycle Bin storage and Windows cleanup scope");
                     CheckRecycleBinStorage(window, FindRepository());
                     CheckRecycleLeftoversReview(window, FindRepository());
+                    BeginWorkflow("Recycle Bin cleanup and optional leftover review");
+                    window.SetScanTarget(fixture.Path);
+                    CheckRecycleBinCleanup(window, app, FindRepository());
                     return;
                 }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-results")

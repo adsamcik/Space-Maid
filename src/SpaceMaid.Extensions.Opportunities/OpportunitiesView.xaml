@@ -99,7 +99,7 @@
                                 <TextBlock x:Name="RecycleBinSize" Text="—" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Right" ToolTip="Windows' bin size; actual released space may differ." />
                                 <TextBlock x:Name="RecycleBinCount" Text="Checking…" FontSize="11" Opacity="0.65" HorizontalAlignment="Right" Margin="0,4,0,0" />
                             </StackPanel>
-                            <Button x:Name="EmptyRecycleBinButton" Grid.Column="4" Content="Empty…" Click="EmptyRecycleBin_Click" IsEnabled="False" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="Empty Recycle Bin on selected drive" />
+                            <Button x:Name="EmptyRecycleBinButton" Grid.Column="4" Content="Clean up…" Click="EmptyRecycleBin_Click" IsEnabled="False" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="Clean up Recycle Bin on selected drive" />
                             <Button x:Name="RecycleLeftoversButton" Grid.Column="5" Content="Review leftovers…" Click="RecycleLeftovers_Click" Visibility="Collapsed" VerticalAlignment="Center" Padding="9,5" Margin="8,0,0,0"/>
                         </Grid>
                     </Border>

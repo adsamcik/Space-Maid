@@ -8,6 +8,27 @@ public sealed class RecycleLeftoverTests
 {
     [Fact]
     [Trait("Stage", "System")]
+    public void LeftoverCheckMatchesOnlyTopLevelUnpairedPayloads()
+    {
+        using var fixture = new TestDirectory();
+        string bin = Path.Join(fixture.Path, "account");
+        var files = DiskAccess.Default;
+        Assert.False(files.HasRecycleLeftoversAt(bin, default));
+        string folder = Directory.CreateDirectory(Path.Join(bin, "$Rpaired")).FullName;
+        File.WriteAllText(Path.Join(folder, "$Runmatched.txt"), "part of the paired folder");
+        File.WriteAllText(Path.Join(bin, "$ipaired"), "record");
+        File.WriteAllText(Path.Join(bin, "desktop.ini"), "metadata");
+        Assert.False(files.HasRecycleLeftoversAt(bin, default));
+
+        string payload = Path.Join(bin, "$Rleftover.txt");
+        File.WriteAllText(payload, "unmatched");
+        Assert.True(files.HasRecycleLeftoversAt(bin, default));
+        Assert.Equal("unmatched", File.ReadAllText(payload));
+        Assert.True(Directory.Exists(folder));
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
     public void RecoveryAndDeletionAffectOnlyApprovedUnpairedEntries()
     {
         using var fixture = new TestDirectory();

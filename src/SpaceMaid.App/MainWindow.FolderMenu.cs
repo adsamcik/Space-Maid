@@ -63,7 +63,7 @@ public partial class MainWindow
             {
                 Header = batch ? "Move selected folders to Recycle Bin…" : recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…",
                 IsEnabled = blocked is null,
-                ToolTip = recycleRoot is null ? blocked : $"Permanently deletes items Windows lists in your Recycle Bin on {recycleRoot}"
+                ToolTip = recycleRoot is null ? blocked : $"Clean up Windows-listed items and check for leftovers on {recycleRoot}"
             };
             ToolTipService.SetShowOnDisabled(recycle, true);
             recycle.Click += async (_, _) =>
