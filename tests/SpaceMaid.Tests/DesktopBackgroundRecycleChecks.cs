@@ -18,6 +18,7 @@ public sealed partial class DesktopTests
         string first = Folder("first", 8192);
         string second = Folder("second", 16384);
         string keep = Folder("keep", 4096);
+        string waiting = Folder("waiting", 4096);
         string child = Directory.CreateDirectory(Path.Join(keep, "child")).FullName;
         File.WriteAllBytes(Path.Join(child, "payload.bin"), new byte[4096]);
         window.SetScanTarget(fixture.Path);
@@ -44,7 +45,8 @@ public sealed partial class DesktopTests
             Assert.Contains("overlaps", ((TextBlock)window.FindName("StatusText")).Text);
 
             var secondJob = Queue(second);
-            PumpUntil(() => status.Text.StartsWith("2 pending", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+            PumpUntil(() => status.Text == "Recycling first… · 1 queued", TimeSpan.FromSeconds(5));
+            Assert.Equal(first, status.ToolTip);
             Assert.False(secondJob.IsCompleted);
             Assert.True(cancel.IsVisible);
             Browse(fixture.Path);
@@ -55,7 +57,7 @@ public sealed partial class DesktopTests
             FinishTask(window.SortTreeAsync(ScanSortColumn.Name));
             FinishTask(window.SetExplorerSizeBasisAsync(true));
             Assert.Equal(child, window.CurrentPath);
-            Assert.Contains("2 pending", status.Text);
+            Assert.Equal("Recycling first… · 1 queued", status.Text);
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", "background-recycle.png"), 1020, 790);
 
             ReleaseMutationLease();
@@ -70,15 +72,45 @@ public sealed partial class DesktopTests
             Assert.True(Assert.IsType<ExplorerRows>(tree.ItemsSource).IsExpanded(Snapshot().FindEntry(keep)!.Value));
             Assert.StartsWith("Name ", ((ButtonBase)window.FindName("NameHeader")).Content.ToString());
             Assert.False(Assert.IsType<ExplorerRows>(tree.ItemsSource).UseAllocation);
-            Assert.Contains("2 folders moved", status.Text);
+            const string moved = "2 folders moved to the Recycle Bin";
+            Assert.Equal(moved, status.Text);
+            Assert.Null(Finish(Queue(keep, approve: false)));
+            Assert.Equal(moved, status.Text);
 
             HoldMutationLease();
             var cancelled = Queue(keep);
-            PumpUntil(() => cancel.IsVisible && status.Text.Contains(keep, StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+            var skipped = Queue(waiting);
+            PumpUntil(() => cancel.IsVisible && status.Text == "Recycling keep… · 1 queued", TimeSpan.FromSeconds(5));
             cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Finish(cancelled);
+            Assert.True(Assert.IsType<RecycleResult>(Finish(cancelled)).Cancelled);
+            Assert.Null(Finish(skipped));
             Assert.True(File.Exists(Path.Join(child, "payload.bin")));
-            Assert.Contains("cancelled", status.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.True(Directory.Exists(waiting));
+            Assert.Equal("2 folders cancelled before moving", status.Text);
+            ReleaseMutationLease();
+
+            HoldMutationLease();
+            var replaced = Queue(waiting);
+            string original = Path.Join(fixture.Path, "original");
+            Directory.Move(waiting, original);
+            Folder("waiting", 2048);
+            ReleaseMutationLease();
+            Assert.Null(Finish(replaced));
+            Assert.True(Directory.Exists(waiting));
+            Assert.True(Directory.Exists(original));
+            Assert.Equal("Could not recycle waiting", status.Text);
+            var details = (ToggleButton)window.FindName("DiagnosticsToggle");
+            details.IsChecked = true;
+            var error = (TextBox)window.FindName("RecycleDiagnosticMessage");
+            Assert.True(error.IsVisible);
+            Assert.Contains(waiting, error.Text);
+            Assert.Contains("replaced since confirmation", error.Text);
+            details.IsChecked = false;
+
+            FinishTask(window.SetExplorerSizeBasisAsync(false));
+            CheckScanRootHandoff(keep, clearScan: false);
+            CheckScanRootHandoff(waiting, clearScan: true);
+            Assert.Equal(Visibility.Collapsed, error.Visibility);
         }
         finally
         {
@@ -98,7 +130,23 @@ public sealed partial class DesktopTests
 
         void Browse(string path) => FinishTask(window.NavigateToEntryAsync(Snapshot().FindEntry(path)!.Value));
 
-        Task<RecycleResult?> Queue(string path)
+        void CheckScanRootHandoff(string path, bool clearScan)
+        {
+            window.SetScanTarget(path);
+            Assert.True(Finish(window.ScanCurrentPathAsync()));
+            HoldMutationLease();
+            var job = Queue(path);
+            if (clearScan) window.SetScanTarget(path); // Same empty view as after a failed rescan.
+            ReleaseMutationLease();
+            Assert.False(Assert.IsType<RecycleResult>(Finish(job)).Cancelled);
+            Assert.False(Directory.Exists(path));
+            Assert.Equal(fixture.Path, window.CurrentPath);
+            Assert.Null(tree.ItemsSource);
+            Assert.True(((Button)window.FindName("ScanButton")).IsEnabled);
+            Assert.Contains("Scan this parent folder", ((TextBlock)window.FindName("StatusText")).Text);
+        }
+
+        Task<RecycleResult?> Queue(string path, bool approve = true)
         {
             Browse(path);
             string? reviewedPath = null;
@@ -108,7 +156,8 @@ public sealed partial class DesktopTests
                 var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault(candidate => candidate.IsVisible);
                 if (dialog is null) return;
                 reviewedPath = ((TextBox)dialog.FindName("TargetPath")).Text;
-                ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (approve) ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                else dialog.Close();
             };
             timer.Start();
             var task = window.DeleteSelectedFolderAsync();

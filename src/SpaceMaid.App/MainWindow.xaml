@@ -311,12 +311,13 @@
             <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="20" ClipToBounds="True" Margin="0,6,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
             <DockPanel x:Name="RecycleActivity" Visibility="Collapsed" Margin="0,6,0,0">
                 <Button x:Name="CancelRecycleButton" DockPanel.Dock="Right" Content="Cancel recycling" Click="CancelRecycle_Click" Padding="10,4" MinHeight="28" Margin="10,0,0,0" ToolTip="Stop the current move and clear queued folders." />
-                <TextBlock x:Name="RecycleStatusText" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
+                <TextBlock x:Name="RecycleStatusText" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" AutomationProperties.HelpText="{Binding ToolTip, RelativeSource={RelativeSource Self}}" />
             </DockPanel>
             <Border x:Name="DiagnosticsPanel" Margin="0,12,0,0">
                 <Border.Style><Style TargetType="Border" BasedOn="{StaticResource OptionsPanel}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=DiagnosticsToggle}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
                 <StackPanel>
                     <TextBox x:Name="DiagnosticMessage" Text="{Binding Text, ElementName=StatusText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="160" BorderThickness="0" Background="Transparent" Padding="0" AutomationProperties.Name="Full operation status" />
+                    <TextBox x:Name="RecycleDiagnosticMessage" Visibility="Collapsed" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="100" BorderThickness="0" Background="Transparent" Padding="0" Margin="0,8,0,0" AutomationProperties.Name="Recycle failure details" />
                     <TextBlock Text="{Binding Text, ElementName=BackendStatusText}" TextWrapping="Wrap" MaxHeight="44" ClipToBounds="True" FontSize="12" Opacity="0.7" Margin="0,10,0,0" ToolTip="{Binding Text, ElementName=BackendStatusText}" />
                     <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                         <Button x:Name="OpenLogButton" Content="Open log" Click="OpenLog_Click" Visibility="Collapsed" Padding="12,5" Margin="0,0,10,0" />

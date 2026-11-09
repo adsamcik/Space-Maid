@@ -58,7 +58,6 @@ public partial class MainWindow
         string note, CancellationToken token, ScanLog log, ScanSnapshot? prechecked = null,
         IReadOnlyList<Opportunity>? findings = null, bool background = false)
     {
-        int workVersion = _foregroundWorkVersion;
         if (!background)
         {
             StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
@@ -68,7 +67,8 @@ public partial class MainWindow
         var updated = prechecked ?? (background
             ? await Task.Run(() => Operations.RecheckAsync(scan, requests, token, log.Record), token)
             : await Operations.RecheckAsync(scan, requests, token, log.Record));
-        if (background && (workVersion != _foregroundWorkVersion || !ReferenceEquals(_snapshot, scan))) return false;
+        token.ThrowIfCancellationRequested();
+        if (_closing || !ReferenceEquals(_snapshot, scan)) return false;
         var analysis = await Task.Run(() =>
         {
             var classified = OpportunityExtensions.Analyze(updated, token);
@@ -84,7 +84,7 @@ public partial class MainWindow
         {
             if (background) await WaitForRecycleRefreshAsync(token, publishing: true);
             token.ThrowIfCancellationRequested();
-            if (_closing || !ReferenceEquals(_snapshot, scan) || background && workVersion != _foregroundWorkVersion) return false;
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return false;
             int revision = _explorerRevision, selectedLink = _selectedLink;
             string[] expanded = _explorer?.ExpandedPaths() ?? [];
             string selected = scan.EntryPath(selectedLink) ?? scan.RootPath;
@@ -96,7 +96,7 @@ public partial class MainWindow
                 expanded, selected, column, descending, _preferLogicalSize,
                 background ? token : CancellationToken.None, background ? _currentPath : null);
             if (background) token.ThrowIfCancellationRequested();
-            if (_closing || !ReferenceEquals(_snapshot, scan) || background && workVersion != _foregroundWorkVersion) return false;
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return false;
             if (!background || (!RecycleRefreshBlocked(publishing: true) && revision == _explorerRevision
                 && selectedLink == _selectedLink && grouped == _selectionIsGroup)) break;
         }
