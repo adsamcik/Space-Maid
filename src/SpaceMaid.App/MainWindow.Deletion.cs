@@ -21,14 +21,15 @@ public partial class MainWindow
 
     private sealed record RecycleAttempt(RecycleJob Job, RecycleResult? Result, string? Error, bool CancelledBeforeMove = false);
 
-    private readonly List<RecycleJob> _recycles = [];
+    private readonly Queue<RecycleJob> _queuedRecycles = new();
+    private RecycleJob? _activeRecycle;
     private Task? _recycleTask;
     private CancellationTokenSource? _recycleWork;
     private CancellationTokenSource? _recycleRefreshWork;
-    private TaskCompletionSource? _recycleRefreshIdle;
+    private TaskCompletionSource? _recycleStateChanged;
     private bool _scanStale;
-    private int _recycleProcessed, _foregroundWorkVersion;
-    private string? _recycleCheckPath, _activeRecyclePath;
+    private int _queuedRecyclesCancelled, _foregroundWorkVersion;
+    private string? _recycleCheckPath;
     private string? _recycleSummary, _recycleDetails;
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
@@ -57,10 +58,10 @@ public partial class MainWindow
     private string? RecycleBlockReason(ScanSnapshot scan, int link)
     {
         if (_recycleCheckPath is not null) return "Finish the current recycle confirmation first.";
-        if (_recycleWork?.IsCancellationRequested == true) return "Recycling is stopping.";
         if (FolderDeletionTarget.SelectionBlockReason(scan, link) is { } blocked) return blocked;
         string path = scan.EntryPath(link)!;
-        return _recycles.Any(job => CoversRecyclePath(job.Target.Path, path) || CoversRecyclePath(path, job.Target.Path))
+        bool Overlaps(RecycleJob job) => CoversRecyclePath(job.Target.Path, path) || CoversRecyclePath(path, job.Target.Path);
+        return (_activeRecycle is { } active && Overlaps(active)) || _queuedRecycles.Any(Overlaps)
             ? "This folder overlaps a pending recycle request." : null;
     }
 
@@ -88,7 +89,7 @@ public partial class MainWindow
                 return null;
             }
             var confirmation = new RecycleFolderWindow(target) { Owner = this };
-            if (confirmation.ShowDialog() != true || _closing || _recycleWork?.IsCancellationRequested == true)
+            if (confirmation.ShowDialog() != true || _closing)
                 return null;
             job = new(target);
         }
@@ -104,51 +105,59 @@ public partial class MainWindow
             if (!_closing) UpdateRecycleActivity();
         }
 
-        _recycles.Add(job);
+        _queuedRecycles.Enqueue(job);
         _recycleRefreshWork?.Cancel();
+        SignalRecycleStateChange();
         if (_recycleTask is null)
         {
-            _recycleWork = new();
-            _recycleTask = RunRecycleQueueAsync(_recycleWork);
+            _recycleTask = RunRecycleQueueAsync();
             UpdateUpdateButton();
         }
         UpdateRecycleActivity();
         return await job.Completion.Task;
     }
 
-    private async Task RunRecycleQueueAsync(CancellationTokenSource work)
+    private async Task RunRecycleQueueAsync()
     {
         // Let the confirmation close and paint the activity row before starting work.
         await Dispatcher.Yield(DispatcherPriority.Background);
+        var attempts = new List<RecycleAttempt>();
         try
         {
             using var log = await Task.Run(() => new ScanLog(LogDirectory));
-            var attempts = new List<RecycleAttempt>();
             while (!_closing)
             {
-                while (attempts.Count < _recycles.Count && !work.IsCancellationRequested)
-                {
-                    var job = _recycles[attempts.Count];
-                    _activeRecyclePath = job.Target.Path;
-                    UpdateRecycleActivity();
-                    attempts.Add(await RecycleOneAsync(job, work.Token, log));
-                    _recycleProcessed = attempts.Count;
-                }
-
+                await MoveQueuedFoldersAsync(attempts, log);
                 if (_closing) return;
-                _activeRecyclePath = null;
                 UpdateRecycleActivity();
+
+                // Keep one refresh in flight. A confirmed move can run while a
+                // superseded refresh is still unwinding on a worker thread.
+                var checkedAttempts = attempts.ToArray();
                 using var refresh = CancellationTokenSource.CreateLinkedTokenSource(_extensionLifetime.Token);
                 _recycleRefreshWork = refresh;
+                var reconciliation = RefreshRecycledFoldersAsync(checkedAttempts, log, refresh.Token);
+                bool refreshed = false;
                 try
                 {
-                    await RefreshRecycledFoldersAsync(attempts, log, refresh.Token);
-                    if (attempts.Count == _recycles.Count || work.IsCancellationRequested) break;
+                    while (!_closing && !reconciliation.IsCompleted)
+                    {
+                        if (_queuedRecycles.Count == 0)
+                            await Task.WhenAny(reconciliation, WaitForRecycleStateChangeAsync());
+                        if (_queuedRecycles.Count > 0)
+                        {
+                            refresh.Cancel();
+                            await MoveQueuedFoldersAsync(attempts, log);
+                        }
+                    }
                 }
-                // New moves and foreground work can supersede a slow recheck.
-                // The next refresh still reconciles every completed attempt.
-                catch (OperationCanceledException) when (refresh.IsCancellationRequested && !_closing) { }
-                finally { _recycleRefreshWork = null; }
+                finally
+                {
+                    try { await reconciliation; refreshed = true; }
+                    catch (OperationCanceledException) when (refresh.IsCancellationRequested) { }
+                    finally { _recycleRefreshWork = null; }
+                }
+                if (refreshed && attempts.Count == checkedAttempts.Length && _queuedRecycles.Count == 0) break;
             }
 
             if (_closing) return;
@@ -161,14 +170,30 @@ public partial class MainWindow
         catch (OperationCanceledException) when (_closing) { }
         finally
         {
-            foreach (var job in _recycles) job.Completion.TrySetResult(null);
-            _recycles.Clear();
-            _recycleWork = null;
+            foreach (var attempt in attempts) attempt.Job.Completion.TrySetResult(null);
+            while (_queuedRecycles.TryDequeue(out var job)) job.Completion.TrySetResult(null);
             _recycleTask = null;
-            _activeRecyclePath = null;
-            _recycleProcessed = 0;
-            work.Dispose();
+            _queuedRecyclesCancelled = 0;
+            SignalRecycleStateChange();
             if (!_closing) { UpdateRecycleActivity(); UpdateUpdateButton(); RefreshDeferredRecycleGroups(); }
+        }
+    }
+
+    private async Task MoveQueuedFoldersAsync(List<RecycleAttempt> attempts, ScanLog log)
+    {
+        while (!_closing && _queuedRecycles.TryDequeue(out var job))
+        {
+            using var work = new CancellationTokenSource();
+            _activeRecycle = job;
+            _recycleWork = work;
+            try
+            {
+                UpdateRecycleActivity();
+                attempts.Add(await RecycleOneAsync(job, work.Token, log));
+            }
+            catch { job.Completion.TrySetResult(null); throw; }
+            finally { _activeRecycle = null; _recycleWork = null; }
+            if (!_closing) UpdateRecycleActivity();
         }
     }
 
@@ -180,7 +205,7 @@ public partial class MainWindow
         if (moved > 0) summary.Add($"{FolderCount(moved)} moved to the Recycle Bin");
         if (attempts.Any(attempt => attempt.Result is { Cancelled: true } && !attempt.CancelledBeforeMove))
             summary.Add("Move stopped. Some contents may have moved");
-        int skipped = _recycles.Count - attempts.Count + attempts.Count(attempt => attempt.CancelledBeforeMove);
+        int skipped = _queuedRecyclesCancelled + attempts.Count(attempt => attempt.CancelledBeforeMove);
         if (skipped > 0) summary.Add($"{FolderCount(skipped)} cancelled before moving");
         int failed = attempts.Count(attempt => attempt.Error is not null);
         if (attempts.FirstOrDefault(attempt => attempt.Error is not null) is { } failure)
@@ -324,43 +349,46 @@ public partial class MainWindow
     {
         while (RecycleRefreshBlocked(publishing))
         {
-            _recycleRefreshIdle ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
-            await _recycleRefreshIdle.Task.WaitAsync(token);
+            await WaitForRecycleStateChangeAsync().WaitAsync(token);
         }
         token.ThrowIfCancellationRequested();
     }
 
-    private void WakeRecycleRefresh()
+    private Task WaitForRecycleStateChangeAsync() => (_recycleStateChanged ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+
+    private void SignalRecycleStateChange()
     {
-        _recycleRefreshIdle?.TrySetResult();
-        _recycleRefreshIdle = null;
+        _recycleStateChanged?.TrySetResult();
+        _recycleStateChanged = null;
     }
 
     private static string FolderCount(int count) => $"{count:N0} {(count == 1 ? "folder" : "folders")}";
 
     private void UpdateRecycleActivity()
     {
-        int pending = _recycles.Count - _recycleProcessed;
-        bool canCancel = pending > 0 && _recycleWork is { IsCancellationRequested: false };
-        string? path = _recycleWork is null ? _recycleCheckPath : _activeRecyclePath;
+        int queued = _queuedRecycles.Count;
+        bool canCancel = queued > 0 || _recycleWork is { IsCancellationRequested: false };
+        string? path = _recycleTask is null ? _recycleCheckPath : _activeRecycle?.Target.Path;
         string? status;
-        if (_recycleWork is { } work)
+        if (_recycleTask is not null)
         {
-            status = path is not null ? $"{(work.IsCancellationRequested ? "Stopping" : "Recycling")} {Path.GetFileName(path)}…"
-                : canCancel ? $"{FolderCount(pending)} queued" : "Updating scan…";
-            if (path is not null && canCancel && pending > 1) status += $" · {pending - 1:N0} queued";
+            status = path is not null ? $"{(_recycleWork?.IsCancellationRequested == true ? "Stopping" : "Recycling")} {Path.GetFileName(path)}…"
+                : queued > 0 ? $"{FolderCount(queued)} queued" : "Updating scan…";
+            if (path is not null && queued > 0) status += $" · {queued:N0} queued";
         }
         else status = path is not null ? $"Checking {Path.GetFileName(path)}…" : _recycleSummary;
 
         CancelRecycleButton.Visibility = canCancel ? Visibility.Visible : Visibility.Collapsed;
         RecycleStatusText.Text = status ?? "";
-        RecycleStatusText.ToolTip = path ?? (_recycleWork is null ? _recycleDetails : null);
+        RecycleStatusText.ToolTip = path ?? (_recycleTask is null ? _recycleDetails : null);
         RecycleActivity.Visibility = string.IsNullOrEmpty(status) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void CancelRecycle_Click(object sender, RoutedEventArgs e)
     {
         _recycleWork?.Cancel();
+        _queuedRecyclesCancelled += _queuedRecycles.Count;
+        while (_queuedRecycles.TryDequeue(out var job)) job.Completion.TrySetResult(null);
         UpdateRecycleActivity();
     }
 

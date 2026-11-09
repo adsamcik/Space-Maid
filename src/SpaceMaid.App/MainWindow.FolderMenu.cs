@@ -12,7 +12,7 @@ public partial class MainWindow
     private void FolderMenuClosed(object sender, RoutedEventArgs e)
     {
         if (ReferenceEquals(_activeFolderMenu, sender)) _activeFolderMenu = null;
-        WakeRecycleRefresh();
+        SignalRecycleStateChange();
     }
 
     private void Tree_ContextMenuOpening(object sender, ContextMenuEventArgs e)

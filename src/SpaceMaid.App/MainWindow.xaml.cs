@@ -103,7 +103,7 @@ public partial class MainWindow : Window
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
-        if (!busy) { WakeRecycleRefresh(); RefreshDeferredRecycleGroups(); DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
+        if (!busy) { SignalRecycleStateChange(); RefreshDeferredRecycleGroups(); DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
     }
 
     private void UpdateFastScanButton(bool busy)

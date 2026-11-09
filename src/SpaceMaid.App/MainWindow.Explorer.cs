@@ -291,7 +291,7 @@ public partial class MainWindow
         finally
         {
             _browseWork = null; _browsing = false;
-            WakeRecycleRefresh();
+            SignalRecycleStateChange();
             UpdatePathAvailability(_work is not null);
             if (!_closing)
             {

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -6,6 +7,7 @@ using System.Windows.Threading;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Extensions.Contracts;
 using Xunit;
 
 namespace SpaceMaid.Tests;
@@ -111,11 +113,51 @@ public sealed partial class DesktopTests
             CheckScanRootHandoff(keep, clearScan: false);
             CheckScanRootHandoff(waiting, clearScan: true);
             Assert.Equal(Visibility.Collapsed, error.Visibility);
+
+            string branch = Folder("branch", 8192);
+            string leaf = Directory.CreateDirectory(Path.Join(branch, "leaf")).FullName;
+            File.WriteAllText(Path.Join(leaf, "payload.txt"), "Owned fixture");
+            window.SetScanTarget(fixture.Path);
+            Assert.True(Finish(window.ScanCurrentPathAsync()));
+            var beforeRefresh = Snapshot();
+            var pause = new PausedRecycleAnalysis(fixture.Path);
+            var runtime = Assert.IsType<SpaceMaid.App.Extensions.ExtensionRuntime>(typeof(MainWindow)
+                .GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+            runtime.Opportunities.Register("test.recycle-refresh", pause);
+            Task<RecycleResult?> leafJob, branchJob, stopped;
+            try
+            {
+                leafJob = Queue(leaf);
+                FinishTask(pause.Entered.Task);
+                Assert.False(Directory.Exists(leaf));
+
+                HoldMutationLease();
+                stopped = Queue(original);
+                PumpUntil(() => status.Text == "Recycling original…", TimeSpan.FromSeconds(5));
+                cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+                // The completed child no longer reserves its parent. The next
+                // move can run while the cancelled analysis is still blocked.
+                branchJob = Queue(branch);
+                ReleaseMutationLease();
+                PumpUntil(() => !Directory.Exists(branch), TimeSpan.FromSeconds(20));
+                Assert.True(Directory.Exists(original));
+                Assert.Same(beforeRefresh, Snapshot());
+                Assert.False(branchJob.IsCompleted);
+                Browse(original);
+            }
+            finally { pause.Release.TrySetResult(); }
+
+            Assert.False(Assert.IsType<RecycleResult>(Finish(leafJob)).Cancelled);
+            Assert.False(Assert.IsType<RecycleResult>(Finish(branchJob)).Cancelled);
+            Assert.True(Assert.IsType<RecycleResult>(Finish(stopped)).Cancelled);
+            Assert.Null(Snapshot().FindEntry(branch));
+            Assert.Equal(original, window.CurrentPath);
         }
         finally
         {
             ReleaseMutationLease();
-            foreach (var job in jobs)
+            foreach (var job in jobs.OrderBy(job => job.Path.Length))
                 if (Finish(job.Task)?.RecycledPath is { } destination && !Directory.Exists(job.Path))
                     DeletionTests.RestoreFixture(destination, job.Path);
             FinishTask(window.SetExplorerSizeBasisAsync(false));
@@ -195,6 +237,19 @@ public sealed partial class DesktopTests
         {
             FinishTask(task);
             return task.GetAwaiter().GetResult();
+        }
+    }
+
+    private sealed class PausedRecycleAnalysis(string rootPath) : IOpportunityExtension
+    {
+        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public OpportunityAnalysis Analyze(IOpportunityInventory inventory, CancellationToken token)
+        {
+            // Simulate a provider that cannot return immediately on cancellation.
+            if (inventory.RootPath == rootPath && Entered.TrySetResult()) Release.Task.GetAwaiter().GetResult();
+            return new([], new([], []));
         }
     }
 }
