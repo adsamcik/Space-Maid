@@ -216,21 +216,21 @@ public partial class MainWindow
         foreach (var order in mapOrders) _mapOrders.Add(order.Key, order.Value);
     }
 
-    private sealed record TreeViewport(double Horizontal, double Vertical, string? TopPath, double Fraction);
+    private sealed record TreeViewport(double Horizontal, double Vertical, string[] Anchors);
 
-    private TreeViewport? CaptureTreeViewport()
+    private TreeViewport? CaptureTreeViewport(bool includeVisibleNeighbors = false)
     {
         if (TreeScrollViewer(SpaceTree) is not { } scroll) return null;
-        string? topPath = null;
-        double fraction = 0;
+        string[] anchors = [];
         if (_explorer is { Count: > 0 } rows && scroll.CanContentScroll
             && VirtualizingPanel.GetScrollUnit(SpaceTree) == ScrollUnit.Item)
         {
             int top = Math.Clamp((int)scroll.VerticalOffset, 0, rows.Count - 1);
-            topPath = rows.Scan.EntryPath(rows.Row(top).Entry.LinkIndex);
-            fraction = scroll.VerticalOffset - Math.Floor(scroll.VerticalOffset);
+            int visible = includeVisibleNeighbors ? Math.Max(1, (int)Math.Ceiling(scroll.ViewportHeight)) : 1;
+            anchors = Enumerable.Range(top, Math.Min(visible, rows.Count - top))
+                .Select(index => rows.Scan.EntryPath(rows.Row(index).Entry.LinkIndex)).OfType<string>().ToArray();
         }
-        return new(scroll.HorizontalOffset, scroll.VerticalOffset, topPath, fraction);
+        return new(scroll.HorizontalOffset, scroll.VerticalOffset, anchors);
     }
 
     private void RestoreTreeViewport(TreeViewport? viewport)
@@ -241,12 +241,68 @@ public partial class MainWindow
         SpaceTree.UpdateLayout();
         if (TreeScrollViewer(SpaceTree) is not { } scroll) return;
         double vertical = viewport.Vertical;
-        if (viewport.TopPath is { } path && _explorer is { } rows
-            && rows.Scan.FindEntry(path) is { } link && rows.Find(link) is var index && index >= 0)
-            vertical = index + viewport.Fraction;
+        foreach (string path in viewport.Anchors)
+        {
+            int index = VisibleTreeIndex(path);
+            if (index < 0) continue;
+            vertical = index + (viewport.Vertical - Math.Floor(viewport.Vertical));
+            break;
+        }
         scroll.ScrollToHorizontalOffset(viewport.Horizontal);
         scroll.ScrollToVerticalOffset(vertical);
         SpaceTree.UpdateLayout();
+    }
+
+    private int VisibleTreeIndex(string? path) => path is not null && _explorer is { } rows
+        && rows.Scan.FindEntry(path) is { } link ? rows.Find(link) : -1;
+
+    private sealed record ExplorerFocus(string? Path, bool MapTile = false);
+
+    private ExplorerFocus? CaptureExplorerFocus()
+    {
+        if (Keyboard.FocusedElement is not FrameworkElement focused) return null;
+        if (ItemsControl.ContainerFromElement(SpaceTree, focused) is ListBoxItem { DataContext: ExplorerRow row })
+            return new(row.Scan.EntryPath(row.Entry.LinkIndex));
+        if (SpaceMap.IsKeyboardFocusWithin && focused is Button { DataContext: SpaceContribution tile })
+            return new(tile.Link >= 0 ? tile.Path : null, MapTile: true);
+        return null;
+    }
+
+    private void RestoreExplorerFocus(ExplorerFocus? focus)
+    {
+        if (focus is null || !IsActive || ExploreTab.IsChecked != true) return;
+        if (focus is { MapTile: true, Path: { } mapPath })
+        {
+            var tile = SpaceMap.Buttons.FirstOrDefault(button => button.DataContext is SpaceContribution { Link: >= 0 } item
+                && item.Path == mapPath);
+            if (tile?.Focus() == true) return;
+        }
+
+        int index = focus.MapTile ? -1 : VisibleTreeIndex(focus.Path);
+        if (index < 0) index = SpaceTree.SelectedIndex;
+        FrameworkElement target = SpaceTree;
+        if (index >= 0 && TreeScrollViewer(SpaceTree) is { } scroll && index >= (int)scroll.VerticalOffset
+            && index < scroll.VerticalOffset + scroll.ViewportHeight
+            && SpaceTree.ItemContainerGenerator.ContainerFromIndex(index) is ListBoxItem itemContainer)
+            target = itemContainer;
+
+        // Focus can request that WPF scroll the whole row into view, including
+        // its columns. Keep the restored viewport and the current selection.
+        int selected = SpaceTree.SelectedIndex;
+        _syncTree = true;
+        target.RequestBringIntoView += KeepViewport;
+        try
+        {
+            target.Focus();
+            if (SpaceTree.SelectedIndex != selected) SpaceTree.SelectedIndex = selected;
+        }
+        finally
+        {
+            target.RequestBringIntoView -= KeepViewport;
+            _syncTree = false;
+        }
+
+        static void KeepViewport(object sender, RequestBringIntoViewEventArgs e) => e.Handled = true;
     }
 
     private static ScrollViewer? TreeScrollViewer(DependencyObject parent)

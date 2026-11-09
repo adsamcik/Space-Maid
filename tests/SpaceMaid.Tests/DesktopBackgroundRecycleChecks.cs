@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Threading;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
@@ -61,6 +62,11 @@ public sealed partial class DesktopTests
             Assert.Equal(child, window.CurrentPath);
             Assert.Equal("Recycling first… · 1 queued", status.Text);
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", "background-recycle.png"), 1020, 790);
+            window.Activate();
+            PumpUntil(() => window.IsActive, TimeSpan.FromSeconds(5));
+            var map = (TreemapPanel)window.FindName("SpaceMap");
+            var tile = Assert.Single(map.Buttons);
+            Assert.True(tile.Focus());
 
             ReleaseMutationLease();
             Assert.False(Assert.IsType<RecycleResult>(Finish(firstJob)).Cancelled);
@@ -71,6 +77,7 @@ public sealed partial class DesktopTests
             Assert.Null(Snapshot().FindEntry(second));
             Assert.Equal(child, window.CurrentPath);
             Assert.Equal(child, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+            Assert.Same(Assert.Single(map.Buttons), Keyboard.FocusedElement);
             Assert.True(Assert.IsType<ExplorerRows>(tree.ItemsSource).IsExpanded(Snapshot().FindEntry(keep)!.Value));
             Assert.StartsWith("Name ", ((ButtonBase)window.FindName("NameHeader")).Content.ToString());
             Assert.False(Assert.IsType<ExplorerRows>(tree.ItemsSource).UseAllocation);
@@ -96,11 +103,14 @@ public sealed partial class DesktopTests
             string original = Path.Join(fixture.Path, "original");
             Directory.Move(waiting, original);
             Folder("waiting", 2048);
+            var columns = (Button)window.FindName("ColumnsButton");
+            Assert.True(columns.Focus());
             ReleaseMutationLease();
             Assert.Null(Finish(replaced));
             Assert.True(Directory.Exists(waiting));
             Assert.True(Directory.Exists(original));
             Assert.Equal("Could not recycle waiting", status.Text);
+            Assert.Same(columns, Keyboard.FocusedElement);
             var details = (ToggleButton)window.FindName("DiagnosticsToggle");
             details.IsChecked = true;
             var error = (TextBox)window.FindName("RecycleDiagnosticMessage");
@@ -153,6 +163,7 @@ public sealed partial class DesktopTests
             Assert.True(Assert.IsType<RecycleResult>(Finish(stopped)).Cancelled);
             Assert.Null(Snapshot().FindEntry(branch));
             Assert.Equal(original, window.CurrentPath);
+            CheckTreePosition();
         }
         finally
         {
@@ -171,6 +182,76 @@ public sealed partial class DesktopTests
         }
 
         void Browse(string path) => FinishTask(window.NavigateToEntryAsync(Snapshot().FindEntry(path)!.Value));
+
+        void CheckTreePosition()
+        {
+            for (int index = 0; index < 48; index++) Folder($"folder-{index:D2}", 1);
+            window.SetScanTarget(fixture.Path);
+            Assert.True(Finish(window.ScanCurrentPathAsync()));
+            var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+            string earlier = rows.Row(5).Path, top = rows.Row(20).Path;
+            string survivor = rows.Row(21).Path, focusedPath = rows.Row(22).Path;
+            HoldMutationLease();
+            var earlierJob = Queue(earlier);
+            var topJob = Queue(top);
+            Browse(focusedPath);
+
+            var scroll = Descendants(tree).OfType<ScrollViewer>().First();
+            FocusAt(top);
+            Assert.True(scroll.ScrollableWidth > 0);
+            scroll.ScrollToHorizontalOffset(Math.Min(32, scroll.ScrollableWidth));
+            window.UpdateLayout();
+            double horizontal = scroll.HorizontalOffset;
+            Assert.True(horizontal > 0);
+
+            ReleaseMutationLease();
+            Assert.False(Assert.IsType<RecycleResult>(Finish(earlierJob)).Cancelled);
+            Assert.False(Assert.IsType<RecycleResult>(Finish(topJob)).Cancelled);
+            window.UpdateLayout();
+            Assert.Equal(survivor, TopPath());
+            Assert.Equal(horizontal, scroll.HorizontalOffset);
+            var focusedRow = Assert.IsAssignableFrom<ListBoxItem>(Keyboard.FocusedElement);
+            Assert.Equal(focusedPath, Assert.IsType<ExplorerRow>(focusedRow.DataContext).Path);
+            Assert.Equal(focusedPath, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "recycle-preserved-tree-position.png"), 1020, 790);
+
+            // The next Delete command still reaches the folder on which the
+            // user was working. Dismiss this review without moving it yet.
+            string? reviewed = null;
+            var timer = WatchConfirmation(path => reviewed = path, approve: false);
+            try
+            {
+                var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(focusedRow), Environment.TickCount, Key.Delete)
+                    { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                focusedRow.RaiseEvent(key);
+                Assert.True(key.Handled);
+                PumpUntil(() => reviewed is not null, TimeSpan.FromSeconds(5));
+                Assert.Equal(focusedPath, reviewed);
+            }
+            finally { timer.Stop(); }
+
+            HoldMutationLease();
+            var focusedJob = Queue(focusedPath);
+            FocusAt(survivor);
+            ReleaseMutationLease();
+            Assert.False(Assert.IsType<RecycleResult>(Finish(focusedJob)).Cancelled);
+            window.UpdateLayout();
+            Assert.Equal(survivor, TopPath());
+            Assert.True(tree.IsKeyboardFocused);
+
+            string TopPath() => Assert.IsType<ExplorerRows>(tree.ItemsSource).Row((int)scroll.VerticalOffset).Path;
+
+            void FocusAt(string topPath)
+            {
+                var visibleRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                scroll.ScrollToVerticalOffset(visibleRows.Find(visibleRows.Scan.FindEntry(topPath)!.Value));
+                window.UpdateLayout();
+                PumpUntil(() => TopPath() == topPath, TimeSpan.FromSeconds(5));
+                var row = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(tree.SelectedIndex));
+                Assert.True(row.Focus());
+                Assert.Equal(topPath, TopPath());
+            }
+        }
 
         void CheckScanRootHandoff(string path, bool clearScan)
         {
@@ -192,22 +273,28 @@ public sealed partial class DesktopTests
         {
             Browse(path);
             string? reviewedPath = null;
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
-            timer.Tick += (_, _) =>
-            {
-                var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault(candidate => candidate.IsVisible);
-                if (dialog is null) return;
-                reviewedPath = ((TextBox)dialog.FindName("TargetPath")).Text;
-                if (approve) ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                else dialog.Close();
-            };
-            timer.Start();
+            var timer = WatchConfirmation(reviewed => reviewedPath = reviewed, approve);
             var task = window.DeleteSelectedFolderAsync();
             jobs.Add((path, task));
             try { PumpUntil(() => reviewedPath is not null || task.IsCompleted, TimeSpan.FromSeconds(5)); }
             finally { timer.Stop(); }
             Assert.Equal(path, reviewedPath);
             return task;
+        }
+
+        DispatcherTimer WatchConfirmation(Action<string> review, bool approve)
+        {
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
+            timer.Tick += (_, _) =>
+            {
+                var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+                if (dialog is null) return;
+                review(((TextBox)dialog.FindName("TargetPath")).Text);
+                if (approve) ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                else dialog.Close();
+            };
+            timer.Start();
+            return timer;
         }
 
         void HoldMutationLease()

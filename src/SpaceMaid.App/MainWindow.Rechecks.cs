@@ -102,7 +102,8 @@ public partial class MainWindow
         }
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
         string? detailPath = OpportunityBrowser?.Detail?.Path;
-        var viewport = CaptureTreeViewport();
+        var viewport = CaptureTreeViewport(includeVisibleNeighbors: true);
+        var focus = CaptureExplorerFocus();
         PublishExplorerRefresh(explorer, column, descending, grouped);
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
@@ -132,6 +133,7 @@ public partial class MainWindow
         else if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
         UpdateSelection();
         RestoreTreeViewport(viewport);
+        RestoreExplorerFocus(focus);
         return true;
     }
 
