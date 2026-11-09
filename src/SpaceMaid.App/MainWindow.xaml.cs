@@ -40,6 +40,7 @@ public partial class MainWindow : Window
         if (_startupOffered) return;
         _startupOffered = true;
         LoadColumnLayout();
+        LoadSidebarPreferences();
         LoadBuildCleanupSettings();
         _ = RefreshRecycleBinAsync();
         _ = RefreshDriveChoicesAsync();
@@ -90,7 +91,9 @@ public partial class MainWindow : Window
 
     internal void SetBusy(bool busy)
     {
+        _foregroundBusy = busy;
         if (busy) { _foregroundWorkVersion++; _recycleRefreshWork?.Cancel(); }
+        if (busy && _activeFolderMenu is { } menu) menu.IsOpen = false;
         UpdateExtensionWorkspace();
         _extensions?.SetDiscoveryBusy(busy);
         UpdatePathAvailability(busy);
@@ -100,7 +103,6 @@ public partial class MainWindow : Window
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;
         OpportunityBrowser?.SetBusy(busy);
-        ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
         if (!busy) { SignalRecycleStateChange(); RefreshDeferredRecycleGroups(); DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }

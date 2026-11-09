@@ -119,7 +119,7 @@ public sealed partial class DesktopTests
     private static void CheckTreeColumns(MainWindow window, ListBox tree)
     {
         var columns = (GridView)window.FindName("TreeColumns");
-        Assert.Equal(new[] { "Name", "Allocated", "Modified" }, columns.Columns.Select(column => ((GridViewColumnHeader)column.Header).Tag));
+        Assert.Equal(new[] { "Name", "Allocated" }, columns.Columns.Select(column => ((GridViewColumnHeader)column.Header).Tag));
         var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
         var selected = tree.SelectedItem;
         var expansion = rows.ExpandedPaths();

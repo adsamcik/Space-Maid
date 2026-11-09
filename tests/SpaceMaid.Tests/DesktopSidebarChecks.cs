@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using SpaceMaid.App;
@@ -20,6 +21,8 @@ public sealed partial class DesktopTests
         var more = (Button)window.FindName("MoreButton");
         var optimize = (Button)window.FindName("OptimizationButton");
         var extensions = (RadioButton)window.FindName("ExtensionsTab");
+        var tools = (ToggleButton)window.FindName("ToolsToggle");
+        tools.IsChecked = true;
         Assert.True(toggle.IsTabStop);
         Assert.True(more.IsTabStop);
         var runtime = Assert.IsType<ExtensionRuntime>(typeof(MainWindow).GetField("_extensions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
@@ -49,6 +52,9 @@ public sealed partial class DesktopTests
             Assert.Equal(collapsed ? "Expand sidebar" : "Collapse sidebar", AutomationProperties.GetName(toggle));
             Assert.Equal(AutomationProperties.GetName(toggle), toggle.ToolTip);
             Assert.Equal(collapsed, SidebarNavigation.GetIsCollapsed(sidebar));
+            var toolsLabel = Assert.Single(Descendants(tools).OfType<TextBlock>(), block => block.Text == (string)tools.Content);
+            Assert.Equal(collapsed ? Visibility.Collapsed : Visibility.Visible, toolsLabel.Visibility);
+            Assert.Single(Descendants(tools).OfType<Rectangle>(), rect => rect.OpacityMask is ImageBrush);
             Assert.True(extensions.IsChecked);
             Assert.Equal("agent", search.Text);
             Assert.Same(selected, list.SelectedItem);

@@ -450,6 +450,7 @@ public partial class MainWindow
 
     private void UpdateRecycleActivity()
     {
+        UpdateExplorerActions();
         int queued = _queuedRecycles.Count;
         bool canCancel = queued > 0 || _recycleWork is { IsCancellationRequested: false };
         string? path = _recycleTask is null ? _recycleCheck?.Path : _activeRecycle?.Target.Path;
@@ -554,7 +555,7 @@ public partial class MainWindow
         ScannedSizeLabel.Text = "PREVIOUS SCAN";
         CandidateCaption.Text = "Out of date";
         CandidateText.Text = "—";
-        OpportunitiesTab.Content = "Opportunities · Out of date";
+        OpportunitiesTab.Content = "Cleanup";
         UpdateSelection();
     }
 }

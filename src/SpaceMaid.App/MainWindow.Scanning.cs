@@ -111,7 +111,7 @@ public partial class MainWindow
             ScannedSizeLabel.Text = "Scanned";
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
             CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
-            OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
+            OpportunitiesTab.Content = "Cleanup";
             await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
             _presentationElapsed = presentation.Elapsed;
             using var diagnosticProcess = Process.GetCurrentProcess();

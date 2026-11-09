@@ -15,6 +15,8 @@ public partial class MainWindow
     private readonly Dictionary<int, int[]> _mapOrders = [];
     private IReadOnlyDictionary<int, SpaceKind> _kinds = new Dictionary<int, SpaceKind>();
     private CancellationTokenSource? _browseWork;
+    private TaskCompletionSource? _browseIdle;
+    private bool _foregroundBusy;
     private bool _browsing, _syncTree, _selectionIsGroup;
     private bool _preferLogicalSize, _updatingSizeBasis;
     private int _selectedLink = -1;
@@ -25,9 +27,7 @@ public partial class MainWindow
         _browseWork?.Cancel();
         // Menus capture a scan for command safety; discard their callbacks
         // when clearing results so a prior large inventory is not retained.
-        SpaceTree.ContextMenu.IsOpen = false;
-        SpaceTree.ContextMenu.Items.Clear();
-        ContextMenuService.SetPlacementTarget(SpaceTree, null);
+        ClearExplorerMenus();
         ClearMap();
         _explorer = null;
         SizeBasisSelector.IsEnabled = false;
@@ -39,6 +39,7 @@ public partial class MainWindow
         MapHint.Visibility = TreeHint.Visibility = Visibility.Visible;
         MapHint.Text = "Select a folder.";
         TreeHint.Text = "Scan a folder to explore.";
+        UpdateExplorerActions();
     }
 
     internal async Task InitializeExplorerAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> opportunities, CancellationToken token)
@@ -130,9 +131,7 @@ public partial class MainWindow
 
     private void PublishExplorerRefresh(PreparedExplorer prepared, ScanSortColumn column, bool descending, bool grouped)
     {
-        SpaceTree.ContextMenu.IsOpen = false;
-        SpaceTree.ContextMenu.Items.Clear();
-        ContextMenuService.SetPlacementTarget(SpaceTree, null);
+        ClearExplorerMenus();
         _snapshot = prepared.Rows.Scan;
         _explorer = prepared.Rows;
         _kinds = prepared.Kinds;
@@ -198,9 +197,9 @@ public partial class MainWindow
         if (_explorer is not { } rows) return;
         var scan = rows.Scan;
         bool allocated = rows.UseAllocation;
-        string basis = allocated ? "allocated size" : "logical size";
+        string basis = allocated ? "size on disk" : "file size";
         ScannedSizeText.Text = SizeText.Format(allocated ? scan.AllocatedBytes : scan.LogicalBytes);
-        string caption = allocated ? "On disk" : scan.HasAllocationData ? "Logical size" : "Logical · Size on disk unavailable";
+        string caption = allocated ? "On disk" : scan.HasAllocationData ? "File size" : "File size · Size on disk unavailable";
         ScannedSizeCaption.Text = caption + (_scanStale ? " · Out of date" : scan.LastRecheckUtc is not null ? " · Partially refreshed" : "");
         MapBasis.Text = _scanStale ? $"Previous scan · {basis}" : $"Area = {basis}"
             + (scan.LastRecheckUtc is not null ? " · Partial refresh" : "");
@@ -344,14 +343,14 @@ public partial class MainWindow
 
     private async Task BrowseAsync(Func<CancellationToken, Task> action)
     {
-        if (_snapshot is null || _work is not null || _browsing) return;
+        if (_snapshot is null || _scanning || _browsing || _closing) return;
         _browsing = true;
+        var idle = _browseIdle = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _explorerRevision++;
         using var work = new CancellationTokenSource();
         _browseWork = work;
-        ExplorePanel.IsEnabled = false;
         UpdatePathAvailability(_work is not null);
-        StatusText.Text = "Opening folder…";
+        if (_work is null) StatusText.Text = "Opening folder…";
         bool failed = false;
         try { await action(work.Token); }
         catch (OperationCanceledException) { }
@@ -359,11 +358,12 @@ public partial class MainWindow
         finally
         {
             _browseWork = null; _browsing = false;
+            _browseIdle = null;
+            idle.TrySetResult();
             SignalRecycleStateChange();
             UpdatePathAvailability(_work is not null);
             if (!_closing)
             {
-                ExplorePanel.IsEnabled = _work is null;
                 if (!failed && _work is null && _snapshot is not null) StatusText.Text = _scanStatus;
                 DrainExplorerRecheck();
             }
@@ -443,7 +443,8 @@ public partial class MainWindow
     }
     private async void Tree_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_syncTree || _work is not null) return;
+        if (_syncTree) return;
+        UpdateExplorerActions();
         _explorerRevision++;
         if (SpaceTree.SelectedItem is not ExplorerRow row || (!_selectionIsGroup && _selectedLink == row.Entry.LinkIndex)) return;
         _selectedLink = row.Entry.LinkIndex;
@@ -457,6 +458,7 @@ public partial class MainWindow
         if (ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is ListBoxItem item)
         {
             _selectionIsGroup = false;
+            UpdateExplorerActions();
             if (e.ChangedButton == MouseButton.Right && item.DataContext is ExplorerRow row && CanUseFolderMenu(row.Scan))
             {
                 // Avoid ListBox selection triggering async navigation before menu opening.
@@ -532,5 +534,6 @@ public partial class MainWindow
         UpdateAppsDrive();
         AppsPanel.Visibility = AppsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         UpdateExtensionWorkspace();
+        UpdateExplorerActions();
     }
 }

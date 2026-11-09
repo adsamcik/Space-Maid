@@ -10,8 +10,8 @@ internal sealed record TreeColumnLayout(bool FitName, TreeColumnState[] Columns)
 {
     internal static TreeColumnLayout Default => new(true,
     [
-        new(ScanSortColumn.Name, true, 260), new(ScanSortColumn.Allocated, true, 96),
-        new(ScanSortColumn.Modified, true, 150), new(ScanSortColumn.Logical, false, 96),
+        new(ScanSortColumn.Name, true, 260), new(ScanSortColumn.Allocated, true, 112),
+        new(ScanSortColumn.Modified, false, 150), new(ScanSortColumn.Logical, false, 112),
         new(ScanSortColumn.Share, false, 80), new(ScanSortColumn.Created, false, 150),
         new(ScanSortColumn.Type, false, 170), new(ScanSortColumn.Extension, false, 90),
         new(ScanSortColumn.Attributes, false, 180)

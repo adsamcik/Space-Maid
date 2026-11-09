@@ -9,6 +9,17 @@ public partial class MainWindow
 {
     private ContextMenu? _activeFolderMenu;
 
+    private void ClearExplorerMenus()
+    {
+        foreach (var menu in new[] { SpaceTree.ContextMenu, SelectionMoreButton.ContextMenu })
+        {
+            menu.IsOpen = false;
+            menu.Tag = null;
+            menu.Items.Clear();
+        }
+        ContextMenuService.SetPlacementTarget(SpaceTree, null);
+    }
+
     private void FolderMenuClosed(object sender, RoutedEventArgs e)
     {
         if (ReferenceEquals(_activeFolderMenu, sender)) _activeFolderMenu = null;
@@ -115,7 +126,7 @@ public partial class MainWindow
         if (menu.Items.Count == 0) menu.IsOpen = false;
     }
 
-    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing
+    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && !_foregroundBusy && _work is null && !_browsing
         && ReferenceEquals(_snapshot, scan);
 
     private bool SelectContextEntry(ScanSnapshot scan, int link, bool preserveSelection = false)
@@ -154,6 +165,7 @@ public partial class MainWindow
         { PreferLogicalSize = _explorer.PreferLogicalSize };
         EntryDetail.Visibility = Visibility.Visible;
         SelectedEntryPath.Visibility = scan.EntryPath(link) == _currentPath ? Visibility.Collapsed : Visibility.Visible;
+        UpdateExplorerActions();
         return true;
     }
 }

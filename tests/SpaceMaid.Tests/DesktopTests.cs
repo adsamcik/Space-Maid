@@ -81,6 +81,7 @@ public sealed partial class DesktopTests
                 window.ExtensionDataRoot = Path.Join(fixture.Path, "extensions");
                 window.DriveHistoryPath = Path.Join(fixture.Path, "drive-history.json");
                 window.ColumnLayoutPath = Path.Join(fixture.Path, "columns.json");
+                window.SidebarSettingsPath = Path.Join(fixture.Path, "sidebar.json");
                 window.CleanupSettingsPath = Path.Join(fixture.Path, "cleanup-settings.json");
                 window.OptimizationSettingsPath = Path.Join(fixture.Path, "optimization-settings.json");
                 window.WorktreeLifecycleSettingsPath = Path.Join(fixture.Path, "managed-worktrees.json");
@@ -110,6 +111,13 @@ public sealed partial class DesktopTests
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "sidebar")
                 {
                     BeginWorkflow("Sidebar navigation and extension icons");
+                    CheckSidebar(window, app, FindRepository());
+                    return;
+                }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "first-pass")
+                {
+                    BeginWorkflow("Readable explorer, busy browsing, contextual actions and navigation");
+                    CheckFirstPass(window, app, fixture.Path, FindRepository());
                     CheckSidebar(window, app, FindRepository());
                     return;
                 }
@@ -628,7 +636,7 @@ public sealed partial class DesktopTests
                     Assert.Null(updatedRows.Scan.FindEntry(bin));
                     Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                     Assert.True(updatedRows.IsExpanded(updatedRows.Scan.FindEntry(project)!.Value));
-                    Assert.Equal("Allocated ↓", ((GridViewColumnHeader)window.FindName("AllocationHeader")).Content);
+                    Assert.Equal("Size on disk ↓", ((GridViewColumnHeader)window.FindName("AllocationHeader")).Content);
                     capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                     Assert.True(scanButton.IsEnabled); // Captured old-scan actions cannot operate on the refreshed inventory.
                 }
@@ -1072,6 +1080,7 @@ public sealed partial class DesktopTests
                     Assert.True(appHelper.IsAvailable); Assert.False(appHelper.Exit.IsCompleted);
                 }
                 BeginWorkflow("Extension workspaces");
+                CheckFirstPass(window, app, fixture.Path, FindRepository());
                 CheckSidebar(window, app, FindRepository());
                 CheckExtensionWorkspace(window, app, FindRepository(), extensionFiles);
                 BeginWorkflow("Cloud drive browsing and online-only review");

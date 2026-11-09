@@ -60,7 +60,7 @@ public partial class MainWindow
     {
         if (!background)
         {
-            StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
+            StatusText.Text = prechecked is null ? "Updating affected folders…" : "Updating checked results…";
             _staleScopes.UnionWith(requests);
         }
         var timer = Stopwatch.StartNew();
@@ -83,6 +83,7 @@ public partial class MainWindow
         while (true)
         {
             if (background) await WaitForRecycleRefreshAsync(token, publishing: true);
+            if (_browseIdle is { } idle) await idle.Task.WaitAsync(token);
             token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return false;
             int revision = _explorerRevision, selectedLink = _selectedLink;
@@ -94,11 +95,11 @@ public partial class MainWindow
             // needs rebuilding if the user changes the view while it is prepared.
             explorer = await PrepareExplorerRefreshAsync(updated, analysis.Kinds,
                 expanded, selected, SelectedTreePaths(), column, descending, _preferLogicalSize,
-                background ? token : CancellationToken.None, background ? _currentPath : null);
-            if (background) token.ThrowIfCancellationRequested();
+                token, _currentPath);
+            token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return false;
-            if (!background || (!RecycleRefreshBlocked(publishing: true) && revision == _explorerRevision
-                && selectedLink == _selectedLink && grouped == _selectionIsGroup)) break;
+            if (!_browsing && (!background || !RecycleRefreshBlocked(publishing: true)) && revision == _explorerRevision
+                && selectedLink == _selectedLink && grouped == _selectionIsGroup) break;
         }
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
         string? detailPath = OpportunityBrowser?.Detail?.Path;
@@ -106,7 +107,7 @@ public partial class MainWindow
         var focus = CaptureExplorerFocus();
         PublishExplorerRefresh(explorer, column, descending, grouped);
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
-        OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
+        OpportunitiesTab.Content = "Cleanup";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
         CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
         ScannedSizeLabel.Text = "Scanned";

@@ -96,6 +96,7 @@ public partial class MainWindow
             : useAllocation ? "No observed allocation in this folder." : "No observed logical bytes in this folder.";
         MapHint.Visibility = contributions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateMapColors();
+        UpdateExplorerActions();
     }
 
     private Button CreateMapButton(ScanSnapshot scan, SpaceContribution contribution, ScanEntry folder, long total, bool isHeader = false)
@@ -164,6 +165,7 @@ public partial class MainWindow
                 SelectTree(folder.LinkIndex); SpaceTree.Focus();
                 await DisplayEntryAsync(folder.LinkIndex, cancellation);
                 _selectionIsGroup = true;
+                UpdateExplorerActions();
             });
         };
         return button;

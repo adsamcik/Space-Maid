@@ -34,7 +34,7 @@ public partial class MainWindow
                 ExtensionPages.Children.Add(page);
                 link.Checked += (_, _) => View_Changed(link, new RoutedEventArgs());
                 link.Tag = page;
-                ExtensionNavigation.Children.Add(link);
+                (entry.Id == "space-maid.assistant" ? AssistantNavigation : ExtensionNavigation).Children.Add(link);
             }
             SidebarNavigation.SetIcon(link, entry.NavigationIcon ?? SidebarNavigation.GetIcon(link)
                 ?? (ImageSource)FindResource("NavigationExtensions"));
@@ -49,6 +49,7 @@ public partial class MainWindow
     internal bool OpenExtension(string id)
     {
         if (_closing || string.IsNullOrWhiteSpace(id) || !_extensionLinks.TryGetValue(id, out var link)) return false;
+        if (ExtensionNavigation.Children.Contains(link)) ToolsToggle.IsChecked = true;
         link.IsChecked = true;
         return true;
     }
@@ -63,8 +64,12 @@ public partial class MainWindow
         ExtensionPages.Visibility = extra ? Visibility.Visible : Visibility.Collapsed;
         ExtensionManagerContent.Visibility = ExtensionsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         // Scanning remains accessible while a foreground operation needs Cancel.
+        bool preparedCleanup = OpportunitiesTab.IsChecked == true && !_cleanupBrowserVisible && _cleanupWorkspace?.Prepared is not null;
+        // Saved cleanups and history own their own scope and totals. This scan
+        // estimate belongs only to the browser backed by the current inventory.
+        CleanupEstimate.Visibility = _cleanupBrowserVisible || _cleanupWorkspace is null ? Visibility.Visible : Visibility.Collapsed;
         ScanHeader.Visibility = extra || ExtensionsTab.IsChecked == true || PhotosTab.IsChecked == true
-            || OpportunitiesTab.IsChecked == true && !_cleanupBrowserVisible && _cleanupWorkspace?.Prepared is not null
+            || preparedCleanup
             ? (_work is null ? Visibility.Collapsed : Visibility.Visible) : Visibility.Visible;
         PublishExtensionContext();
     }

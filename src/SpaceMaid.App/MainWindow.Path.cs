@@ -113,6 +113,10 @@ public partial class MainWindow
         if (busy || _browsing || _openingPath) DrivePopup.IsOpen = false;
         PathBar.IsEnabled = !busy && !_browsing && !_openingPath;
         ScanButton.IsEnabled = !busy && !_browsing && !_openingPath && _currentPath.Length > 0;
+        // Existing results remain browsable during refreshes. Changing the scan
+        // target still owns navigation until it has published or failed.
+        ExplorePanel.IsEnabled = !_browsing && !_scanning && !_openingPath;
+        UpdateExplorerActions();
         UpdateUpdateButton();
     }
 

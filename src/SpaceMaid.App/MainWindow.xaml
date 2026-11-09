@@ -14,8 +14,7 @@
         <DockPanel x:Name="SidebarPanel" Grid.RowSpan="3" Margin="0,0,6,0">
             <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
                 <RadioButton x:Name="ExtensionsTab" Content="Extensions" local:SidebarNavigation.Icon="{StaticResource NavigationExtensions}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
-                <Button x:Name="OptimizationButton" Content="Optimize space" local:SidebarNavigation.Icon="{StaticResource NavigationOptimize}" Style="{StaticResource SidebarAction}" Click="Optimization_Click" Margin="0,10,0,4" IsEnabled="False"/>
-                <Grid><Grid.Style><Style TargetType="Grid"><Style.Triggers><Trigger Property="local:SidebarNavigation.IsCollapsed" Value="True"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></Grid.Style><TextBlock x:Name="OptimizationHint" Text="Scan first" FontSize="11" Margin="0,3,0,8" HorizontalAlignment="Center" AutomationProperties.LiveSetting="Polite"/></Grid>
+                <StackPanel x:Name="AssistantNavigation" Margin="0,0,0,8" />
                 <Button x:Name="UpdateButton" Content="Update available" local:SidebarNavigation.Icon="{StaticResource NavigationUpdates}" Style="{StaticResource SidebarAction}" Click="Updates_Click" Margin="0,0,0,8" Visibility="Collapsed"/>
                 <Button x:Name="MoreButton" Content="More" local:SidebarNavigation.Icon="{StaticResource NavigationMore}" Style="{StaticResource SidebarAction}" Click="More_Click" AutomationProperties.Name="More options">
                     <Button.ContextMenu><ContextMenu FontFamily="Segoe UI">
@@ -33,7 +32,8 @@
                     <RadioButton x:Name="OpportunitiesTab" Content="Cleanup" local:SidebarNavigation.Icon="{StaticResource NavigationCleanup}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
                     <RadioButton x:Name="PhotosTab" Content="Photos" local:SidebarNavigation.Icon="{StaticResource NavigationPhotos}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
                     <RadioButton x:Name="AppsTab" Content="Apps" local:SidebarNavigation.Icon="{StaticResource NavigationApps}" Style="{StaticResource WorkspaceNavigation}" GroupName="View" Checked="View_Changed"/>
-                    <StackPanel x:Name="ExtensionNavigation"/>
+                    <ToggleButton x:Name="ToolsToggle" Content="Tools" local:SidebarNavigation.Icon="{StaticResource NavigationOptimize}" Style="{StaticResource SidebarGroup}" Checked="ToolsToggle_Changed" Unchecked="ToolsToggle_Changed" AutomationProperties.Name="Tools" ToolTip="Show or hide specialist tools" Margin="0,10,0,0" />
+                    <StackPanel x:Name="ExtensionNavigation" Visibility="Collapsed"/>
                 </StackPanel>
             </ScrollViewer>
         </DockPanel>
@@ -122,28 +122,22 @@
                     <Button x:Name="ScanButton" Content="Scan" Click="Scan_Click" Style="{DynamicResource AccentButtonStyle}" Padding="18,5" />
                 </StackPanel>
                 <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,9,0,0">
-                    <UniformGrid Columns="3">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,16,0">
                             <WrapPanel><TextBlock Text="Free" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <TextBlock x:Name="FreeSpaceText" Text="—" FontSize="20" FontWeight="SemiBold" />
                                 <TextBlock x:Name="CapacityText" Text="Choose a drive" Opacity="0.65" FontSize="12" Margin="7,0,0,0" VerticalAlignment="Center" /></WrapPanel>
                             <ProgressBar x:Name="DriveCapacityBar" Minimum="0" Maximum="100" Height="4" MinHeight="0" Margin="0,6,0,0" AutomationProperties.Name="Free space as a share of drive capacity" />
                         </StackPanel>
-                        <StackPanel Margin="0,0,16,0">
-                            <WrapPanel><TextBlock x:Name="ScannedSizeLabel" Text="Scanned" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
-                                <TextBlock x:Name="ScannedSizeText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
+                        <StackPanel Grid.Column="1" Margin="20,0,0,0" MaxWidth="380">
+                            <WrapPanel><TextBlock x:Name="ScannedSizeLabel" Text="Scanned" Opacity="0.8" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <TextBlock x:Name="ScannedSizeText" Text="—" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" /></WrapPanel>
                             <TextBlock x:Name="ScannedSizeCaption" Text="On disk" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
                                 <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="On disk"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
-                        <StackPanel>
-                            <WrapPanel><TextBlock Text="Detected storage" Opacity="0.65" FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
-                                <TextBlock x:Name="CandidateText" Text="—" FontSize="20" FontWeight="SemiBold" /></WrapPanel>
-                            <TextBlock x:Name="CandidateCaption" Text="Estimate" Opacity="0.65" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" ToolTip="Observed estimate, including kept storage. Overlapping folders are counted once. Review checks what can be cleaned up.">
-                                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="Estimate"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                    </UniformGrid>
+                    </Grid>
                 </Border>
             </Grid>
         </Border>
@@ -164,7 +158,7 @@
               <Border Style="{StaticResource Card}" Padding="0">
                   <Grid>
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <local:ExplorerListView x:Name="SpaceTree" SelectionMode="Extended" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
+                      <local:ExplorerListView x:Name="SpaceTree" Style="{DynamicResource {x:Type ListView}}" SelectionMode="Extended" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
                                ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Ctrl or Shift to select multiple entries. Use Left and Right to collapse and expand folders. Delete reviews selected folders for recycling.">
@@ -195,7 +189,7 @@
                                       </Grid></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="AllocationColumn" Width="96">
-                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="AllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="AllocationHeader" Content="Size on disk ↓" Tag="Allocated" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
                                       <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding PrimarySize}" Style="{StaticResource TreeNumberCell}" ToolTip="{Binding SizeNote}" /></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="ModifiedColumn" Width="150">
@@ -203,7 +197,7 @@
                                       <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Modified}" Style="{StaticResource TreeTextCell}" ToolTip="{Binding DateNote}" /></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="LogicalColumn" Width="96">
-                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="LogicalHeader" Content="Logical" Tag="Logical" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
+                                      <GridViewColumn.Header><GridViewColumnHeader x:Name="LogicalHeader" Content="File size" Tag="Logical" Click="TreeSort_Click" Style="{StaticResource TreeColumnHeader}" /></GridViewColumn.Header>
                                       <GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding SecondarySize}" Style="{StaticResource TreeNumberCell}" /></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
                                   <GridViewColumn x:Name="ShareColumn" Width="80">
@@ -234,8 +228,8 @@
                           <Button x:Name="ColumnsButton" DockPanel.Dock="Right" Content="Columns" Click="Columns_Click" Style="{StaticResource ColumnHeader}" ToolTip="Choose columns. Drag headers to reorder; drag their edges to resize." AutomationProperties.Name="Choose tree columns" />
                           <ComboBox x:Name="SizeBasisSelector" DockPanel.Dock="Left" SelectedIndex="0" IsEnabled="False" MinWidth="104"
                                     Margin="0,0,8,0" AutomationProperties.Name="Size basis" SelectionChanged="SizeBasis_Changed">
-                              <ComboBoxItem Content="Allocated" />
-                              <ComboBoxItem Content="Logical" />
+                              <ComboBoxItem Content="Size on disk" />
+                              <ComboBoxItem Content="File size" />
                           </ComboBox>
                           <TextBlock x:Name="TreeNote" Text="Shared files counted once" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0.65" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
                               <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value="Shared files counted once"><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
@@ -253,14 +247,23 @@
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="CacheSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Build &amp; cache" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="AgentSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Agent files" FontSize="11" /></StackPanel>
                           <StackPanel Orientation="Horizontal" Margin="0,0,0,5"><Border x:Name="OtherSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Other" FontSize="11" /></StackPanel>
-                          <TextBlock x:Name="MapBasis" Text="Area = allocated size" FontSize="11" Margin="12,0,0,5" />
+                          <TextBlock x:Name="MapBasis" Text="Area = size on disk" FontSize="11" Margin="12,0,0,5" />
                       </WrapPanel>
                       <StackPanel Grid.Row="2" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
                           <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,7" />
+                          <TextBlock x:Name="SelectionTitle" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,0,6" />
+                          <WrapPanel x:Name="SelectionActions" Margin="0,0,0,4">
+                              <Button x:Name="OpenSelectionButton" Content="Open in Explorer" Click="OpenSelection_Click" IsEnabled="False" Margin="0,0,6,4" />
+                              <Button x:Name="RecycleSelectionButton" Content="Move to Recycle Bin…" Click="RecycleSelection_Click" IsEnabled="False" Margin="0,0,6,4" ToolTipService.ShowOnDisabled="True" />
+                              <Button x:Name="SelectionMoreButton" Content="More actions" Click="SelectionMore_Click" IsEnabled="False" Margin="0,0,0,4"><Button.ContextMenu><ContextMenu /></Button.ContextMenu></Button>
+                          </WrapPanel>
+                          <TextBlock x:Name="SelectionActionHint" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="Collapsed" />
+                          <StackPanel x:Name="SelectionDetails">
                           <TextBox x:Name="SelectedEntryPath" Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
                           <TextBlock x:Name="EntryTypeText" Text="{Binding TypeDescription}" TextWrapping="Wrap" Opacity="0.7" FontSize="12" Margin="0,4,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding TypeDescription}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-                          <WrapPanel Margin="0,4,0,0"><TextBlock Text="Allocated" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Logical" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
-                          <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.65" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+                          <WrapPanel Margin="0,4,0,0"><TextBlock Text="Size on disk" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="File size" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
+                          <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.8" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+                          </StackPanel>
                       </StackPanel>
                   </Grid>
               </Border>
@@ -275,8 +278,8 @@
                   <Grid Grid.Row="1" Margin="22,0,24,8">
                       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
                       <Button x:Name="PreliminaryNameHeader" Content="File" Tag="Name" Click="PreliminarySort_Click" Style="{StaticResource ColumnHeader}" HorizontalContentAlignment="Left" />
-                      <Button x:Name="PreliminaryAllocationHeader" Content="Allocated ↓" Tag="Allocated" Click="PreliminarySort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
-                      <Button x:Name="PreliminaryLogicalHeader" Content="Logical" Tag="Logical" Click="PreliminarySort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
+                      <Button x:Name="PreliminaryAllocationHeader" Content="Size on disk ↓" Tag="Allocated" Click="PreliminarySort_Click" Grid.Column="1" Style="{StaticResource ColumnHeader}" />
+                      <Button x:Name="PreliminaryLogicalHeader" Content="File size" Tag="Logical" Click="PreliminarySort_Click" Grid.Column="2" Style="{StaticResource ColumnHeader}" />
                   </Grid>
                   <ListBox x:Name="PreliminaryFiles" Grid.Row="2" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch"
                            ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -302,11 +305,22 @@
               </Grid>
           </Border>
           <Grid x:Name="OpportunitiesPanel" Grid.Row="1" Visibility="Collapsed">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-            <Button x:Name="CleanupBrowserBack" Content="Back to cleanup" Click="CleanupBrowserBack_Click" HorizontalAlignment="Left" Margin="0,0,0,10" Visibility="Collapsed" />
-            <ContentControl x:Name="OpportunitiesContent" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
-            <ContentControl x:Name="CleanupWorkspaceContent" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Visibility="Collapsed" />
-            <StackPanel x:Name="OpportunitiesPlaceholder" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <Grid Margin="2,0,2,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel x:Name="CleanupEstimate">
+                    <WrapPanel><TextBlock Text="Storage found in cleanup categories" VerticalAlignment="Center" Margin="0,0,8,0" /><TextBlock x:Name="CandidateText" Text="—" FontWeight="SemiBold" VerticalAlignment="Center" /><TextBlock x:Name="CandidateCaption" Text="Estimate" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" /></WrapPanel>
+                    <TextBlock Text="Includes items you may keep. Review a selection to estimate savings." FontSize="12" Opacity="0.8" TextWrapping="Wrap" Margin="0,4,12,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                    <Button x:Name="OptimizationButton" Content="Optimization options…" Click="Optimization_Click" IsEnabled="False" ToolTipService.ShowOnDisabled="True" />
+                    <TextBlock x:Name="OptimizationHint" Text="Scan first" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Right" AutomationProperties.LiveSetting="Polite"/>
+                </StackPanel>
+            </Grid>
+            <Button x:Name="CleanupBrowserBack" Grid.Row="1" Content="Back to cleanup" Click="CleanupBrowserBack_Click" HorizontalAlignment="Left" Margin="0,0,0,10" Visibility="Collapsed" />
+            <ContentControl x:Name="OpportunitiesContent" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+            <ContentControl x:Name="CleanupWorkspaceContent" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Visibility="Collapsed" />
+            <StackPanel x:Name="OpportunitiesPlaceholder" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center">
               <TextBlock x:Name="OpportunitiesStatusText" Text="Loading Opportunities…" TextWrapping="Wrap" TextAlignment="Center" />
               <Button Content="Extensions" Click="Extensions_Click" HorizontalAlignment="Center" Margin="0,12,0,0" />
             </StackPanel>

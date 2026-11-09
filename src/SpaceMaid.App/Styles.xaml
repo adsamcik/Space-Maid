@@ -163,6 +163,25 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <Style x:Key="SidebarGroup" TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+        <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="ContentTemplate" Value="{StaticResource SidebarContent}" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="5" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" /></Trigger>
+                <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" /></Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource WindowForeground}" /></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style x:Key="TreeTextCell" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" /><Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" /><Setter Property="Margin" Value="4,0" />
@@ -183,7 +202,7 @@
                 <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Selection" Property="Opacity" Value="0.06" /></Trigger>
                 <Trigger Property="IsSelected" Value="True"><Setter TargetName="Selection" Property="Opacity" Value="0.16" /></Trigger>
                 <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Focus" Property="Opacity" Value="0.45" /></Trigger>
-                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45" /></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.8" /></Trigger>
             </ControlTemplate.Triggers>
         </ControlTemplate></Setter.Value></Setter>
     </Style>

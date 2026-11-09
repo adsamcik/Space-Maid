@@ -160,8 +160,8 @@ public partial class MainWindow
             var column = _treeColumns[state.Id];
             var item = new MenuItem { Header = state.Id switch
                 {
-                    ScanSortColumn.Allocated => UseExplorerAllocation ? "Allocated" : "Logical",
-                    ScanSortColumn.Logical => UseExplorerAllocation ? "Logical" : "Allocated",
+                    ScanSortColumn.Allocated => UseExplorerAllocation ? "Size on disk" : "File size",
+                    ScanSortColumn.Logical => UseExplorerAllocation ? "File size" : "Size on disk",
                     ScanSortColumn.Share => "% parent",
                     _ => state.Id.ToString()
                 },

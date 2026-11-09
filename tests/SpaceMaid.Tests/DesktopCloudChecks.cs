@@ -47,7 +47,7 @@ public sealed partial class DesktopTests
         Assert.Equal(SizeText.Format(logicalBytes), logicalRows.Row(logicalRows.Find(link)).PrimarySize);
         Assert.Equal(SizeText.Format(scan.LogicalBytes), total.Text);
         Assert.Contains(map.Buttons, button => button.DataContext is SpaceContribution part && part.Link == link && part.Bytes == logicalBytes);
-        Assert.Equal("Area = logical size", ((TextBlock)window.FindName("MapBasis")).Text);
+        Assert.Equal("Area = file size", ((TextBlock)window.FindName("MapBasis")).Text);
         Assert.Equal(0, CloudFiles.Inspect(online)!.LocalBytes);
         foreach (var size in new[] { (1220, 940), (1020, 820) })
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"explorer-logical-{size.Item1}.png"), size.Item1, size.Item2);
@@ -58,7 +58,7 @@ public sealed partial class DesktopTests
         var refreshed = Assert.IsType<ExplorerRows>(tree.ItemsSource);
         Assert.NotNull(refreshed.Scan.LastRecheckUtc);
         Assert.False(refreshed.UseAllocation);
-        Assert.Equal("Logical size · Partially refreshed", ((TextBlock)window.FindName("ScannedSizeCaption")).Text);
+        Assert.Equal("File size · Partially refreshed", ((TextBlock)window.FindName("ScannedSizeCaption")).Text);
 
         selector.SelectedIndex = 0;
         PumpUntil(() => tree.ItemsSource is ExplorerRows { UseAllocation: true } && selector.IsEnabled, TimeSpan.FromSeconds(10));

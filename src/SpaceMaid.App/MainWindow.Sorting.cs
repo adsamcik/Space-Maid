@@ -65,8 +65,8 @@ public partial class MainWindow
     private void UpdateTreeSortHeaders()
     {
         SetSortHeader(NameHeader, "Name", ScanSortColumn.Name, _treeSortColumn, _treeDescending);
-        SetSortHeader(AllocationHeader, UseExplorerAllocation ? "Allocated" : "Logical", ScanSortColumn.Allocated, _treeSortColumn, _treeDescending);
-        SetSortHeader(LogicalHeader, UseExplorerAllocation ? "Logical" : "Allocated", ScanSortColumn.Logical, _treeSortColumn, _treeDescending);
+        SetSortHeader(AllocationHeader, UseExplorerAllocation ? "Size on disk" : "File size", ScanSortColumn.Allocated, _treeSortColumn, _treeDescending);
+        SetSortHeader(LogicalHeader, UseExplorerAllocation ? "File size" : "Size on disk", ScanSortColumn.Logical, _treeSortColumn, _treeDescending);
         SetSortHeader(ShareHeader, "% parent", ScanSortColumn.Share, _treeSortColumn, _treeDescending);
         SetSortHeader(ModifiedHeader, "Modified", ScanSortColumn.Modified, _treeSortColumn, _treeDescending);
         SetSortHeader(CreatedHeader, "Created", ScanSortColumn.Created, _treeSortColumn, _treeDescending);
@@ -120,7 +120,7 @@ public partial class MainWindow
         PreliminaryFiles.ItemsSource = rows;
         if (selected is not null) PreliminaryFiles.SelectedItem = rows.FirstOrDefault(row => row.File == selected);
         SetSortHeader(PreliminaryNameHeader, "File", ScanSortColumn.Name, _preliminarySortColumn, _preliminaryDescending);
-        SetSortHeader(PreliminaryAllocationHeader, "Allocated", ScanSortColumn.Allocated, _preliminarySortColumn, _preliminaryDescending);
-        SetSortHeader(PreliminaryLogicalHeader, "Logical", ScanSortColumn.Logical, _preliminarySortColumn, _preliminaryDescending);
+        SetSortHeader(PreliminaryAllocationHeader, "Size on disk", ScanSortColumn.Allocated, _preliminarySortColumn, _preliminaryDescending);
+        SetSortHeader(PreliminaryLogicalHeader, "File size", ScanSortColumn.Logical, _preliminarySortColumn, _preliminaryDescending);
     }
 }
