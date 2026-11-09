@@ -164,6 +164,7 @@ public sealed partial class DesktopTests
             Assert.Null(Snapshot().FindEntry(branch));
             Assert.Equal(original, window.CurrentPath);
             CheckTreePosition();
+            CheckBatchSelection();
         }
         finally
         {
@@ -182,6 +183,134 @@ public sealed partial class DesktopTests
         }
 
         void Browse(string path) => FinishTask(window.NavigateToEntryAsync(Snapshot().FindEntry(path)!.Value));
+
+        void CheckBatchSelection()
+        {
+            string parent = Folder("batch-parent", 4096);
+            string nested = Directory.CreateDirectory(Path.Join(parent, "nested")).FullName;
+            string sibling = Folder("batch-sibling", 8192);
+            string background = Folder("batch-background", 4096);
+            string pending = Folder("batch-pending", 4096);
+            string file = Path.Join(fixture.Path, "batch-file.txt");
+            File.WriteAllText(file, "Keep this file");
+            window.SetScanTarget(fixture.Path);
+            Assert.True(Finish(window.ScanCurrentPathAsync()));
+            Browse(nested); // Reveal the nested row.
+            Assert.Equal(SelectionMode.Extended, tree.SelectionMode);
+
+            HoldMutationLease();
+            var refresh = Queue(background);
+            Select(parent, nested, sibling, file);
+            FinishTask(window.SortTreeAsync(ScanSortColumn.Name));
+            AssertSelection(parent, nested, sibling, file);
+            ReleaseMutationLease();
+            Assert.False(Assert.IsType<RecycleResult>(Finish(refresh)).Cancelled);
+            AssertSelection(parent, nested, sibling, file);
+
+            var row = BringRowIntoView(sibling);
+            RightClick(window, row);
+            Assert.True(tree.ContextMenu.IsOpen);
+            var menuAction = tree.ContextMenu.Items.OfType<MenuItem>()
+                .Single(item => Equals(item.Header, "Move selected folders to Recycle Bin…"));
+            Assert.True(menuAction.IsEnabled);
+            AssertSelection(parent, nested, sibling, file);
+            tree.ContextMenu.IsOpen = false;
+            ReviewBatch(() => menuAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)), approve: false, skipped: [file]);
+            Assert.True(Directory.Exists(parent) && Directory.Exists(sibling));
+
+            var delete = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(row), Environment.TickCount, Key.Delete)
+                { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            ReviewBatch(() => row.RaiseEvent(delete), approve: false, skipped: [file]);
+            Assert.True(delete.Handled);
+            Assert.True(Directory.Exists(parent) && Directory.Exists(sibling));
+            Browse(parent);
+            AssertSelection(parent);
+
+            HoldMutationLease();
+            var pendingJob = Queue(pending);
+            Select(parent, nested, sibling, file, pending);
+            var batchPaths = BatchPathsInTreeOrder();
+            Task<RecycleResult?[]>? batch = null;
+            ReviewBatch(() =>
+            {
+                batch = window.RecycleSelectedFoldersAsync();
+                for (int index = 0; index < batchPaths.Length; index++) jobs.Add((batchPaths[index], ResultAt(batch, index)));
+            }, approve: true, skipped: [file, pending]);
+            PumpUntil(() => status.Text == "Recycling batch-pending… · 2 queued", TimeSpan.FromSeconds(5));
+            Assert.True(((Grid)window.FindName("ExplorePanel")).IsEnabled);
+            ReleaseMutationLease();
+            Assert.False(Assert.IsType<RecycleResult>(Finish(pendingJob)).Cancelled);
+            var results = Finish(batch!);
+            Assert.Equal(2, results.Length);
+            Assert.All(results, result => Assert.False(Assert.IsType<RecycleResult>(result).Cancelled));
+            Assert.False(Directory.Exists(parent) || Directory.Exists(sibling));
+            Assert.True(File.Exists(file));
+            AssertSelection(file);
+
+            void Select(string first, params string[] others)
+            {
+                Browse(first);
+                var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                foreach (string path in others) tree.SelectedItems.Add(rows.Row(rows.Find(rows.Scan.FindEntry(path)!.Value)));
+            }
+
+            void AssertSelection(params string[] expected) => Assert.Equal(expected.Order(StringComparer.Ordinal),
+                tree.SelectedItems.Cast<ExplorerRow>().Select(item => item.Path).Order(StringComparer.Ordinal));
+
+            ListBoxItem BringRowIntoView(string path)
+            {
+                var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                int index = rows.Find(rows.Scan.FindEntry(path)!.Value);
+                tree.ScrollIntoView(rows.Row(index));
+                window.UpdateLayout();
+                return Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(index));
+            }
+
+            void ReviewBatch(Action request, bool approve, string[] skipped)
+            {
+                var expected = BatchPathsInTreeOrder();
+                int reviewed = 0;
+                Exception? failure = null;
+                var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
+                timer.Tick += (_, _) =>
+                {
+                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+                    if (dialog is null) return;
+                    timer.Stop();
+                    reviewed++;
+                    try
+                    {
+                        Assert.Equal(expected, ((TextBox)dialog.FindName("TargetPath")).Text.Split(Environment.NewLine));
+                        Assert.Contains("1 included with selected parents", ((TextBlock)dialog.FindName("SelectionNote")).Text);
+                        Assert.Contains($"{skipped.Length} skipped", ((TextBlock)dialog.FindName("SelectionNote")).Text);
+                        foreach (string path in skipped) Assert.Contains(path, ((TextBox)dialog.FindName("SkippedEntries")).Text);
+                        Assert.True(((Button)dialog.FindName("KeepButton")).IsDefault);
+                        if (approve)
+                        {
+                            var queue = (Button)dialog.FindName("RecycleButton");
+                            Assert.True(queue.IsVisible);
+                            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "recycle-selection-review.png"), 520, 360);
+                            queue.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        }
+                        else dialog.Close();
+                    }
+                    catch (Exception error) { failure = error; dialog.Close(); }
+                };
+                timer.Start();
+                try { request(); PumpUntil(() => reviewed > 0, TimeSpan.FromSeconds(5)); }
+                finally { timer.Stop(); }
+                if (failure is not null) throw failure;
+                Assert.Equal(1, reviewed);
+            }
+
+            string[] BatchPathsInTreeOrder()
+            {
+                var rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                return new[] { parent, sibling }.OrderBy(path => rows.Find(rows.Scan.FindEntry(path)!.Value)).ToArray();
+            }
+
+            static async Task<RecycleResult?> ResultAt(Task<RecycleResult?[]> results, int index) => (await results).ElementAtOrDefault(index);
+        }
 
         void CheckTreePosition()
         {

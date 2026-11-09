@@ -85,10 +85,15 @@ public partial class MainWindow
     }
 
     private sealed record PreparedExplorer(ExplorerRows Rows, IReadOnlyDictionary<int, SpaceKind> Kinds,
-        Dictionary<int, int[]> ChildOrders, Dictionary<int, int[]> MapOrders, ExplorerPresentation Entry);
+        Dictionary<int, int[]> ChildOrders, Dictionary<int, int[]> MapOrders, ExplorerPresentation Entry, ExplorerRow[] Selection);
+
+    private ExplorerRow[] SelectedTreeRows() => SpaceTree.SelectedItems.OfType<ExplorerRow>().ToArray();
+
+    private string[] SelectedTreePaths() => SpaceTree.SelectedItems.OfType<ExplorerRow>()
+        .Select(row => row.Scan.EntryPath(row.Entry.LinkIndex)).OfType<string>().ToArray();
 
     private async Task<PreparedExplorer> PrepareExplorerRefreshAsync(ScanSnapshot scan,
-        IReadOnlyDictionary<int, SpaceKind> kinds, string[] expanded, string selected,
+        IReadOnlyDictionary<int, SpaceKind> kinds, string[] expanded, string selected, string[] selectedPaths,
         ScanSortColumn column, bool descending, bool preferLogicalSize, CancellationToken token, string? mapPath = null)
     {
         await _classificationReady.WaitAsync(token);
@@ -109,10 +114,17 @@ public partial class MainWindow
             while (scan.FindEntry(selected) is null
                 && Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(selected)) is { } parent) selected = parent;
             int selection = scan.FindEntry(selected) ?? -1;
+            var selectedRows = rows.RowsForLinks(selectedPaths.Select(path => scan.FindEntry(path) is { } link
+                && scan.EntryPath(link) == path ? link : (int?)null).OfType<int>().ToArray());
+            if (selectedRows.Length > 0 && !selectedRows.Any(row => row.Entry.LinkIndex == selection))
+                selection = selectedRows[0].Entry.LinkIndex;
+            else if (selectedRows.Length == 0 && selectedPaths.Length == 1)
+                selectedRows = rows.RowsForLinks([selection]);
             int? mapFolder = mapPath is null ? null : scan.FindEntry(mapPath);
             var presentation = PrepareEntry(scan, rows, selection, kinds, childOrders, mapOrders, column, descending, token, mapFolder);
             token.ThrowIfCancellationRequested();
-            return new PreparedExplorer(rows, kinds, childOrders, mapOrders, presentation);
+            return new PreparedExplorer(rows, kinds, childOrders, mapOrders, presentation,
+                selectedRows.OrderByDescending(row => row.Entry.LinkIndex == selection).ToArray());
         }, token);
     }
 
@@ -134,7 +146,7 @@ public partial class MainWindow
             SpaceTree.ItemsSource = prepared.Rows;
             // Restore selection without scrolling it into view. The user's
             // viewport can be elsewhere in a large expanded branch.
-            SpaceTree.SelectedIndex = prepared.Rows.Find(_selectedLink);
+            SpaceTree.RestoreSelection(prepared.Selection);
             TreeHint.Visibility = Visibility.Collapsed;
             PublishEntry(prepared.Entry);
         }
@@ -156,7 +168,7 @@ public partial class MainWindow
                 // Context selection can change the highlighted row without
                 // changing the folder shown by the map and breadcrumb.
                 var prepared = await PrepareExplorerRefreshAsync(scan, _kinds,
-                    _explorer!.ExpandedPaths(), scan.EntryPath(_selectedLink) ?? scan.RootPath,
+                    _explorer!.ExpandedPaths(), scan.EntryPath(_selectedLink) ?? scan.RootPath, SelectedTreePaths(),
                     column, descending, preferLogicalSize, token, _currentPath);
                 token.ThrowIfCancellationRequested();
                 if (_closing || !ReferenceEquals(_snapshot, scan)) return;
@@ -288,13 +300,13 @@ public partial class MainWindow
 
         // Focus can request that WPF scroll the whole row into view, including
         // its columns. Keep the restored viewport and the current selection.
-        int selected = SpaceTree.SelectedIndex;
+        var selected = SelectedTreeRows();
         _syncTree = true;
         target.RequestBringIntoView += KeepViewport;
         try
         {
             target.Focus();
-            if (SpaceTree.SelectedIndex != selected) SpaceTree.SelectedIndex = selected;
+            if (!SpaceTree.SelectedItems.Cast<ExplorerRow>().SequenceEqual(selected)) SpaceTree.RestoreSelection(selected);
         }
         finally
         {
@@ -367,7 +379,7 @@ public partial class MainWindow
         _syncTree = true;
         try
         {
-            SpaceTree.SelectedIndex = _explorer.Find(link);
+            SpaceTree.RestoreSelection(_explorer.RowsForLinks([link]));
             if (SpaceTree.SelectedItem is { } row) SpaceTree.ScrollIntoView(row);
         }
         finally { _syncTree = false; }
@@ -402,13 +414,25 @@ public partial class MainWindow
 
     private async Task ToggleFolderAsync(ExplorerRow row, CancellationToken token)
     {
-        if (!row.CanExpand) return;
-        int selected = _selectedLink;
-        if (_explorer!.IsExpanded(row.Entry.LinkIndex)) _explorer.Collapse(row.Entry.LinkIndex);
-        else _explorer.Expand(row.Entry.LinkIndex, await ChildOrderAsync(row.Entry.FileIndex, token));
-        if (_explorer.Find(selected) < 0) selected = row.Entry.LinkIndex;
-        SelectTree(selected);
-        await DisplayEntryAsync(selected, token);
+        if (!row.CanExpand || !ReferenceEquals(row.Scan, _snapshot)) return;
+        var links = SelectedTreeRows().Select(item => item.Entry.LinkIndex).ToArray();
+        int current = _selectedLink;
+        var viewport = links.Length > 1 ? CaptureTreeViewport() : null;
+        _syncTree = true;
+        try
+        {
+            if (_explorer!.IsExpanded(row.Entry.LinkIndex)) _explorer.Collapse(row.Entry.LinkIndex);
+            else _explorer.Expand(row.Entry.LinkIndex, await ChildOrderAsync(row.Entry.FileIndex, token));
+            var selected = _explorer.RowsForLinks(links);
+            if (selected.Length == 0) selected = _explorer.RowsForLinks([row.Entry.LinkIndex]);
+            SpaceTree.RestoreSelection(selected);
+            _selectedLink = selected.Any(item => item.Entry.LinkIndex == current) ? current : selected[0].Entry.LinkIndex;
+            _selectionIsGroup = false;
+            if (viewport is not null) RestoreTreeViewport(viewport);
+            else if (SpaceTree.SelectedItem is { } item) SpaceTree.ScrollIntoView(item);
+        }
+        finally { _syncTree = false; }
+        await DisplayEntryAsync(_selectedLink, token);
     }
 
     private async void Expand_Click(object sender, RoutedEventArgs e)
@@ -419,7 +443,9 @@ public partial class MainWindow
     }
     private async void Tree_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_syncTree || _work is not null || SpaceTree.SelectedItem is not ExplorerRow row) return;
+        if (_syncTree || _work is not null) return;
+        _explorerRevision++;
+        if (SpaceTree.SelectedItem is not ExplorerRow row || (!_selectionIsGroup && _selectedLink == row.Entry.LinkIndex)) return;
         _selectedLink = row.Entry.LinkIndex;
         _selectionIsGroup = false;
         await BrowseAsync(token => DisplayEntryAsync(_selectedLink, token));
@@ -434,7 +460,7 @@ public partial class MainWindow
             if (e.ChangedButton == MouseButton.Right && item.DataContext is ExplorerRow row && CanUseFolderMenu(row.Scan))
             {
                 // Avoid ListBox selection triggering async navigation before menu opening.
-                e.Handled = SelectContextEntry(row.Scan, row.Entry.LinkIndex);
+                e.Handled = SelectContextEntry(row.Scan, row.Entry.LinkIndex, preserveSelection: item.IsSelected);
             }
         }
     }
@@ -445,21 +471,38 @@ public partial class MainWindow
     }
     private async void Tree_KeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key is not (Key.Left or Key.Right)) return;
         // Headers now live inside the list. Their keys must not navigate a selected folder.
-        if (!ReferenceEquals(e.OriginalSource, SpaceTree)
-            && ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is not ListBoxItem) return;
-        if (SpaceTree.SelectedItem is not ExplorerRow row || _explorer is null) return;
+        var focusedRow = ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) as ListBoxItem;
+        if (!ReferenceEquals(e.OriginalSource, SpaceTree) && focusedRow is null) return;
+        var row = focusedRow?.DataContext as ExplorerRow ?? SpaceTree.SelectedItem as ExplorerRow;
+        if (row is null || _explorer is null) return;
+        bool hadFocus = SpaceTree.IsKeyboardFocusWithin;
+        int destination = row.Entry.LinkIndex;
+        e.Handled = true;
         if (e.Key == Key.Right)
         {
-            e.Handled = true;
             if (row.CanExpand && !row.Expanded) await BrowseAsync(token => ToggleFolderAsync(row, token));
-            else if (row.Expanded && SpaceTree.SelectedIndex + 1 < _explorer.Count) SpaceTree.SelectedIndex++;
+            else if (row.Expanded && _explorer.Find(row.Entry.LinkIndex) is var index && index >= 0 && index + 1 < _explorer.Count
+                && _explorer.Row(index + 1) is { } child && child.Depth == row.Depth + 1)
+            {
+                destination = child.Entry.LinkIndex;
+                await NavigateToEntryAsync(destination);
+            }
+            else return;
         }
-        else if (e.Key == Key.Left)
+        else if (row.Expanded) await BrowseAsync(token => ToggleFolderAsync(row, token));
+        else if (row.Entry.ParentIndex >= 0)
         {
-            e.Handled = true;
-            if (row.Expanded) await BrowseAsync(token => ToggleFolderAsync(row, token));
-            else if (row.Entry.ParentIndex >= 0) await NavigateToEntryAsync(row.Scan.PrimaryLink(row.Entry.ParentIndex));
+            destination = row.Scan.PrimaryLink(row.Entry.ParentIndex);
+            await NavigateToEntryAsync(destination);
+        }
+        else return;
+
+        if (hadFocus && !_closing && _work is null && ReferenceEquals(_snapshot, row.Scan))
+        {
+            SpaceTree.UpdateLayout();
+            RestoreExplorerFocus(new(row.Scan.EntryPath(destination)));
         }
     }
 

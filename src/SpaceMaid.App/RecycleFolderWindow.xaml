@@ -5,10 +5,10 @@
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14"
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
     <StackPanel Margin="20">
-        <TextBlock Text="Move to Recycle Bin?" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock x:Name="Heading" Text="Move to Recycle Bin?" FontSize="20" FontWeight="SemiBold" />
         <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,16,0,10">
             <StackPanel>
-                <Grid>
+                <Grid x:Name="SingleTargetHeader">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
                     <TextBlock x:Name="TargetName" Grid.Column="1" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0" />
@@ -19,10 +19,12 @@
         </Border>
         <TextBlock Text="Includes all contents. Empty the bin to free space." FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
         <TextBlock x:Name="PartialScanNote" Text="Partial scan · Size may be incomplete." Visibility="Collapsed" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,0" />
+        <TextBlock x:Name="SelectionNote" Visibility="Collapsed" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
         <Expander x:Name="DeletionDetails" Header="Details" FontSize="12" Margin="0,10,0,0">
             <StackPanel Margin="0,8,0,0">
                 <TextBlock x:Name="SizeDetails" TextWrapping="Wrap" />
                 <TextBlock x:Name="CoverageNote" Text="Scan estimate; contents may have changed. Shared files may remain in use elsewhere." TextWrapping="Wrap" Margin="0,6,0,0" Opacity="0.7" />
+                <TextBox x:Name="SkippedEntries" Visibility="Collapsed" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="100" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Skipped selections and reasons" />
                 <TextBlock Text="You can restore from the bin. Cancelling may leave some contents already moved." TextWrapping="Wrap" Margin="0,6,0,0" Opacity="0.7" />
             </StackPanel>
         </Expander>

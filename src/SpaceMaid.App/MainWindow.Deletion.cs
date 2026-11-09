@@ -8,9 +8,13 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
+
+internal sealed record RecycleSelectionSkip(string Path, string Reason);
+internal sealed record RecycleSelectionReview(FolderDeletionTarget[] Targets, RecycleSelectionSkip[] Skipped, int NestedSelections);
 
 public partial class MainWindow
 {
@@ -29,7 +33,7 @@ public partial class MainWindow
     private TaskCompletionSource? _recycleStateChanged;
     private bool _scanStale;
     private int _queuedRecyclesCancelled, _foregroundWorkVersion;
-    private string? _recycleCheckPath;
+    private (string Status, string? Path)? _recycleCheck;
     private string? _recycleSummary, _recycleDetails;
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
@@ -41,71 +45,103 @@ public partial class MainWindow
              source = VisualTreeHelper.GetParent(source))
             if (source is TextBoxBase) return;
         e.Handled = true;
-        await DeleteSelectedFolderAsync();
+        await RecycleSelectedFoldersAsync();
     }
 
-    internal Task<RecycleResult?> DeleteSelectedFolderAsync()
+    internal async Task<RecycleResult?> DeleteSelectedFolderAsync() => (await RecycleSelectedFoldersAsync()).FirstOrDefault();
+
+    internal Task<RecycleResult?[]> RecycleSelectedFoldersAsync()
     {
-        if (_snapshot is not { } scan || !CanUseFolderMenu(scan)) return Task.FromResult<RecycleResult?>(null);
+        if (_snapshot is not { } scan || !CanUseFolderMenu(scan)) return Task.FromResult<RecycleResult?[]>([]);
         if (_selectionIsGroup)
         {
             StatusText.Text = "Grouped entries cannot be deleted. Select an exact folder in the tree.";
-            return Task.FromResult<RecycleResult?>(null);
+            return Task.FromResult<RecycleResult?[]>([]);
         }
-        return DeleteFolderAsync(scan, _selectedLink);
+        var links = RecycleLinksInTreeOrder(SelectedTreeRows().Where(row => ReferenceEquals(row.Scan, scan)));
+        if (links.Length > 0) return DeleteFoldersAsync(scan, links);
+        StatusText.Text = "Select folders in Explore to recycle them.";
+        return Task.FromResult<RecycleResult?[]>([]);
     }
+
+    private static int[] RecycleLinksInTreeOrder(IEnumerable<ExplorerRow> rows) => rows.OrderBy(row => row.VisibleIndex)
+        .Select(row => row.Entry.LinkIndex).ToArray();
 
     private string? RecycleBlockReason(ScanSnapshot scan, int link)
     {
-        if (_recycleCheckPath is not null) return "Finish the current recycle confirmation first.";
+        if (_recycleCheck is not null) return "Finish the current recycle confirmation first.";
         if (FolderDeletionTarget.SelectionBlockReason(scan, link) is { } blocked) return blocked;
         string path = scan.EntryPath(link)!;
-        bool Overlaps(RecycleJob job) => CoversRecyclePath(job.Target.Path, path) || CoversRecyclePath(path, job.Target.Path);
-        return (_activeRecycle is { } active && Overlaps(active)) || _queuedRecycles.Any(Overlaps)
+        return PendingRecyclePaths().Any(pending => RecyclePathsOverlap(pending, path))
             ? "This folder overlaps a pending recycle request." : null;
     }
 
-    private async Task<RecycleResult?> DeleteFolderAsync(ScanSnapshot scan, int link)
+    private IEnumerable<string> PendingRecyclePaths()
     {
-        if (!CanUseFolderMenu(scan)) return null;
-        if (RecycleBlockReason(scan, link) is { } blocked)
+        if (_activeRecycle is { } active) yield return active.Target.Path;
+        foreach (var job in _queuedRecycles) yield return job.Target.Path;
+    }
+
+    private static bool RecyclePathsOverlap(string first, string second) => CoversRecyclePath(first, second) || CoversRecyclePath(second, first);
+
+    private async Task<RecycleResult?[]> DeleteFoldersAsync(ScanSnapshot scan, int[] links)
+    {
+        if (!CanUseFolderMenu(scan) || links.Length == 0) return [];
+        if (_recycleCheck is not null)
+        {
+            StatusText.Text = "Finish the current recycle confirmation first.";
+            return [];
+        }
+        if (links.Length == 1 && RecycleBlockReason(scan, links[0]) is { } blocked)
         {
             StatusText.Text = blocked;
-            return null;
+            return [];
         }
 
-        _recycleCheckPath = scan.EntryPath(link)!;
+        string? singlePath = links.Length == 1 ? scan.EntryPath(links[0]) : null;
+        _recycleCheck = singlePath is not null ? ($"Checking {Path.GetFileName(singlePath)}…", singlePath)
+            : ($"Checking {links.Length:N0} selected entries…", null);
         int workVersion = _foregroundWorkVersion;
         UpdateRecycleActivity();
-        RecycleJob job;
+        RecycleSelectionReview review;
         try
         {
-            var target = await Operations.CaptureRecycleTargetAsync(scan, link, _extensionLifetime.Token);
+            var pending = PendingRecyclePaths().ToArray();
+            var files = Operations.Files;
+            var token = _extensionLifetime.Token;
+            review = await Task.Run(() => PrepareRecycleSelection(scan, links, pending, files, token), token);
             // A refresh can replace the inventory while the live identity check
-            // runs. The requested target is already tied to the original row.
+            // runs. Each requested target is already tied to the original row.
             if (_closing || workVersion != _foregroundWorkVersion)
             {
-                if (_work is null && !_closing) StatusText.Text = "Select the folder again to recycle it.";
-                return null;
+                if (_work is null && !_closing) StatusText.Text = "Select the folders again to recycle them.";
+                return [];
             }
-            var confirmation = new RecycleFolderWindow(target) { Owner = this };
+            if (review.Targets.Length == 0)
+            {
+                StatusText.Text = links.Length == 1 ? $"Could not check the folder. {review.Skipped[0].Reason}"
+                    : $"No selected folders can be recycled. {review.Skipped[0].Reason}";
+                return [];
+            }
+            var confirmation = links.Length == 1 ? new RecycleFolderWindow(review.Targets[0]) : new RecycleFolderWindow(review);
+            confirmation.Owner = this;
             if (confirmation.ShowDialog() != true || _closing)
-                return null;
-            job = new(target);
+                return [];
         }
-        catch (OperationCanceledException) when (_closing) { return null; }
-        catch (Exception ex) when (IsRecycleError(ex))
+        catch (OperationCanceledException) when (_closing) { return []; }
+        catch (Exception error) when (IsRecycleError(error))
         {
-            if (!_closing) StatusText.Text = $"Could not check the folder: {ex.Message}";
-            return null;
+            if (!_closing) StatusText.Text = $"Could not review the selected folders. {error.Message}";
+            return [];
         }
         finally
         {
-            _recycleCheckPath = null;
+            _recycleCheck = null;
             if (!_closing) UpdateRecycleActivity();
         }
 
-        _queuedRecycles.Enqueue(job);
+        var jobs = review.Targets.Select(target => new RecycleJob(target)).ToArray();
+        foreach (var job in jobs) _queuedRecycles.Enqueue(job);
         _recycleRefreshWork?.Cancel();
         SignalRecycleStateChange();
         if (_recycleTask is null)
@@ -114,7 +150,48 @@ public partial class MainWindow
             UpdateUpdateButton();
         }
         UpdateRecycleActivity();
-        return await job.Completion.Task;
+        return await Task.WhenAll(jobs.Select(job => job.Completion.Task));
+    }
+
+    private static RecycleSelectionReview PrepareRecycleSelection(ScanSnapshot scan, int[] links,
+        string[] pending, DiskAccess files, CancellationToken token)
+    {
+        var candidates = links.Distinct().Select(link => (Link: link, Path: scan.EntryPath(link))).ToArray();
+        var checkedTargets = new Dictionary<string, FolderDeletionTarget>(StringComparer.OrdinalIgnoreCase);
+        var accepted = new Dictionary<int, FolderDeletionTarget>();
+        var skipped = new List<RecycleSelectionSkip>();
+        int nested = 0;
+        foreach (var (link, path) in candidates.OrderBy(candidate => candidate.Path?.Length ?? 0))
+        {
+            token.ThrowIfCancellationRequested();
+            string? parent = path is not null ? Path.GetDirectoryName(path) : null;
+            while (parent is not null && !checkedTargets.ContainsKey(parent)) parent = Path.GetDirectoryName(parent);
+            if (parent is not null && checkedTargets[parent].Path == parent)
+            {
+                nested++;
+                continue;
+            }
+
+            string? reason = FolderDeletionTarget.SelectionBlockReason(scan, link);
+            if (reason is null && (parent is not null || checkedTargets.ContainsKey(path!)))
+                reason = "This path overlaps another selected folder.";
+            if (reason is null && pending.Any(queued => RecyclePathsOverlap(queued, path!)))
+                reason = "This folder overlaps a pending recycle request.";
+            if (reason is null)
+            {
+                try
+                {
+                    var target = FolderDeletionTarget.FromScan(scan, link, files);
+                    checkedTargets.Add(target.Path, target);
+                    accepted.Add(link, target);
+                    continue;
+                }
+                catch (Exception error) when (IsRecycleError(error)) { reason = error.Message; }
+            }
+            skipped.Add(new(path ?? scan.Entry(link).Name, reason));
+        }
+        return new(candidates.Where(candidate => accepted.ContainsKey(candidate.Link)).Select(candidate => accepted[candidate.Link]).ToArray(),
+            skipped.ToArray(), nested);
     }
 
     private async Task RunRecycleQueueAsync()
@@ -368,7 +445,7 @@ public partial class MainWindow
     {
         int queued = _queuedRecycles.Count;
         bool canCancel = queued > 0 || _recycleWork is { IsCancellationRequested: false };
-        string? path = _recycleTask is null ? _recycleCheckPath : _activeRecycle?.Target.Path;
+        string? path = _recycleTask is null ? _recycleCheck?.Path : _activeRecycle?.Target.Path;
         string? status;
         if (_recycleTask is not null)
         {
@@ -376,7 +453,7 @@ public partial class MainWindow
                 : queued > 0 ? $"{FolderCount(queued)} queued" : "Updating scan…";
             if (path is not null && queued > 0) status += $" · {queued:N0} queued";
         }
-        else status = path is not null ? $"Checking {Path.GetFileName(path)}…" : _recycleSummary;
+        else status = _recycleCheck?.Status ?? _recycleSummary;
 
         CancelRecycleButton.Visibility = canCancel ? Visibility.Visible : Visibility.Collapsed;
         RecycleStatusText.Text = status ?? "";

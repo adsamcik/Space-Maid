@@ -43,7 +43,7 @@ public partial class MainWindow
         var orders = await Task.Run(() => directories.ToDictionary(directory => directory,
             directory => SortExplorerChildren(scan, directory, column, descending, useAllocation, token)), token);
         token.ThrowIfCancellationRequested();
-        int selected = _selectedLink;
+        var selected = SelectedTreeRows().Select(row => row.Entry.LinkIndex).ToArray();
         bool grouped = _selectionIsGroup;
         var viewport = CaptureTreeViewport();
         _syncTree = true;
@@ -54,7 +54,7 @@ public partial class MainWindow
             foreach (var order in orders) _childOrders.Add(order.Key, order.Value);
             _treeSortColumn = column;
             _treeDescending = descending;
-            SpaceTree.SelectedIndex = _explorer.Find(selected);
+            SpaceTree.RestoreSelection(_explorer.RowsForLinks(selected));
             _selectionIsGroup = grouped;
             RestoreTreeViewport(viewport);
         }

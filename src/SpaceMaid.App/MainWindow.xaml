@@ -164,10 +164,10 @@
               <Border Style="{StaticResource Card}" Padding="0">
                   <Grid>
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                      <ListView x:Name="SpaceTree" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
+                      <local:ExplorerListView x:Name="SpaceTree" SelectionMode="Extended" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
-                               ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation. Right-click a folder for its operations.">
+                               ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Ctrl or Shift to select multiple entries. Use Left and Right to collapse and expand folders. Delete reviews selected folders for recycling.">
                           <ListView.ContextMenu><ContextMenu /></ListView.ContextMenu>
                           <ListView.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
                           <ListView.ItemContainerStyle><Style TargetType="ListViewItem" BasedOn="{StaticResource TreeRow}" /></ListView.ItemContainerStyle>
@@ -216,7 +216,7 @@
                                   </GridViewColumn>
                               </GridView>
                           </ListView.View>
-                      </ListView>
+                      </local:ExplorerListView>
                       <TextBlock x:Name="TreeHint" Text="Scan a drive to explore." HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="1" Margin="24" TextWrapping="Wrap" Opacity="0.65" />
                       <DockPanel Grid.Row="2" Margin="12,4,8,4">
                           <Button x:Name="ColumnsButton" DockPanel.Dock="Right" Content="Columns" Click="Columns_Click" Style="{StaticResource ColumnHeader}" ToolTip="Choose columns. Drag headers to reorder; drag their edges to resize." AutomationProperties.Name="Choose tree columns" />

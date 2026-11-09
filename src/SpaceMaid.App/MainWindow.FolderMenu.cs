@@ -27,18 +27,20 @@ public partial class MainWindow
             row = SpaceTree.SelectedItem as ExplorerRow;
             item = SpaceTree.ItemContainerGenerator.ContainerFromIndex(SpaceTree.SelectedIndex) as ListBoxItem;
         }
-        if (row is null || !PrepareFolderMenu(SpaceTree.ContextMenu, row.Scan, row.Entry.LinkIndex))
+        if (row is null || !PrepareFolderMenu(SpaceTree.ContextMenu, row.Scan, row.Entry.LinkIndex, treeMenu: true))
         { e.Handled = true; return; }
         ContextMenuService.SetPlacementTarget(SpaceTree, item ?? (UIElement)SpaceTree);
     }
 
-    private bool PrepareFolderMenu(ContextMenu menu, ScanSnapshot scan, int link)
+    private bool PrepareFolderMenu(ContextMenu menu, ScanSnapshot scan, int link, bool treeMenu = false)
     {
         if (!CanUseFolderMenu(scan)) return false;
         var entry = scan.Entry(link);
         string? path = scan.EntryPath(link);
         if (path is null || link < -1) return false;
-        if (!SelectContextEntry(scan, link)) return false;
+        if (!SelectContextEntry(scan, link, preserveSelection: treeMenu)) return false;
+        var selection = treeMenu ? SelectedTreeRows() : [];
+        bool batch = selection.Length > 1;
         menu.Items.Clear();
         menu.FontFamily = FontFamily; menu.FontSize = FontSize;
         if (entry.IsDirectory)
@@ -48,11 +50,19 @@ public partial class MainWindow
             {
                 if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
             };
-            string? recycleRoot = RecycleBinService.RootForFolder(path);
-            string? blocked = recycleRoot is not null ? null : RecycleBlockReason(scan, link);
+            menu.Items.Add(open);
+        }
+        if (entry.IsDirectory || batch)
+        {
+            int[] targets = batch ? RecycleLinksInTreeOrder(selection) : [link];
+            string? recycleRoot = !batch ? RecycleBinService.RootForFolder(path) : null;
+            string? blocked = batch ? _recycleCheck is not null ? "Finish the current recycle confirmation first."
+                : selection.Any(row => row.Entry.IsDirectory) ? null : "Select folders to recycle."
+                : recycleRoot is not null ? null : RecycleBlockReason(scan, link);
             var recycle = new MenuItem
             {
-                Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
+                Header = batch ? "Move selected folders to Recycle Bin…" : recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…",
+                IsEnabled = blocked is null,
                 ToolTip = recycleRoot is null ? blocked : $"Permanently deletes items Windows lists in your Recycle Bin on {recycleRoot}"
             };
             ToolTipService.SetShowOnDisabled(recycle, true);
@@ -60,9 +70,12 @@ public partial class MainWindow
             {
                 if (!CanUseFolderMenu(scan)) return;
                 if (recycleRoot is not null) await EmptyRecycleBinAsync(recycleRoot);
-                else await DeleteFolderAsync(scan, link);
+                else await DeleteFoldersAsync(scan, targets);
             };
-            menu.Items.Add(open); menu.Items.Add(recycle);
+            menu.Items.Add(recycle);
+        }
+        if (entry.IsDirectory)
+        {
             var recheck = new MenuItem { Header = "Recheck this folder" };
             recheck.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await RecheckFolderAsync(path); };
             menu.Items.Add(recheck);
@@ -98,7 +111,7 @@ public partial class MainWindow
     private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing
         && ReferenceEquals(_snapshot, scan);
 
-    private bool SelectContextEntry(ScanSnapshot scan, int link)
+    private bool SelectContextEntry(ScanSnapshot scan, int link, bool preserveSelection = false)
     {
         // Context selection does not drill into the folder or replace the
         // map button while its menu is opening. Details and Delete still
@@ -123,7 +136,13 @@ public partial class MainWindow
             finally { _syncTree = false; }
             if (_explorer.Find(link) < 0) return false;
         }
-        SelectTree(link);
+        if (preserveSelection && SpaceTree.SelectedItems.OfType<ExplorerRow>().Any(row => row.Entry.LinkIndex == link))
+        {
+            _selectedLink = link;
+            _selectionIsGroup = false;
+            _explorerRevision++;
+        }
+        else SelectTree(link);
         EntryDetail.DataContext = new ExplorerRow(scan, scan.Entry(link), 0, _explorer!.IsExpanded(link))
         { PreferLogicalSize = _explorer.PreferLogicalSize };
         EntryDetail.Visibility = Visibility.Visible;

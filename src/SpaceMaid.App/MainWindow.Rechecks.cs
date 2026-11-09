@@ -93,7 +93,7 @@ public partial class MainWindow
             // A background refresh may overlap navigation. Only the presentation
             // needs rebuilding if the user changes the view while it is prepared.
             explorer = await PrepareExplorerRefreshAsync(updated, analysis.Kinds,
-                expanded, selected, column, descending, _preferLogicalSize,
+                expanded, selected, SelectedTreePaths(), column, descending, _preferLogicalSize,
                 background ? token : CancellationToken.None, background ? _currentPath : null);
             if (background) token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return false;

@@ -73,6 +73,17 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
         { PreferLogicalSize = PreferLogicalSize };
     }
     public int Find(int link) => _visible.FindIndex(position => position.Link == link);
+
+    internal ExplorerRow[] RowsForLinks(int[] links)
+    {
+        if (links.Length == 0) return [];
+        if (links.Length == 1) return Find(links[0]) is var single && single >= 0 ? [Row(single)] : [];
+        var remaining = links.ToHashSet();
+        var found = new Dictionary<int, ExplorerRow>();
+        for (int index = 0; index < _visible.Count && remaining.Count > 0; index++)
+            if (remaining.Remove(_visible[index].Link)) found.Add(_visible[index].Link, Row(index));
+        return links.Where(found.ContainsKey).Select(link => found[link]).ToArray();
+    }
     public bool IsExpanded(int link) => _expanded.Contains(link);
     public string[] ExpandedPaths() => _expanded.Select(Scan.EntryPath).OfType<string>().ToArray();
 
