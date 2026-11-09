@@ -64,6 +64,8 @@ public partial class MainWindow
         { foreach (string path in window._worktreesRequiringCheck.Keys.ToArray()) window._worktreesRequiringCheck[path] = window.CurrentWorktreePolicy; }
         public Task RefreshRecycleBinAsync() => window.RefreshRecycleBinAsync();
         public Task EmptyRecycleBinAsync() => window.EmptySelectedRecycleBinAsync();
+        public bool CanReviewRecycleLeftovers => true;
+        public Task ReviewRecycleLeftoversAsync() => window.ReviewRecycleLeftoversAsync(System.IO.Path.GetPathRoot(window._currentPath) ?? "");
         public Task ReviewSelectionAsync() => window.ReviewSelectionAsync();
         private IModelRemovalWorkflow? Models => window._extensions?.Entries.FirstOrDefault(entry => entry.Id == "space-maid.models")?.View as IModelRemovalWorkflow;
         public bool CanRemoveModels => Models is not null;

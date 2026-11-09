@@ -13,6 +13,8 @@ public interface IOpportunityBrowserHost
     void WorktreePolicyChanged();
     Task RefreshRecycleBinAsync();
     Task EmptyRecycleBinAsync();
+    bool CanReviewRecycleLeftovers => false;
+    Task ReviewRecycleLeftoversAsync() => Task.CompletedTask;
     Task ReviewSelectionAsync();
     bool CanRemoveModels => false;
     Task<ModelRemovalResult> ReviewModelRemovalAsync(ModelRemovalRequest model, CancellationToken token)

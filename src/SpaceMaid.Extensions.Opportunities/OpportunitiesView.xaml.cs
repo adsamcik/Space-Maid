@@ -405,9 +405,11 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
         if (_recycleBin is not { } state) return;
         RecycleBinTitle.Text = state.Title; RecycleBinSize.Text = state.Size; RecycleBinCount.Text = state.Count;
         RecycleBinRow.ToolTip = state.Hint; EmptyRecycleBinButton.IsEnabled = !_busy && state.CanEmpty;
+        RecycleLeftoversButton.Visibility = _host.CanReviewRecycleLeftovers ? Visibility.Visible : Visibility.Collapsed;
     }
     private async void RefreshRecycleBin_Click(object sender, RoutedEventArgs e) => await _host.RefreshRecycleBinAsync();
     private async void EmptyRecycleBin_Click(object sender, RoutedEventArgs e) => await _host.EmptyRecycleBinAsync();
+    private async void RecycleLeftovers_Click(object sender, RoutedEventArgs e) => await _host.ReviewRecycleLeftoversAsync();
     public void RefreshGroups() { RebuildWorktreeGroups(); ApplyOpportunityFilters(); }
     private async void Review_Click(object sender, RoutedEventArgs e) => await _host.ReviewSelectionAsync();
     private async void CheckWorktrees_Click(object sender, RoutedEventArgs e) => await _host.CheckWorktreesAsync();

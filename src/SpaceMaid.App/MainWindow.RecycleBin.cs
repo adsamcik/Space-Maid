@@ -47,6 +47,25 @@ public partial class MainWindow
 
     internal Task EmptySelectedRecycleBinAsync() => EmptyRecycleBinAsync(Path.GetPathRoot(_currentPath) ?? "");
 
+    private async Task ReviewRecycleLeftoversAsync(string root)
+    {
+        if (_closing || _work is not null || _browsing || _openingPath || _recycleTask is not null) return;
+        using var work = CancellationTokenSource.CreateLinkedTokenSource(_extensionLifetime.Token);
+        _work = work;
+        SetBusy(true);
+        try
+        {
+            var dialog = new RecycleLeftoversWindow(Operations, root, work.Token) { Owner = this };
+            dialog.ShowDialog();
+            if (!_closing && dialog.Changed)
+            {
+                RefreshPathDriveSpace();
+                if (_snapshot is not null) MarkScanStale("Recycle Bin storage changed. Recheck affected folders or rescan.");
+            }
+        }
+        finally { _work = null; if (!_closing) SetBusy(false); }
+    }
+
     private async Task EmptyRecycleBinAsync(string root)
     {
         if (_closing || _work is not null || _browsing || _openingPath) return;

@@ -37,6 +37,7 @@ public sealed partial class DiskAccess
         public long LogicalBytes => LayoutParser.I64(_header, 40);
         public long AllocatedBytes => LayoutParser.I64(_header, 48);
         public long LastWrite => LayoutParser.I64(_header, 24);
+        public long Changed => LayoutParser.I64(_header, 32);
         public long Created => LayoutParser.I64(_header, 8);
 
         public DirectoryRecord(ReadOnlySpan<byte> batch, ref int offset, bool extended = true)

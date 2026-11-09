@@ -12,6 +12,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Core.Scanning;
 using SpaceMaid.Extensions.Contracts;
 using Xunit;
@@ -20,6 +21,47 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckRecycleLeftoversReview(MainWindow owner, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        File.WriteAllBytes(Path.Join(fixture.Path, "$Rsample.jpg"), new byte[5 * 1024 * 1024]);
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "$Rfolder")).FullName;
+        File.WriteAllText(Path.Join(folder, "notes.txt"), "fixture");
+        var operations = new FileOperations();
+        var dialog = new RecycleLeftoversWindow(operations, Path.GetPathRoot(fixture.Path)!, default,
+            token => operations.Files.ReviewRecycleLeftoversAt(fixture.Path, DateTime.UtcNow.AddMinutes(1), token))
+        { Owner = owner };
+        try
+        {
+            dialog.Show();
+            var list = (DataGrid)dialog.FindName("EntryList");
+            var recover = (Button)dialog.FindName("RecoverButton");
+            var delete = (Button)dialog.FindName("DeleteButton");
+            PumpUntil(() => list.Items.Count == 2 && list.IsEnabled, TimeSpan.FromSeconds(10));
+            Assert.False(recover.IsEnabled);
+            Assert.False(delete.IsEnabled);
+            dialog.UpdateLayout();
+            var checkboxCell = Assert.IsAssignableFrom<FrameworkElement>(list.Columns[0].GetCellContent(list.Items[0]));
+            var checkbox = Assert.IsType<CheckBox>(VisualTreeHelper.GetChild(checkboxCell, 0));
+            checkbox.SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, true);
+            PumpUntil(() => recover.IsEnabled && delete.IsEnabled, TimeSpan.FromSeconds(2));
+            var filter = (TextBox)dialog.FindName("FilterBox");
+            filter.Text = "$Rfolder";
+            Assert.False(delete.IsEnabled);
+            filter.Clear();
+            list.SelectedIndex = 1;
+            Assert.Contains("notes.txt", ((ListBox)dialog.FindName("ContentsList")).Items.Cast<string>());
+            ((Button)dialog.FindName("SelectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.True(recover.IsEnabled);
+            Assert.True(delete.IsEnabled);
+            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "recycle-leftovers-review.png"), 900, 560);
+            ((Button)dialog.FindName("ClearButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.False(delete.IsEnabled);
+            Assert.True(File.Exists(Path.Join(fixture.Path, "$Rsample.jpg")));
+        }
+        finally { dialog.Close(); }
+    }
+
     private static void CheckRecycleBinStorage(MainWindow window, string artifactRoot)
     {
         const string root = @"Q:\";

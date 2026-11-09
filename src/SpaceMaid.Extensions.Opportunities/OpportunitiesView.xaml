@@ -91,7 +91,7 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Border x:Name="RecycleBinRow" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,14">
                         <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /><ColumnDefinition Width="145" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <Button Grid.Column="0" Content="&#xE72C;" FontFamily="Segoe Fluent Icons" FontSize="15" Width="30" Height="30" Padding="0" Click="RefreshRecycleBin_Click" ToolTip="Refresh Recycle Bin" AutomationProperties.Name="Refresh Recycle Bin" />
                             <TextBlock Grid.Column="1" Text="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="22" VerticalAlignment="Center" Margin="5,0,0,0" />
                             <TextBlock x:Name="RecycleBinTitle" Grid.Column="2" Text="Recycle Bin" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,14,0" />
@@ -100,6 +100,7 @@
                                 <TextBlock x:Name="RecycleBinCount" Text="Checking…" FontSize="11" Opacity="0.65" HorizontalAlignment="Right" Margin="0,4,0,0" />
                             </StackPanel>
                             <Button x:Name="EmptyRecycleBinButton" Grid.Column="4" Content="Empty…" Click="EmptyRecycleBin_Click" IsEnabled="False" VerticalAlignment="Center" Padding="9,5" AutomationProperties.Name="Empty Recycle Bin on selected drive" />
+                            <Button x:Name="RecycleLeftoversButton" Grid.Column="5" Content="Review leftovers…" Click="RecycleLeftovers_Click" Visibility="Collapsed" VerticalAlignment="Center" Padding="9,5" Margin="8,0,0,0"/>
                         </Grid>
                     </Border>
                     <ScrollViewer x:Name="CleanupOverviewScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

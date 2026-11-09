@@ -79,6 +79,13 @@ public partial class MainWindow
             var recheck = new MenuItem { Header = "Recheck this folder" };
             recheck.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await RecheckFolderAsync(path); };
             menu.Items.Add(recheck);
+            if (entry.Name.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)
+                && RecycleBinService.RootForFolder(path) is { } leftoverRoot)
+            {
+                var leftovers = new MenuItem { Header = "Review Recycle Bin leftovers…" };
+                leftovers.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await ReviewRecycleLeftoversAsync(leftoverRoot); };
+                menu.Items.Add(leftovers);
+            }
         }
         var checking = new MenuItem { Header = "Checking cloud availability…", IsEnabled = false };
         menu.Items.Add(checking);

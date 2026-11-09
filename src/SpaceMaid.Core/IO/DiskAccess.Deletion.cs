@@ -24,7 +24,12 @@ public sealed partial class DiskAccess
             || current.Entry(rootLink.Value).IsIncomplete
             || current.Records[current.Entry(rootLink.Value).FileIndex].Identity != rootIdentity)
             throw new InvalidOperationException("A complete native check of the confirmed folder is required before permanent deletion.");
+        DeleteReviewedTree(path, rootLink.Value, volume, current, token, mutationStarted);
+    }
 
+    private void DeleteReviewedTree(string path, int rootLink, ulong volume, ScanSnapshot current,
+        CancellationToken token, Action? mutationStarted, Action<SafeFileHandle, FileIdentity>? verifyRevision = null)
+    {
         var ancestors = new Stack<string>();
         for (string? parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent)) ancestors.Push(parent);
         var parentLeases = new List<SafeFileHandle>();
@@ -48,7 +53,7 @@ public sealed partial class DiskAccess
             }
 
             var pending = new Stack<(int Link, string Path)>();
-            pending.Push((rootLink.Value, path));
+            pending.Push((rootLink, path));
             var observed = new HashSet<int>();
             while (pending.TryPop(out var next))
             {
@@ -111,6 +116,7 @@ public sealed partial class DiskAccess
                 token.ThrowIfCancellationRequested();
                 VerifyPermanentDeleteEntry(InspectPermanentDeleteHandle(entry.Handle), entry.Record, volume);
                 VerifyPermanentDeleteStreams(entry.Handle, entry.Record.IsDirectory);
+                verifyRevision?.Invoke(entry.Handle, entry.Record.Identity);
             }
             for (int index = entries.Count - 1; index >= 0; index--)
             {
