@@ -22,6 +22,7 @@ public partial class RecycleLeftoversWindow : Window
     private string? _destination;
     private string _message = "";
     private int _contentsOffset;
+    private bool _showAllNames;
 
     internal bool Changed { get; private set; }
 
@@ -48,15 +49,30 @@ public partial class RecycleLeftoversWindow : Window
     {
         _review = null;
         _rows = [];
+        GroupList.ItemsSource = null;
         EntryList.ItemsSource = null;
         StatusText.Text = "Checking the Recycle Bin…";
-        var review = await Task.Run(() => _read(token), token);
+        var (review, rows) = await Task.Run(() =>
+        {
+            var capture = _read(token);
+            var classified = capture.Entries.OrderByDescending(entry => entry.AllocatedBytes).Select(entry =>
+            {
+                token.ThrowIfCancellationRequested();
+                return new EntryRow(entry, RecycleLeftoverAnalysis.Classify(entry, token));
+            }).ToArray();
+            return (capture, classified);
+        }, token);
         token.ThrowIfCancellationRequested();
         _review = review;
-        _rows = review.Entries.OrderByDescending(entry => entry.AllocatedBytes).Select(entry => new EntryRow(entry)).ToArray();
+        _rows = rows;
         EntryList.ItemsSource = CollectionViewSource.GetDefaultView(_rows);
-        ApplyFilter();
-        _message = _rows.Length == 0 ? "No unmatched entries found." : $"{_rows.Length:N0} unmatched entries. Original names and locations may be unavailable.";
+        GroupList.ItemsSource = _rows.GroupBy(row => row.Kind)
+            .Select(group => new EntryGroup(group.Key, group.Count(), group.Sum(row => row.Bytes),
+                group.Count(row => row.Entry.AllocatedBytes is null)))
+            .OrderByDescending(group => group.Kind == RecycleLeftoverKind.NuGetPackages)
+            .ThenByDescending(group => group.KnownTool).ThenByDescending(group => group.Bytes).ToArray();
+        GroupList.SelectedIndex = _rows.Length == 0 ? -1 : 0;
+        _message = _rows.Length == 0 ? "No unmatched entries found." : $"{_rows.Length:N0} unmatched entries on this drive.";
     });
 
     private async void Recover_Click(object sender, RoutedEventArgs e) => await ApplyAsync(delete: false);
@@ -71,10 +87,15 @@ public partial class RecycleLeftoversWindow : Window
             InitialDirectory = _destination ?? _drive };
         if (picker.ShowDialog(this) != true) return;
         string destination = Path.TrimEndingDirectorySeparator(picker.FolderName);
-        if (delete && MessageBox.Show(this,
-            $"Permanently delete {selected.Length:N0} checked entries and their folder contents ({SizeText.Format(selected.Sum(row => row.Bytes))} observed on disk)?\n\n"
-            + $"Space Maid first moves them to {destination}. Entries it cannot finish deleting may stay there. Permanent deletion cannot be undone.",
-            "Delete selected Recycle Bin leftovers?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        if (delete)
+        {
+            string groups = string.Join("\n", selected.GroupBy(row => row.Kind).Select(group =>
+                $"• {Describe(group.Key).Title} · {group.Count():N0} checked · {SizeText.Format(group.Sum(row => row.Bytes))} observed"));
+            if (MessageBox.Show(this,
+                $"Permanently delete {selected.Length:N0} checked entries and their folder contents?\n\n{groups}\n\n"
+                + $"Space Maid first moves them to {destination}. Entries it cannot finish deleting may stay there. Permanent deletion cannot be undone.",
+                "Delete selected Recycle Bin leftovers?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        }
 
         _destination = destination;
         var byName = selected.ToDictionary(row => row.Name, StringComparer.Ordinal);
@@ -126,21 +147,33 @@ public partial class RecycleLeftoversWindow : Window
     {
         if (EntryList is null || CloseButton is null) return;
         bool idle = _work is null;
-        EntryList.IsEnabled = FilterBox.IsEnabled = RefreshButton.IsEnabled = idle;
+        EntryList.IsEnabled = GroupList.IsEnabled = FilterBox.IsEnabled = RefreshButton.IsEnabled = idle;
         var selected = _rows.Where(row => row.Picked && row.CanPick).ToArray();
-        SelectButton.IsEnabled = idle && _rows.Length > 0;
+        var checkedByKind = selected.CountBy(row => row.Kind).ToDictionary();
+        foreach (var category in GroupList.Items.OfType<EntryGroup>())
+            category.SetChecked(checkedByKind.GetValueOrDefault(category.Kind));
+        var group = GroupList.SelectedItem as EntryGroup;
+        SelectButton.Visibility = group?.KnownTool == true ? Visibility.Visible : Visibility.Collapsed;
+        SelectButton.Content = FilterBox.Text.Trim().Length > 0 ? "Check shown"
+            : group?.Kind == RecycleLeftoverKind.NuGetPackages ? "Check suggested" : "Check group";
+        SelectButton.IsEnabled = idle && group?.KnownTool == true
+            && EntryList.Items.OfType<EntryRow>().Any(row => row.CanPick && row.Entry.CanDelete && !row.Picked);
         ClearButton.IsEnabled = idle && selected.Length > 0;
         RecoverButton.IsEnabled = idle && selected.Length > 0;
         DeleteButton.IsEnabled = RecoverButton.IsEnabled && selected.All(row => row.Entry.CanDelete);
         OpenButton.IsEnabled = idle && _destination is not null;
         CloseButton.Content = idle ? "Close" : "Stop";
-        if (idle) StatusText.Text = selected.Length == 0 ? _message : $"{selected.Length:N0} checked"
+        string groupScope = checkedByKind.Count > 1 ? $" across {checkedByKind.Count:N0} groups" : "";
+        if (idle) StatusText.Text = selected.Length == 0 ? _message
+            : $"{selected.Length:N0} checked{groupScope} · "
+            + $"{SizeText.Format(selected.Sum(row => row.Bytes))} observed on disk"
             + (selected.Any(row => !row.Entry.CanDelete) ? " · Some entries are recovery only." : "") + " · " + _message;
     }
 
     private void Pick_Changed(object sender, DataTransferEventArgs e) => UpdateActions();
     private void Select_Click(object sender, RoutedEventArgs e)
     {
+        if (GroupList.SelectedItem is not EntryGroup { KnownTool: true }) return;
         foreach (var row in EntryList.Items.OfType<EntryRow>().Where(row => row.CanPick && row.Entry.CanDelete)) row.Picked = true;
         UpdateActions();
     }
@@ -151,16 +184,35 @@ public partial class RecycleLeftoversWindow : Window
     }
 
     private void Filter_Changed(object sender, TextChangedEventArgs e) => ApplyFilter();
+    private void Group_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (GroupHint is null) return;
+        var group = GroupList.SelectedItem as EntryGroup;
+        GroupHint.Text = group is null ? "" : Describe(group.Kind).Explanation;
+        FilterBox.Clear();
+        ApplyFilter();
+        EntryList.SelectedIndex = EntryList.Items.Count == 0 ? -1 : 0;
+    }
     private void ApplyFilter()
     {
         if (EntryList?.ItemsSource is not ICollectionView view) return;
+        var group = GroupList.SelectedItem as EntryGroup;
         string query = FilterBox.Text.Trim();
-        view.Filter = item => item is EntryRow row && row.Name.Contains(query, StringComparison.OrdinalIgnoreCase);
-        foreach (var row in _rows.Where(row => row.Picked && !row.Name.Contains(query, StringComparison.OrdinalIgnoreCase))) row.Picked = false;
+        bool Matches(EntryRow row) => row.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || row.Label.Contains(query, StringComparison.OrdinalIgnoreCase);
+        view.Filter = item => item is EntryRow row && row.Kind == group?.Kind && Matches(row);
+        foreach (var row in _rows.Where(row => row.Kind == group?.Kind && row.Picked && !Matches(row))) row.Picked = false;
         UpdateActions();
     }
     private void Entry_Changed(object sender, SelectionChangedEventArgs e)
     {
+        _contentsOffset = 0;
+        _showAllNames = false;
+        ShowDetails();
+    }
+    private void ContentsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _showAllNames = !_showAllNames;
         _contentsOffset = 0;
         ShowDetails();
     }
@@ -170,15 +222,17 @@ public partial class RecycleLeftoversWindow : Window
     {
         if (ContentsList is null || DetailsText is null) return;
         var row = EntryList.SelectedItem as EntryRow;
-        ContentsList.ItemsSource = row?.Entry.ReviewContents(_contentsOffset, ContentsPageSize);
+        ContentsList.ItemsSource = _showAllNames ? row?.Entry.ReviewContents(_contentsOffset, ContentsPageSize) : row?.LargestContents;
         int total = row?.Entry.ContentCount ?? 0;
-        ContentsPages.Visibility = total > ContentsPageSize ? Visibility.Visible : Visibility.Collapsed;
+        ContentsToggle.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ContentsToggle.Content = _showAllNames ? "Show largest folders and files" : "Browse all names";
+        ContentsPages.Visibility = _showAllNames && total > ContentsPageSize ? Visibility.Visible : Visibility.Collapsed;
         ContentsRange.Text = $"{_contentsOffset + 1:N0}–{Math.Min(_contentsOffset + ContentsPageSize, total):N0}";
         PreviousPage.IsEnabled = _contentsOffset > 0;
         NextPage.IsEnabled = _contentsOffset + ContentsPageSize < total;
-        DetailsText.Text = row is null ? "Select an entry to see details." :
-            row.Detail ?? row.Entry.Blocked ?? (row.Entry.ContentCount is { } count
-                ? $"{count:N0} {(count == 1 ? "entry" : "entries")} · Checking a folder includes all its contents." : "Original name and location unavailable.");
+        DetailsText.Text = row is null ? "Select an entry to see what it contains." :
+            $"{row.Name}\nModified {row.Modified}" + (total > 0 ? $"\n{total:N0} names · Whole folder" : "")
+            + ((row.Detail ?? row.Entry.Blocked) is { } issue ? "\n" + issue : "");
     }
     private void Open_Click(object sender, RoutedEventArgs e)
     {
@@ -190,12 +244,52 @@ public partial class RecycleLeftoversWindow : Window
     private void Window_Closing(object? sender, CancelEventArgs e)
     { if (_work is { } work) { e.Cancel = true; work.Cancel(); } }
 
-    private sealed class EntryRow(DiskAccess.RecycleLeftover entry) : INotifyPropertyChanged
+    private static (string Title, string Explanation, bool KnownTool) Describe(RecycleLeftoverKind kind) => kind switch
+    {
+        RecycleLeftoverKind.NuGetPackages => ("NuGet package cache", "Suggested cleanup based on package layout. Restore requires the original package feeds. Recover any local changes you need to keep.", true),
+        RecycleLeftoverKind.NuGetData => ("NuGet storage", "Package folders or other NuGet data. The whole folder includes files or layout Space Maid could not verify as cache data.", true),
+        RecycleLeftoverKind.Rustup => ("Rustup installations", "Rust toolchains and Rustup data. Recover the folder if you need its settings or custom toolchains.", true),
+        RecycleLeftoverKind.IdeData => ("JetBrains-based IDE data", "IDE indexes and caches. These folders can also contain Local History, which may hold versions of your work.", true),
+        RecycleLeftoverKind.AndroidImages => ("Android emulator images", "Android SDK system images identified by their package files. Reinstallation depends on the image still being available.", true),
+        RecycleLeftoverKind.Documents => ("Documents", "Grouped by extension. Original names and locations may be unavailable.", false),
+        RecycleLeftoverKind.Media => ("Photos, video and audio", "Grouped by extension. Recover files you want to inspect or keep.", false),
+        RecycleLeftoverKind.Archives => ("Archives", "Grouped by extension. The archive contents are unknown.", false),
+        RecycleLeftoverKind.Logs => ("Logs and temporary files", "Grouped by extension. Check the individual files you want to act on.", false),
+        _ => ("Unidentified items", "Space Maid could not identify these items from their names or folder structure.", false)
+    };
+
+    private sealed class EntryGroup(RecycleLeftoverKind kind, int count, long bytes, int unmeasured) : INotifyPropertyChanged
+    {
+        private int _checked;
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public RecycleLeftoverKind Kind { get; } = kind;
+        public long Bytes { get; } = bytes;
+        public string Title => Describe(Kind).Title;
+        public string Summary => (unmeasured == count ? "Size unknown" : $"{SizeText.Format(Bytes)} on disk")
+            + $" · {count:N0} {(count == 1 ? "entry" : "entries")}"
+            + (unmeasured > 0 && unmeasured < count ? $" · {unmeasured:N0} unmeasured" : "")
+            + (_checked > 0 ? $" · {_checked:N0} checked" : "");
+        public bool KnownTool => Describe(Kind).KnownTool;
+        public void SetChecked(int value)
+        {
+            if (_checked == value) return;
+            _checked = value;
+            PropertyChanged?.Invoke(this, new(nameof(Summary)));
+        }
+    }
+
+    private sealed class EntryRow(DiskAccess.RecycleLeftover entry, RecycleLeftoverKind kind) : INotifyPropertyChanged
     {
         private bool _picked, _finished;
+        private string[]? _largest;
         public event PropertyChangedEventHandler? PropertyChanged;
         public DiskAccess.RecycleLeftover Entry { get; } = entry;
+        public RecycleLeftoverKind Kind { get; } = kind;
         public string Name => Entry.Name;
+        public string Label => Describe(Kind).KnownTool ? Describe(Kind).Title : Name;
+        public string SelectionLabel => Label == Name ? $"Select {Name}" : $"Select {Label} ({Name})";
+        public string[] LargestContents => _largest ??= RecycleLeftoverAnalysis.LargestContents(Entry, 10)
+            .Select(item => $"{item.Name}{(item.IsDirectory ? "\\" : "")} · {SizeText.Format(item.AttributedBytes(true))}").ToArray();
         public long Bytes => Entry.AllocatedBytes ?? 0;
         public string Size => Entry.AllocatedBytes is { } size ? SizeText.Format(size) : "—";
         public long Written => Entry.Written;

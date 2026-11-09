@@ -27,6 +27,12 @@ public sealed partial class DesktopTests
         File.WriteAllBytes(Path.Join(fixture.Path, "$Rsample.jpg"), new byte[5 * 1024 * 1024]);
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "$Rfolder")).FullName;
         File.WriteAllText(Path.Join(folder, "notes.txt"), "fixture");
+        string version = Directory.CreateDirectory(Path.Join(fixture.Path, "$Rcache.nuget", "packages", "demo", "1.0.0")).FullName;
+        File.WriteAllText(Path.Join(version, ".nupkg.metadata"), "{}");
+        File.WriteAllBytes(Path.Join(version, "demo.1.0.0.nupkg"), new byte[2 * 1024 * 1024]);
+        string toolchains = Directory.CreateDirectory(Path.Join(fixture.Path, "$Rrust.rustup", "toolchains")).FullName;
+        File.WriteAllBytes(Path.Join(toolchains, "rustc.exe"), new byte[4 * 1024 * 1024]);
+        File.WriteAllText(Path.Join(toolchains, "..", "settings.toml"), "fixture");
         var operations = new FileOperations();
         var dialog = new RecycleLeftoversWindow(operations, Path.GetPathRoot(fixture.Path)!, default,
             token => operations.Files.ReviewRecycleLeftoversAt(fixture.Path, DateTime.UtcNow.AddMinutes(1), token))
@@ -35,10 +41,32 @@ public sealed partial class DesktopTests
         {
             dialog.Show();
             var list = (DataGrid)dialog.FindName("EntryList");
+            var groups = (ListBox)dialog.FindName("GroupList");
+            var hint = (TextBlock)dialog.FindName("GroupHint");
+            var status = (TextBlock)dialog.FindName("StatusText");
+            var contents = (ListBox)dialog.FindName("ContentsList");
+            var select = (Button)dialog.FindName("SelectButton");
             var recover = (Button)dialog.FindName("RecoverButton");
             var delete = (Button)dialog.FindName("DeleteButton");
-            PumpUntil(() => list.Items.Count == 2 && list.IsEnabled, TimeSpan.FromSeconds(10));
+            PumpUntil(() => list.IsEnabled && !string.IsNullOrEmpty(status.Text), TimeSpan.FromSeconds(10));
+            Assert.Equal(4, groups.Items.Count);
+            Assert.Single(list.Items.Cast<object>());
             Assert.False(recover.IsEnabled);
+            Assert.False(delete.IsEnabled);
+            Assert.Contains("Suggested cleanup", hint.Text);
+            Assert.Equal("Check suggested", select.Content);
+            Assert.StartsWith("packages", Assert.Single(contents.Items.Cast<string>()));
+            select.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Contains("1 checked", status.Text);
+            Assert.True(delete.IsEnabled);
+            groups.SelectedIndex = 1;
+            Assert.Contains("custom toolchains", hint.Text);
+            Assert.Contains(contents.Items.Cast<string>(), item => item.StartsWith("settings.toml", StringComparison.Ordinal));
+            Assert.Contains("1 checked", status.Text);
+            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "recycle-leftovers-review.png"), 1100, 640);
+            ((Button)dialog.FindName("ContentsToggle")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Contains("toolchains\\rustc.exe", contents.Items.Cast<string>());
+            ((Button)dialog.FindName("ClearButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.False(delete.IsEnabled);
             dialog.UpdateLayout();
             var checkboxCell = Assert.IsAssignableFrom<FrameworkElement>(list.Columns[0].GetCellContent(list.Items[0]));
@@ -49,14 +77,9 @@ public sealed partial class DesktopTests
             filter.Text = "$Rfolder";
             Assert.False(delete.IsEnabled);
             filter.Clear();
-            list.SelectedIndex = 1;
-            Assert.Contains("notes.txt", ((ListBox)dialog.FindName("ContentsList")).Items.Cast<string>());
-            ((Button)dialog.FindName("SelectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.True(recover.IsEnabled);
-            Assert.True(delete.IsEnabled);
-            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "recycle-leftovers-review.png"), 900, 560);
-            ((Button)dialog.FindName("ClearButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.False(delete.IsEnabled);
+            groups.SelectedIndex = 3;
+            Assert.Equal(Visibility.Collapsed, select.Visibility);
+            Assert.StartsWith("notes.txt", Assert.Single(contents.Items.Cast<string>()));
             Assert.True(File.Exists(Path.Join(fixture.Path, "$Rsample.jpg")));
         }
         finally { dialog.Close(); }

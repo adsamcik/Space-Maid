@@ -1,4 +1,5 @@
 using System.IO;
+using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.IO;
 using Xunit;
 
@@ -6,6 +7,42 @@ namespace SpaceMaid.Tests;
 
 public sealed class RecycleLeftoverTests
 {
+    [Fact]
+    [Trait("Stage", "System")]
+    public void CapturedShapesDistinguishSuggestedPackagesFromMixedToolData()
+    {
+        using var fixture = new TestDirectory();
+        foreach (string root in new[] { "$Rcache.nuget", "$Rmixed.nuget", "$Rexport.nuget", "$Rphotos.nuget" })
+        {
+            string version = Directory.CreateDirectory(Path.Join(fixture.Path, root, "packages", "demo", "1.0.0")).FullName;
+            File.WriteAllText(Path.Join(version, ".nupkg.metadata"), "{}");
+            File.WriteAllText(Path.Join(version, "demo.1.0.0.nupkg"), "package fixture");
+        }
+        File.WriteAllText(Path.Join(fixture.Path, "$Rmixed.nuget", "NuGet.Config"), "local settings");
+        File.WriteAllText(Path.Join(fixture.Path, "$Rexport.nuget", "packages", "demo", "1.0.0", "customer-export.csv"), "local file");
+        Directory.CreateDirectory(Path.Join(fixture.Path, "$Rphotos.nuget", "packages", "demo", "1.0.0", "family-photos"));
+        string rustup = Directory.CreateDirectory(Path.Join(fixture.Path, "$Rrust.rustup", "toolchains")).Parent!.FullName;
+        File.WriteAllText(Path.Join(rustup, "settings.toml"), "local settings");
+        string image = Directory.CreateDirectory(Path.Join(fixture.Path, "$Rimage", "google_apis", "x86_64")).FullName;
+        foreach (string file in new[] { "system.img", "package.xml", "source.properties" })
+            File.WriteAllText(Path.Join(image, file), "fixture");
+        foreach (string dir in new[] { "caches", "compile-server", "index", "LocalHistory" })
+            Directory.CreateDirectory(Path.Join(fixture.Path, "$Ride", dir));
+        Directory.CreateDirectory(Path.Join(fixture.Path, "$Runsupported.nuget", "pictures"));
+
+        var rows = Read(fixture.Path).Entries.ToDictionary(row => row.Name);
+        RecycleLeftoverKind Classify(string name) => RecycleLeftoverAnalysis.Classify(rows[name], default);
+        Assert.Equal(RecycleLeftoverKind.NuGetPackages, Classify("$Rcache.nuget"));
+        Assert.Equal(RecycleLeftoverKind.NuGetData, Classify("$Rmixed.nuget"));
+        Assert.Equal(RecycleLeftoverKind.NuGetData, Classify("$Rexport.nuget"));
+        Assert.Equal(RecycleLeftoverKind.NuGetData, Classify("$Rphotos.nuget"));
+        Assert.Equal(RecycleLeftoverKind.Rustup, Classify("$Rrust.rustup"));
+        Assert.Equal(RecycleLeftoverKind.AndroidImages, Classify("$Rimage"));
+        Assert.Equal(RecycleLeftoverKind.IdeData, Classify("$Ride"));
+        Assert.Equal(RecycleLeftoverKind.Other, Classify("$Runsupported.nuget"));
+        Assert.Equal("packages", Assert.Single(RecycleLeftoverAnalysis.LargestContents(rows["$Rcache.nuget"], 1)).Name);
+    }
+
     [Fact]
     [Trait("Stage", "System")]
     public void LeftoverCheckMatchesOnlyTopLevelUnpairedPayloads()
