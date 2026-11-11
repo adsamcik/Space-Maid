@@ -108,9 +108,62 @@ public sealed class DeletionTests
         Assert.Contains("reparse", FolderDeletionTarget.SelectionBlockReason(scan, scan.PrimaryLink(reparse)));
     }
 
+    [Theory]
+    [InlineData(0x80270001u, 0x80270002u, 0u, 0x80270002u, true)]
+    [InlineData(0x80070005u, 0x80270022u, 0u, 0x80270022u, false)]
+    [InlineData(0x80070005u, 0x80270027u, 0u, 0x80270027u, false)]
+    [InlineData(0x80070005u, 0x8027003Fu, 0u, 0x8027003Fu, false)]
+    [InlineData(0x80270001u, 0x80070005u, 0x800704C7u, 0x800704C7u, false)]
+    [InlineData(0x80270000u, 0x80270002u, 0u, 0x800704C7u, false)]
+    public void ShellStatusPreservesPermissionFailuresAndRecognizesUserCancellation(
+        uint operation, uint item, uint finish, uint expected, bool canRetry)
+    {
+        int result = FolderRecycler.GetShellFailure(unchecked((int)operation), unchecked((int)item), unchecked((int)finish));
+        Assert.Equal(expected, unchecked((uint)result));
+        Assert.Equal(canRetry, FolderRecycler.IsPermissionFailure(result));
+    }
+
+    [Theory]
+    [InlineData(0x800704C7u, false, true)]
+    [InlineData(0x80270001u, false, true)]
+    [InlineData(0u, true, true)]
+    [InlineData(0u, false, false)]
+    [InlineData(0x80270021u, true, false)]
+    public void AdministratorRetryDistinguishesCancelledShellResultsFromFailures(uint failure, bool aborted, bool cancelled)
+    {
+        var result = FolderRecycler.GetCancellation(unchecked((int)failure), aborted, null, default);
+        if (cancelled) Assert.Equal(new RecycleResult(true, null), result);
+        else Assert.Null(result);
+    }
+
     [Fact]
     [Trait("Stage", "System")]
-    public async Task WindowsRecyclesOnlyTheFixtureFolderAndPreservesItsContents()
+    public async Task CancellingAdministratorRetryAtShellStartKeepsTheFixture()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "cancelled")).FullName;
+        string file = Path.Join(folder, "payload.txt");
+        const string contents = "Owned cancellation fixture";
+        File.WriteAllText(file, contents);
+        var target = FolderDeletionTarget.CaptureCurrent(folder, contents.Length);
+        using var cancellation = new CancellationTokenSource();
+        var events = new List<string>();
+        var result = await FolderRecycler.RetryWithAdministratorAsync(target, 0, cancellation.Token, (name, _) =>
+        {
+            events.Add(name);
+            if (name == "recycle-native-start") cancellation.Cancel();
+        });
+        Assert.Equal(new RecycleResult(true, null), result);
+        Assert.Contains("recycle-native-finish", events);
+        Assert.Equal(contents, File.ReadAllText(file));
+        target.ValidateCurrent();
+    }
+
+    [Theory]
+    [Trait("Stage", "System")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WindowsRecyclesOnlyTheFixtureFolderAndPreservesItsContents(bool administratorRetry)
     {
         using var fixture = new TestDirectory();
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "recycle-" + Guid.NewGuid().ToString("N"))).FullName;
@@ -138,7 +191,9 @@ public sealed class DeletionTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => FolderRecycler.RecycleAsync(target, 0, new(true)));
         Assert.True(Directory.Exists(folder));
         var events = new List<string>();
-        var result = await FolderRecycler.RecycleAsync(target, 0, default, (name, _) => events.Add(name));
+        var result = await (administratorRetry
+            ? FolderRecycler.RetryWithAdministratorAsync(target, 0, default, (name, _) => events.Add(name))
+            : FolderRecycler.RecycleAsync(target, 0, default, (name, _) => events.Add(name)));
         Assert.False(result.Cancelled);
         string recycled = Assert.IsType<string>(result.RecycledPath);
         string root = Path.GetPathRoot(folder)!;

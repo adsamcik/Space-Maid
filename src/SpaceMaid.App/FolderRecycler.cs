@@ -16,19 +16,36 @@ internal static class FolderRecycler
 {
     internal const int CancelledHResult = unchecked((int)0x800704C7);
     internal const int CannotRecycleHResult = unchecked((int)0x80070032);
+    private const int ShellUserCancelled = unchecked((int)0x80270000);
+    private const int ShellEngineCancelled = unchecked((int)0x80270001);
+    private const int AccessDenied = unchecked((int)0x80070005);
+    private const int UnspecifiedFailure = unchecked((int)0x80004005);
     private const uint OperationFlags = 0x00080000 | 0x20000000 | 0x00100000 | 0x00000614;
+    private const uint ShowElevationPrompt = 0x00040000; // FOFX_SHOWELEVATIONPROMPT
+
+    internal sealed class PermissionException(string message, int result) : IOException(message, result);
 
     public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null, Action? validateContents = null)
-        => CleanupMutationLease.RunAsync(() => RecycleCapturedAsync(target, owner, token, diagnostic, validateContents), token);
+        => StartAsync(target, owner, token, diagnostic, validateContents, administratorRetry: false);
+
+#if !SPACEMAID_AGENT_RECYCLER
+    internal static Task<RecycleResult> RetryWithAdministratorAsync(FolderDeletionTarget target, nint owner,
+        CancellationToken token, Action<string, object>? diagnostic = null)
+        => StartAsync(target, owner, token, diagnostic, null, administratorRetry: true);
+#endif
+
+    private static Task<RecycleResult> StartAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
+        Action<string, object>? diagnostic, Action? validateContents, bool administratorRetry)
+        => CleanupMutationLease.RunAsync(() => RecycleCapturedAsync(target, owner, token, diagnostic, validateContents, administratorRetry), token);
 
     private static Task<RecycleResult> RecycleCapturedAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
-        Action<string, object>? diagnostic, Action? validateContents)
+        Action<string, object>? diagnostic, Action? validateContents, bool administratorRetry)
     {
         var completion = new TaskCompletionSource<RecycleResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { completion.SetResult(Recycle(target, owner, token, diagnostic, validateContents)); }
+            try { completion.SetResult(Recycle(target, owner, token, diagnostic, validateContents, administratorRetry)); }
             catch (Exception ex) { completion.SetException(ex); }
         }) { IsBackground = true, Name = "Space Maid recycling" };
         thread.SetApartmentState(ApartmentState.STA);
@@ -37,7 +54,7 @@ internal static class FolderRecycler
     }
 
     private static RecycleResult Recycle(FolderDeletionTarget target, nint owner, CancellationToken token,
-        Action<string, object>? diagnostic, Action? validateContents)
+        Action<string, object>? diagnostic, Action? validateContents, bool administratorRetry)
     {
         token.ThrowIfCancellationRequested();
         target.ValidateCurrent();
@@ -51,10 +68,10 @@ internal static class FolderRecycler
             var type = Type.GetTypeFromCLSID(new("3AD05575-8857-4850-9277-11B85BDB8E09"), throwOnError: true)!;
             operation = (IFileOperation)Activator.CreateInstance(type)!;
             operation.SetOwnerWindow(owner);
-            // Recycle + session undo + FOF_NO_UI. Errors stop this root only
-            // and are reported by the app. The live callback still refuses a
-            // permanent-delete transfer; UI suppression is not extra consent.
-            operation.SetOperationFlags(OperationFlags);
+            // Only a user-confirmed Explore retry allows the Shell to show UAC.
+            // Both modes retain the live guard against permanent deletion.
+            uint flags = OperationFlags | (administratorRetry ? ShowElevationPrompt : 0);
+            operation.SetOperationFlags(flags);
             operation.Advise(sink, out cookie);
             Guid shellItemId = typeof(IShellItem).GUID;
             Marshal.ThrowExceptionForHR(SHCreateItemFromParsingName(target.Path, 0, ref shellItemId, out item));
@@ -62,22 +79,27 @@ internal static class FolderRecycler
             token.ThrowIfCancellationRequested();
             target.ValidateCurrent();
             validateContents?.Invoke();
-            diagnostic?.Invoke("recycle-native-start", new { target.Path, Flags = $"0x{OperationFlags:X8}" });
+            diagnostic?.Invoke("recycle-native-start", new { target.Path, Flags = $"0x{flags:X8}", administratorRetry });
             int result = operation.PerformOperations();
             operation.GetAnyOperationsAborted(out bool aborted);
             diagnostic?.Invoke("recycle-native-finish", new
             {
                 target.Path, HResult = $"0x{result:X8}", ItemHResult = $"0x{sink.Result:X8}",
-                aborted, sink.CallbackCount, sink.RootCompleted, sink.RecycledPath,
+                FinishHResult = $"0x{sink.FinishResult:X8}", aborted, sink.CallbackCount, sink.RootCompleted, sink.RecycledPath,
+                sink.ItemMayHaveMoved,
                 sink.CannotRecycle, sink.ValidationError
             });
             if (sink.CannotRecycle)
                 throw new IOException("Windows cannot recycle this folder. Check this drive's Recycle Bin settings. Permanent deletion was blocked.");
             if (sink.ValidationError is { } validation) throw new IOException(validation);
-            if (token.IsCancellationRequested || IsCancellation(result) || IsCancellation(sink.Result))
-                return new(true, sink.RecycledPath);
-            ThrowIfFailed(result);
-            ThrowIfFailed(sink.Result);
+            int failure = GetShellFailure(result, sink.Result, sink.FinishResult);
+            if (GetCancellation(failure, administratorRetry && aborted, sink.RecycledPath, token) is { } cancellation)
+                return cancellation;
+            if (!administratorRetry && !sink.ItemMayHaveMoved && IsPermissionFailure(failure))
+            {
+                throw new PermissionException("Windows denied access. Check folder permissions, then try again.", failure);
+            }
+            ThrowIfFailed(failure);
             if (aborted) throw new IOException("Windows stopped recycling before completion. Some contents may already have moved.");
             // A successful HRESULT alone is insufficient: a non-null new item
             // is Windows' evidence that it was recycled rather than destroyed.
@@ -103,8 +125,37 @@ internal static class FolderRecycler
     internal static int DeletePermission(uint flags, CancellationToken token) => token.IsCancellationRequested
         ? CancelledHResult : (flags & 0x80) == 0 ? CannotRecycleHResult : 0;
 
-    private static bool IsCancellation(int result) => result is CancelledHResult
-        or unchecked((int)0x80270000) or unchecked((int)0x80270001);
+    internal static int GetShellFailure(int operationResult, int itemResult, int finishResult)
+    {
+        // Preserve the item's concrete error if the engine stops because of
+        // it. A user cancellation, including dismissal of UAC, takes priority.
+        int failure = 0;
+        int bestPriority = 0;
+        ReadOnlySpan<int> results = [itemResult, finishResult, operationResult];
+        foreach (int result in results)
+        {
+            if (result is CancelledHResult or ShellUserCancelled) return CancelledHResult;
+            int priority = result switch
+            {
+                >= 0 => 0,
+                UnspecifiedFailure => 1,
+                ShellEngineCancelled => 2,
+                AccessDenied => 3,
+                _ => 4
+            };
+            if (priority <= bestPriority) continue;
+            bestPriority = priority;
+            failure = result;
+        }
+        return failure;
+    }
+
+    internal static RecycleResult? GetCancellation(int failure, bool allowAbortedResult, string? recycledPath, CancellationToken token)
+        => token.IsCancellationRequested || failure is CancelledHResult or ShellEngineCancelled || allowAbortedResult && failure == 0
+            ? new(true, recycledPath) : null;
+
+    internal static bool IsPermissionFailure(int result) => unchecked((uint)result) is
+        0x80070005 or 0x800702E4 or 0x80270002 or 0x80270021;
 
     private static void ThrowIfFailed(int result)
     {
@@ -114,7 +165,9 @@ internal static class FolderRecycler
         string? message = unchecked((uint)result) switch
         {
             0x80070020 or 0x80070021 or 0x80270027 or 0x80270028 => "A file is in use. Close the app using it, then try again.",
-            0x80070005 or 0x80270021 or 0x80270022 or 0x80270002 => "Windows denied access. Check folder permissions, then try again.",
+            0x80270022 => "Windows denied access to the Recycle Bin. Check this drive's Recycle Bin settings.",
+            0x8027003F => "Windows reported a read-only item. Check its attributes and try again.",
+            _ when IsPermissionFailure(result) => "Windows denied access. Check folder permissions, then try again.",
             0x80270037 => "This folder is too large for the Recycle Bin. Increase this drive's Recycle Bin limit, then try again.",
             0x80270036 or 0x8027003A => "The Recycle Bin is unavailable for this folder. Check this drive's Recycle Bin settings.",
             0x80270038 or 0x8027001D or 0x8027001E => "This path is too long for Windows recycling. Open it in File Explorer to review it.",
@@ -133,10 +186,12 @@ internal static class FolderRecycler
         public string? ValidationError { get; private set; }
         public string? RecycledPath { get; private set; }
         public int Result { get; private set; }
+        public int FinishResult { get; private set; }
+        public bool ItemMayHaveMoved { get; private set; }
         public bool RootCompleted { get; private set; }
         public int CallbackCount { get; private set; }
         public int StartOperations() => token.IsCancellationRequested ? CancelledHResult : 0;
-        public int FinishOperations(int result) { if (result < 0) Result = result; return 0; }
+        public int FinishOperations(int result) { FinishResult = result; return 0; }
         public int PreDeleteItem(uint flags, IShellItem item)
         {
             CallbackCount++;
@@ -160,7 +215,8 @@ internal static class FolderRecycler
         }
         public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? newItem)
         {
-            if (result < 0) Result = result;
+            if (result < 0 && Result >= 0) Result = result;
+            ItemMayHaveMoved |= result >= 0 || newItem is not null;
             try
             {
                 item.GetDisplayName(0x80058000, out string source);
@@ -177,7 +233,7 @@ internal static class FolderRecycler
                     }
                 }
             }
-            catch (COMException ex) { Result = ex.HResult; }
+            catch (COMException ex) { if (Result >= 0) Result = ex.HResult; }
             return token.IsCancellationRequested ? CancelledHResult : 0;
         }
         public int UpdateProgress(uint total, uint completed) => token.IsCancellationRequested ? CancelledHResult : 0;

@@ -39,9 +39,11 @@ public sealed class SilentRecyclingTests
         Assert.Equal(contents, File.ReadAllText(file));
     }
 
-    [Fact]
+    [Theory]
     [Trait("Stage", "System")]
-    public async Task WindowsUnrecyclableSparseFixtureIsKeptWithoutDialogsOrPermanentFallback()
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WindowsUnrecyclableSparseFixtureIsKeptWithoutDialogsOrPermanentFallback(bool administratorRetry)
     {
         using var fixture = new TestDirectory();
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "too-large-build")).FullName;
@@ -59,7 +61,7 @@ public sealed class SilentRecyclingTests
         }
         var target = FolderDeletionTarget.CaptureCurrent(folder, logicalLength);
         var events = new List<string>();
-        var outcome = await RecycleWithoutWindows(target, (name, _) => events.Add(name));
+        var outcome = await RecycleWithoutWindows(target, (name, _) => events.Add(name), administratorRetry);
         try
         {
             // Native Windows first considers recycling, then requests a transfer
@@ -79,16 +81,19 @@ public sealed class SilentRecyclingTests
     }
 
     private static async Task<(RecycleResult? Result, Exception? Error)> RecycleWithoutWindows(
-        FolderDeletionTarget target, Action<string, object>? diagnostic = null)
+        FolderDeletionTarget target, Action<string, object>? diagnostic = null, bool administratorRetry = false)
     {
         uint nativeThread = 0;
         var windows = new HashSet<nint>();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var operation = FolderRecycler.RecycleAsync(target, 0, cancellation.Token, (name, data) =>
+        void Observe(string name, object data)
         {
             if (name == "recycle-native-start") Volatile.Write(ref nativeThread, GetCurrentThreadId());
             diagnostic?.Invoke(name, data);
-        });
+        }
+        var operation = administratorRetry
+            ? FolderRecycler.RetryWithAdministratorAsync(target, 0, cancellation.Token, Observe)
+            : FolderRecycler.RecycleAsync(target, 0, cancellation.Token, Observe);
         var timer = Stopwatch.StartNew();
         while (!operation.IsCompleted && timer.Elapsed < TimeSpan.FromSeconds(20))
         {

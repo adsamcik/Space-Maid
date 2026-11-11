@@ -12,6 +12,11 @@ public partial class MainWindow
     private void UpdateExplorerActions()
     {
         if (SelectionActions is null) return;
+        if (RetryRecycleButton is { } retry)
+        {
+            retry.Visibility = CanRetryRecycleWithAdministrator ? Visibility.Visible : Visibility.Collapsed;
+            retry.ToolTip = _administratorRetryTarget?.Path;
+        }
         var selected = SelectedTreeRows();
         bool single = selected.Length == 1 && !_selectionIsGroup;
         var row = single ? selected[0] : null;

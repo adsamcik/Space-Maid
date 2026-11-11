@@ -6,7 +6,9 @@ namespace SpaceMaid.App;
 
 public partial class RecycleFolderWindow : Window
 {
-    public RecycleFolderWindow(FolderDeletionTarget target)
+    public RecycleFolderWindow(FolderDeletionTarget target) : this(target, administratorRetry: false) { }
+
+    internal RecycleFolderWindow(FolderDeletionTarget target, bool administratorRetry)
     {
         InitializeComponent();
         TargetPath.Text = target.Path; TargetPath.ToolTip = target.Path;
@@ -20,6 +22,13 @@ public partial class RecycleFolderWindow : Window
             : $"Scanned logical size: {SizeText.Format(target.LogicalBytes)} · Allocation unknown";
         TargetSize.ToolTip = SizeDetails.Text;
         PartialScanNote.Visibility = target.IsIncomplete ? Visibility.Visible : Visibility.Collapsed;
+        if (administratorRetry)
+        {
+            Title = "Retry recycling";
+            Heading.Text = "Retry moving to the Recycle Bin?";
+            RecycleNote.Text = "Windows may ask for administrator permission to move this folder and its contents to the Recycle Bin.";
+            RecycleButton.Content = "Retry with administrator permission";
+        }
     }
 
     internal RecycleFolderWindow(RecycleSelectionReview review) : this(review.Targets[0])

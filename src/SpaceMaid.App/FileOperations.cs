@@ -70,6 +70,10 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null) => FolderRecycler.RecycleAsync(target, owner, token, diagnostic);
 
+    internal Task<RecycleResult> RetryRecycleWithAdministratorAsync(FolderDeletionTarget target, nint owner,
+        CancellationToken token, Action<string, object>? diagnostic = null)
+        => FolderRecycler.RetryWithAdministratorAsync(target, owner, token, diagnostic);
+
     public Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null)

@@ -1,5 +1,7 @@
 using System.IO;
 using System.Reflection;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -16,6 +18,139 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckAdministratorRecycle(MainWindow window, Application app, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        var parent = new DirectoryInfo(fixture.Path);
+        var folder = parent.CreateSubdirectory("permissions-fixture");
+        string payload = Path.Join(folder.FullName, "payload.txt");
+        const string contents = "Owned permission retry fixture";
+        File.WriteAllText(payload, contents);
+        using var identity = WindowsIdentity.GetCurrent();
+        var user = identity.User!;
+        var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var parentAcl = parent.GetAccessControl(AccessControlSections.Access);
+        var folderAcl = folder.GetAccessControl(AccessControlSections.Access);
+        try
+        {
+            // DELETE_CHILD on the parent would otherwise allow the move even
+            // when the current user's grant on the selected folder lacks DELETE.
+            parent.SetAccessControl(Restricted(FileSystemRights.Modify));
+            folder.SetAccessControl(Restricted(FileSystemRights.ReadAndExecute));
+            window.SetScanTarget(fixture.Path);
+            ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+            Assert.True(Finish(window.ScanCurrentPathAsync()));
+            var rows = Assert.IsType<ExplorerRows>(((ListBox)window.FindName("SpaceTree")).ItemsSource);
+            FinishTask(window.NavigateToEntryAsync(rows.Scan.FindEntry(folder.FullName)!.Value));
+
+            var retry = (Button)window.FindName("RetryRecycleButton");
+            var status = (TextBlock)window.FindName("RecycleStatusText");
+            Assert.False(retry.IsVisible);
+            Assert.Null(Review(window.DeleteSelectedFolderAsync, approve: true, administrator: false));
+            Assert.True(retry.IsVisible, status.ToolTip as string);
+            Assert.Equal(folder.FullName, retry.ToolTip);
+            Assert.Contains("Could not recycle", status.Text);
+            Assert.Equal(contents, File.ReadAllText(payload));
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "administrator-recycle-retry.png"), 1020, 790);
+
+            Assert.Null(Review(window.RetryRecycleWithAdministratorAsync, approve: false, administrator: true));
+            Assert.True(retry.IsVisible);
+            Assert.Equal(contents, File.ReadAllText(payload));
+
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var held = CleanupMutationLease.RunAsync(async () => { entered.SetResult(); await release.Task; });
+            try
+            {
+                FinishTask(entered.Task);
+                var result = Review(window.RetryRecycleWithAdministratorAsync, approve: true, administrator: true, cancelQueued: true);
+                Assert.Equal(new RecycleResult(true, null), result);
+                Assert.Equal("Administrator retry cancelled", status.Text);
+                Assert.Equal(contents, File.ReadAllText(payload));
+            }
+            finally { release.TrySetResult(); FinishTask(held); }
+
+            Assert.Null(Review(window.DeleteSelectedFolderAsync, approve: true, administrator: false));
+            Assert.True(retry.IsVisible, status.ToolTip as string);
+            // A new directory at the original path must never be handed to the
+            // elevated Shell retry, even though the user approved that path.
+            RestoreAcl(parent, parentAcl);
+            RestoreAcl(folder, folderAcl);
+            string original = Path.Join(parent.FullName, "original");
+            Directory.Move(folder.FullName, original);
+            Directory.CreateDirectory(folder.FullName);
+            File.WriteAllText(payload, "Replacement");
+            Assert.Null(Review(window.RetryRecycleWithAdministratorAsync, approve: true, administrator: true));
+            Assert.False(retry.IsVisible);
+            Assert.Contains("replaced since confirmation", status.ToolTip as string);
+            Assert.Equal("Replacement", File.ReadAllText(payload));
+            Assert.Equal(contents, File.ReadAllText(Path.Join(original, "payload.txt")));
+        }
+        finally
+        {
+            RestoreAcl(parent, parentAcl);
+            if (Directory.Exists(folder.FullName)) RestoreAcl(new DirectoryInfo(folder.FullName), folderAcl);
+        }
+
+        static void RestoreAcl(DirectoryInfo directory, DirectorySecurity acl)
+        {
+            acl.SetSecurityDescriptorBinaryForm(acl.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+            directory.SetAccessControl(acl);
+        }
+
+        DirectorySecurity Restricted(FileSystemRights rights)
+        {
+            var acl = new DirectorySecurity();
+            acl.SetAccessRuleProtection(true, false);
+            const InheritanceFlags children = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+            acl.AddAccessRule(new FileSystemAccessRule(user, rights, children, PropagationFlags.None, AccessControlType.Allow));
+            acl.AddAccessRule(new FileSystemAccessRule(administrators, FileSystemRights.FullControl, children, PropagationFlags.None, AccessControlType.Allow));
+            return acl;
+        }
+
+        RecycleResult? Review(Func<Task<RecycleResult?>> request, bool approve, bool administrator, bool cancelQueued = false)
+        {
+            bool reviewed = false;
+            Exception? failure = null;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
+            timer.Tick += (_, _) =>
+            {
+                var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+                if (dialog is null) return;
+                timer.Stop();
+                try
+                {
+                    Assert.Equal(folder.FullName, ((TextBox)dialog.FindName("TargetPath")).Text);
+                    var confirm = (Button)dialog.FindName("RecycleButton");
+                    if (administrator)
+                        Assert.Equal("Retry with administrator permission", confirm.Content);
+                    reviewed = true;
+                    if (approve) confirm.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    else dialog.Close();
+                }
+                catch (Exception error) { failure = error; dialog.Close(); }
+            };
+            timer.Start();
+            RecycleResult? result;
+            try
+            {
+                var task = request();
+                if (cancelQueued)
+                {
+                    var cancel = (Button)window.FindName("CancelRecycleButton");
+                    var status = (TextBlock)window.FindName("RecycleStatusText");
+                    PumpUntil(() => cancel.IsVisible && status.Text.StartsWith("Recycling ", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+                    cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                result = Finish(task);
+            }
+            finally { timer.Stop(); }
+            if (failure is not null) throw failure;
+            Assert.True(reviewed);
+            return result;
+        }
+    }
+
     private static void CheckBackgroundRecycle(MainWindow window, Application app, string artifactRoot)
     {
         using var fixture = new TestDirectory();
@@ -493,17 +628,18 @@ public sealed partial class DesktopTests
             held = null;
         }
 
-        static void FinishTask(Task task)
-        {
-            PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(20));
-            task.GetAwaiter().GetResult();
-        }
+    }
 
-        static T Finish<T>(Task<T> task)
-        {
-            FinishTask(task);
-            return task.GetAwaiter().GetResult();
-        }
+    private static void FinishTask(Task task)
+    {
+        PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(20));
+        task.GetAwaiter().GetResult();
+    }
+
+    private static T Finish<T>(Task<T> task)
+    {
+        FinishTask(task);
+        return task.GetAwaiter().GetResult();
     }
 
     private sealed class PausedRecycleAnalysis(string rootPath) : IOpportunityExtension

@@ -17,7 +17,7 @@
                 <TextBox x:Name="TargetPath" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="72" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent" Padding="0" Margin="0,8,0,0" FontSize="12" AutomationProperties.Name="Exact folder to recycle" />
             </StackPanel>
         </Border>
-        <TextBlock Text="Includes all contents. Empty the bin to free space." FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+        <TextBlock x:Name="RecycleNote" Text="Includes all contents. Empty the bin to free space." FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
         <TextBlock x:Name="PartialScanNote" Text="Partial scan · Size may be incomplete." Visibility="Collapsed" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,0" />
         <TextBlock x:Name="SelectionNote" Visibility="Collapsed" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
         <Expander x:Name="DeletionDetails" Header="Details" FontSize="12" Margin="0,10,0,0">

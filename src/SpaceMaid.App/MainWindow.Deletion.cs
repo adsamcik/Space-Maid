@@ -20,14 +20,16 @@ internal sealed record RecycleSelectionReview(FolderDeletionTarget[] Targets, Re
 
 public partial class MainWindow
 {
-    private sealed class RecycleJob(FolderDeletionTarget target)
+    private sealed class RecycleJob(FolderDeletionTarget target, bool administratorRetry = false)
     {
         public FolderDeletionTarget Target { get; } = target;
+        public bool AdministratorRetry { get; } = administratorRetry;
         public string FolderName => Path.GetFileName(Target.Path);
         internal TaskCompletionSource<RecycleResult?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed record RecycleAttempt(RecycleJob Job, RecycleResult? Result, string? Error, bool CancelledBeforeMove = false);
+    private sealed record RecycleAttempt(RecycleJob Job, RecycleResult? Result, string? Error,
+        bool CancelledBeforeMove = false, bool CanRetryWithAdministrator = false);
 
     private readonly ObservableCollection<RecycleJob> _queuedRecycles = [];
     private RecycleJob? _activeRecycle;
@@ -39,6 +41,7 @@ public partial class MainWindow
     private int _queuedRecyclesCancelled, _queuedRecyclesRemoved, _foregroundWorkVersion;
     private (string Status, string? Path)? _recycleCheck;
     private string? _recycleSummary, _recycleDetails;
+    private FolderDeletionTarget? _administratorRetryTarget;
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
     {
@@ -145,6 +148,13 @@ public partial class MainWindow
         }
 
         var jobs = review.Targets.Select(target => new RecycleJob(target)).ToArray();
+        QueueRecycleJobs(jobs);
+        return await Task.WhenAll(jobs.Select(job => job.Completion.Task));
+    }
+
+    private void QueueRecycleJobs(RecycleJob[] jobs)
+    {
+        _administratorRetryTarget = null;
         foreach (var job in jobs) _queuedRecycles.Add(job);
         _recycleRefreshWork?.Cancel();
         SignalRecycleStateChange();
@@ -154,7 +164,32 @@ public partial class MainWindow
             UpdateUpdateButton();
         }
         UpdateRecycleActivity();
-        return await Task.WhenAll(jobs.Select(job => job.Completion.Task));
+    }
+
+    private bool CanRetryRecycleWithAdministrator => _administratorRetryTarget is not null && _recycleTask is null
+        && _recycleCheck is null && ExploreTab.IsChecked == true && _snapshot is { } scan && CanUseFolderMenu(scan);
+
+    private async void RetryRecycle_Click(object sender, RoutedEventArgs e) => await RetryRecycleWithAdministratorAsync();
+
+    internal async Task<RecycleResult?> RetryRecycleWithAdministratorAsync()
+    {
+        if (!CanRetryRecycleWithAdministrator || _administratorRetryTarget is not { } target) return null;
+        _recycleCheck = ("Reviewing administrator retry…", target.Path);
+        UpdateRecycleActivity();
+        try
+        {
+            var confirmation = new RecycleFolderWindow(target, administratorRetry: true) { Owner = this };
+            if (confirmation.ShowDialog() != true || _closing) return null;
+        }
+        finally
+        {
+            _recycleCheck = null;
+            if (!_closing) UpdateRecycleActivity();
+        }
+
+        var job = new RecycleJob(target, administratorRetry: true);
+        QueueRecycleJobs([job]);
+        return await job.Completion.Task;
     }
 
     private static RecycleSelectionReview PrepareRecycleSelection(ScanSnapshot scan, int[] links,
@@ -286,13 +321,18 @@ public partial class MainWindow
         _recycleDetails = null;
         int moved = attempts.Count(attempt => attempt.Result is { Cancelled: false });
         if (moved > 0) summary.Add($"{FolderCount(moved)} moved to the Recycle Bin");
+        bool administratorCancelled = attempts.Any(attempt => attempt.Job.AdministratorRetry && attempt.Result is { Cancelled: true });
+        if (administratorCancelled)
+            summary.Add("Administrator retry cancelled");
         if (attempts.Any(attempt => attempt.Result is { Cancelled: true } && !attempt.CancelledBeforeMove))
-            summary.Add("Move stopped. Some contents may have moved");
-        int skipped = _queuedRecyclesCancelled + attempts.Count(attempt => attempt.CancelledBeforeMove);
+            summary.Add(administratorCancelled ? "Some contents may have moved" : "Move stopped. Some contents may have moved");
+        int skipped = _queuedRecyclesCancelled + attempts.Count(attempt => !attempt.Job.AdministratorRetry && attempt.CancelledBeforeMove);
         if (skipped > 0) summary.Add($"{FolderCount(skipped)} cancelled before moving");
         if (_queuedRecyclesRemoved > 0) summary.Add($"{FolderCount(_queuedRecyclesRemoved)} removed from the queue");
         int failed = attempts.Count(attempt => attempt.Error is not null);
-        if (attempts.FirstOrDefault(attempt => attempt.Error is not null) is { } failure)
+        var retry = attempts.FirstOrDefault(attempt => attempt.CanRetryWithAdministrator);
+        _administratorRetryTarget = retry?.Job.Target;
+        if ((retry ?? attempts.FirstOrDefault(attempt => attempt.Error is not null)) is { } failure)
         {
             summary.Add(failed == 1 ? $"Could not recycle {Path.GetFileName(failure.Job.Target.Path)}" : $"{FolderCount(failed)} failed");
             _recycleDetails = $"{failure.Job.Target.Path}\n{failure.Error}";
@@ -307,8 +347,11 @@ public partial class MainWindow
         var target = job.Target;
         try
         {
-            await Task.Run(() => log.Record("file-action-start", new { Action = "recycle", target.Path }));
-            var result = await Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, token, diagnostic: log.Record);
+            await Task.Run(() => log.Record("file-action-start", new { Action = "recycle", target.Path, job.AdministratorRetry }));
+            nint owner = new WindowInteropHelper(this).Handle;
+            var result = await (job.AdministratorRetry
+                ? Operations.RetryRecycleWithAdministratorAsync(target, owner, token, log.Record)
+                : Operations.RecycleAsync(target, owner, token, log.Record));
             await Task.Run(() => log.Record("recycle-result", result));
             return new(job, result, null);
         }
@@ -316,6 +359,19 @@ public partial class MainWindow
         catch (Exception ex) when (IsRecycleError(ex))
         {
             await Task.Run(() => log.Record("recycle-failed", new { target.Path, Error = ex.ToString() }));
+            if (ex is FolderRecycler.PermissionException && !job.AdministratorRetry && !token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Run(target.ValidateCurrent);
+                    return new(job, null, ex.Message, CanRetryWithAdministrator: !token.IsCancellationRequested);
+                }
+                catch (Exception validation) when (IsRecycleError(validation))
+                {
+                    await Task.Run(() => log.Record("recycle-retry-unavailable", new { target.Path, Error = validation.ToString() }));
+                    return new(job, null, validation.Message);
+                }
+            }
             return new(job, null, ex.Message);
         }
     }

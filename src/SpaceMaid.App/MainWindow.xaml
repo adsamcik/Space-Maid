@@ -361,6 +361,8 @@
             </Grid>
             <TextBlock x:Name="ExtensionJobText" Visibility="Collapsed" FontSize="12" TextTrimming="CharacterEllipsis" MaxHeight="20" ClipToBounds="True" Margin="0,6,0,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" />
             <DockPanel x:Name="RecycleActivity" Visibility="Collapsed" Margin="0,6,0,0">
+                <Button x:Name="RetryRecycleButton" DockPanel.Dock="Right" Content="Retry with administrator permission…" Click="RetryRecycle_Click"
+                        Visibility="Collapsed" Padding="10,4" MinHeight="28" Margin="10,0,0,0" />
                 <Button x:Name="CancelRecycleButton" DockPanel.Dock="Right" Content="Cancel recycling" Click="CancelRecycle_Click" Padding="10,4" MinHeight="28" Margin="10,0,0,0" ToolTip="Stop the current move and clear queued folders." />
                 <Button x:Name="RecycleQueueButton" DockPanel.Dock="Right" Content="View queue" Visibility="Collapsed" Click="ShowRecycleQueue_Click" Padding="10,4" MinHeight="28" Margin="10,0,0,0" AutomationProperties.Name="View folders waiting to recycle" />
                 <TextBlock x:Name="RecycleStatusText" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" AutomationProperties.HelpText="{Binding ToolTip, RelativeSource={RelativeSource Self}}" />
