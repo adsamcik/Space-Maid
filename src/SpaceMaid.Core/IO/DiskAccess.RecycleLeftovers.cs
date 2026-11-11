@@ -18,7 +18,11 @@ public sealed partial class DiskAccess
     }
 
     public bool HasRecycleLeftovers(string drive, CancellationToken token)
-        => SupportsRecycleLeftovers(drive) && HasRecycleLeftoversAt(AccountRecycleBinPath(drive), token);
+    {
+        if (!SupportsRecycleLeftovers(drive))
+            throw new IOException("Untracked-file checks require a local fixed NTFS drive.");
+        return HasRecycleLeftoversAt(AccountRecycleBinPath(drive), token);
+    }
 
     internal bool HasRecycleLeftoversAt(string bin, CancellationToken token)
     {
@@ -115,7 +119,10 @@ public sealed partial class DiskAccess
             .Select(link => tree.EntryPath(link)).OfType<string>().Select(path => path[(tree.RootPath.Length + 1)..]).ToArray();
     }
 
-    public sealed record RecycleLeftoverResult(string Name, bool Completed, string? RecoveryPath, string? Issue);
+    public sealed record RecycleLeftoverResult(string Name, bool Completed, string? RecoveryPath, string? Issue)
+    {
+        public bool MutationAttempted { get; init; }
+    }
 
     public sealed class RecycleLeftoverReview
     {
@@ -128,6 +135,68 @@ public sealed partial class DiskAccess
 
         public string Path { get; }
         public IReadOnlyList<RecycleLeftover> Entries { get; }
+
+        // Delete only the captured, explicitly approved orphan payloads. Hold the
+        // account namespace throughout; never move failures to a recovery folder.
+        public void Delete(IReadOnlyList<RecycleLeftover> approved,
+            IProgress<RecycleLeftoverResult> results, CancellationToken token)
+        {
+            var eligible = Entries.ToHashSet();
+            if (approved.Count == 0 || approved.Distinct().Count() != approved.Count
+                || approved.Any(row => !eligible.Contains(row) || !row.CanDelete))
+                throw new IOException("Review and select eligible entries again.");
+            using var source = _files.PinLeftoverDirectories(Path, destination: false, token);
+            var live = _files.InspectPermanentDeleteHandle(source.Last);
+            if (live.Identity != _identity || live.Volume != _volume)
+                throw new IOException("The account's Recycle Bin folder changed. Review again.");
+            foreach (var item in approved)
+            {
+                token.ThrowIfCancellationRequested();
+                bool attempted = false;
+                try
+                {
+                    void CheckMate()
+                    {
+                        _files.CheckBinNameLookup(source.Last);
+                        _files.RequireMissingMate(Path, item.Name);
+                    }
+                    CheckMate();
+                    string path = System.IO.Path.Join(Path, item.Name);
+                    if (item.IsDirectory)
+                    {
+                        var tree = item.Contents ?? throw new IOException("Folder contents could not be checked.");
+                        _files.DeleteReviewedTree(path, -1, live.Volume, tree, token, () => attempted = true,
+                            (handle, identity) =>
+                            {
+                                long expected = identity == item.Record.Identity ? item.Changed : item.Revisions.GetValueOrDefault(identity);
+                                if (expected <= 0 || _files.ReadLeftoverChangeTime(handle) != expected)
+                                    throw new IOException("Folder contents changed after review.");
+                            }, source);
+                    }
+                    else
+                    {
+                        using (var attributes = _files.OpenPermanentDeleteHandle(path, 0x80, 7))
+                            VerifyPermanentDeleteEntry(_files.InspectPermanentDeleteHandle(attributes), item.Record, live.Volume);
+                        using var handle = _files.OpenPermanentDeleteHandle(path, 0x80010080, 0);
+                        VerifyPermanentDeleteEntry(_files.InspectPermanentDeleteHandle(handle), item.Record, live.Volume);
+                        if (_files.ReadLeftoverChangeTime(handle) != item.Changed)
+                            throw new IOException("Entry changed after review.");
+                        _files.VerifyPermanentDeleteFile(handle, item.Record);
+                        _files.VerifyPermanentDeleteStreams(handle, directory: false);
+                        CheckMate();
+                        token.ThrowIfCancellationRequested();
+                        attempted = true;
+                        _files.MarkPermanentDelete(handle);
+                    }
+                    results.Report(new(item.Name, true, null, null) { MutationAttempted = attempted });
+                }
+                catch (Exception error) when (IsLeftoverFailure(error) || error is OperationCanceledException)
+                {
+                    results.Report(new(item.Name, false, null, error.Message) { MutationAttempted = attempted });
+                    token.ThrowIfCancellationRequested();
+                }
+            }
+        }
 
         public void Apply(IReadOnlyList<RecycleLeftover> approved, string destination, bool delete,
             IProgress<RecycleLeftoverResult> results, CancellationToken token)
@@ -279,7 +348,7 @@ public sealed partial class DiskAccess
             throw new IOException("Choose a normal local folder outside protected storage.");
         var ancestors = new Stack<string>();
         for (string? current = path; current is not null; current = Path.GetDirectoryName(current)) ancestors.Push(current);
-        var lease = new LeftoverDirectoryLease();
+        var lease = new LeftoverDirectoryLease(path);
         try
         {
             foreach (string current in ancestors)
@@ -295,8 +364,9 @@ public sealed partial class DiskAccess
         catch { lease.Dispose(); throw; }
     }
 
-    private sealed class LeftoverDirectoryLease : IDisposable
+    private sealed class LeftoverDirectoryLease(string path) : IDisposable
     {
+        internal string Path { get; } = path;
         internal List<SafeFileHandle> Handles { get; } = [];
         internal SafeFileHandle Last => Handles[^1];
         public void Dispose()

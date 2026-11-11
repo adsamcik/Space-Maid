@@ -4,6 +4,7 @@ using System.Security.Principal;
 using System.Windows;
 using System.Windows.Interop;
 using SpaceMaid.Core.Scanning;
+using SpaceMaid.Core.IO;
 
 namespace SpaceMaid.App;
 
@@ -94,14 +95,34 @@ public partial class MainWindow
             StatusText.Text = "Checking Recycle Bin…";
             var bin = await operations.QueryRecycleBinAsync(root); confirmedVolume = bin.VolumeId;
             if (_closing || work.IsCancellationRequested) return;
+            DiskAccess.RecycleLeftoverReview? leftovers = null;
+            string? leftoverNotice = null;
+            StatusText.Text = "Checking for untracked Recycle Bin files…";
+            try
+            {
+                if (await operations.HasRecycleLeftoversAsync(bin, work.Token))
+                    leftovers = await Task.Run(() => operations.ReviewRecycleLeftovers(bin, work.Token), work.Token);
+            }
+            catch (Exception error) when (CleanupBatch.IsExpected(error) && error is not OperationCanceledException)
+            {
+                log.Record("recycle-bin-leftovers-check-failed", new { Error = error.ToString() });
+                leftoverNotice = "Untracked files could not be checked and will be kept. You can still empty Windows-listed items.";
+            }
+            if (_closing || work.IsCancellationRequested) return;
+            if (bin.Items == 0 && leftovers?.Entries.Count is not > 0 && leftoverNotice is null)
+            { message = emptyMessage + " No files with missing Recycle Bin records found."; return; }
+
+            var binLink = string.Equals(scannedVolume, bin.VolumeId, StringComparison.OrdinalIgnoreCase)
+                ? scan?.FindEntry(Path.Combine(root, "$Recycle.Bin")) ?? scan?.FindEntry(Path.Combine(root, "Recycler")) : null;
+            long? scanBytes = scan is not null && binLink is { } link && scan.Entry(link) is { IsDirectory: true } entry
+                ? scan.HasAllocationData ? entry.AllocatedBytes : entry.LogicalBytes : null;
+            var confirmation = new EmptyRecycleBinWindow(bin, scanBytes, scan?.HasAllocationData == true, leftovers, leftoverNotice);
+            if (!Confirm(confirmation)) return;
+            var approved = confirmation.DeleteLeftovers ? leftovers!.Entries.Where(item => item.CanDelete).ToArray() : [];
+            int kept = (leftovers?.Entries.Count ?? 0) - approved.Length;
+            log.Record("recycle-bin-confirmed", new { Bin = bin, UntrackedEntries = approved.Select(item => item.Name).ToArray() });
             if (bin.Items > 0)
             {
-                var binLink = string.Equals(scannedVolume, bin.VolumeId, StringComparison.OrdinalIgnoreCase)
-                    ? scan?.FindEntry(Path.Combine(root, "$Recycle.Bin")) ?? scan?.FindEntry(Path.Combine(root, "Recycler")) : null;
-                long? scanBytes = scan is not null && binLink is { } link && scan.Entry(link) is { IsDirectory: true } entry
-                    ? scan.HasAllocationData ? entry.AllocatedBytes : entry.LogicalBytes : null;
-                if (!Confirm(new(bin, scanBytes, scan?.HasAllocationData == true))) return;
-                log.Record("recycle-bin-confirmed", bin);
                 // The Shell call has no managed cancellation hook. Retain its owner until it returns.
                 CancelButton.Visibility = Visibility.Collapsed;
                 StatusText.Text = "Emptying Recycle Bin on " + bin.RootPath + "…";
@@ -110,31 +131,42 @@ public partial class MainWindow
                 message = result.Remaining.Items == 0 ? "Windows-listed items cleared."
                     : $"Windows still lists {result.Remaining.Items:N0} items in your Recycle Bin.";
                 log.Record("recycle-bin-result", result);
-                if (result.Cancelled) { message = "Cleanup cancelled. " + message; return; }
-                if (result.Remaining.Items > 0) return;
+                if (result.Cancelled || result.Remaining.Items > 0)
+                {
+                    if (result.Cancelled) message = "Cleanup cancelled. " + message;
+                    if (approved.Length > 0) message += " Untracked files were not deleted.";
+                    return;
+                }
                 bin = result.Remaining;
             }
             else message = emptyMessage;
 
             if (_closing || work.IsCancellationRequested) return;
             CancelButton.Visibility = Visibility.Visible;
-            StatusText.Text = "Checking for Recycle Bin leftovers…";
-            try
+            if (approved.Length > 0)
             {
-                if (!await operations.HasRecycleLeftoversAsync(bin, work.Token) || _closing || work.IsCancellationRequested) return;
-                if (!Confirm(new(bin.RootPath))) { message += " Leftovers kept."; return; }
-
-                var review = new RecycleLeftoversWindow(operations, bin.RootPath, work.Token,
-                    token => operations.ReviewRecycleLeftovers(bin, token)) { Owner = this };
-                review.ShowDialog();
-                leftoversChanged = review.Changed;
-                if (leftoversChanged) message += " Leftover storage updated.";
+                StatusText.Text = "Deleting untracked Recycle Bin files…";
+                int deleted = 0, partial = 0;
+                var progress = new Progress<DiskAccess.RecycleLeftoverResult>(result =>
+                {
+                    if (result.Completed) deleted++;
+                    else if (result.MutationAttempted) partial++;
+                    log.Record("recycle-bin-untracked-result", result);
+                });
+                // A failed directory deletion can still have removed children.
+                leftoversChanged = true;
+                try { await operations.DeleteRecycleLeftoversAsync(bin, leftovers!, approved, progress, work.Token); }
+                catch (Exception error) when (CleanupBatch.IsExpected(error))
+                {
+                    log.Record("recycle-bin-untracked-failed", new { Error = error.ToString() });
+                    message += error is OperationCanceledException ? " Untracked cleanup stopped." : " Untracked cleanup could not finish. See Details.";
+                }
+                kept += approved.Length - deleted;
+                message += $" {deleted:N0} untracked {(deleted == 1 ? "entry" : "entries")} deleted.";
+                if (partial > 0) message += $" {partial:N0} could not be fully deleted; some contents may have been removed. See Details.";
             }
-            catch (Exception error) when (CleanupBatch.IsExpected(error))
-            {
-                log.Record("recycle-bin-leftovers-check-failed", new { Error = error.ToString() });
-                message += error is OperationCanceledException ? " Leftover check stopped." : " Could not check leftovers. See Details.";
-            }
+            if (kept > 0) message += $" {kept:N0} untracked {(kept == 1 ? "entry remains" : "entries remain")} in the bin. Review leftovers for details.";
+            if (leftoverNotice is not null) message += " Untracked files were not checked.";
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {

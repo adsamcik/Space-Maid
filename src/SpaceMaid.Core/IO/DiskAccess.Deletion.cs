@@ -28,10 +28,17 @@ public sealed partial class DiskAccess
     }
 
     private void DeleteReviewedTree(string path, int rootLink, ulong volume, ScanSnapshot current,
-        CancellationToken token, Action? mutationStarted, Action<SafeFileHandle, FileIdentity>? verifyRevision = null)
+        CancellationToken token, Action? mutationStarted, Action<SafeFileHandle, FileIdentity>? verifyRevision = null,
+        LeftoverDirectoryLease? recycleBin = null)
     {
+        // A leftover review already holds every ancestor of this exact account
+        // directory. Only its captured $R root gets the protected-name exception.
+        if (recycleBin is not null && (rootLink != -1 || Path.GetDirectoryName(path) != recycleBin.Path
+            || !Path.GetFileName(path).StartsWith("$R", StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("The reviewed Recycle Bin scope changed.");
         var ancestors = new Stack<string>();
-        for (string? parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent)) ancestors.Push(parent);
+        if (recycleBin is null)
+            for (string? parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent)) ancestors.Push(parent);
         var parentLeases = new List<SafeFileHandle>();
         var entries = new List<PermanentDeleteEntry>();
         try
@@ -65,7 +72,8 @@ public sealed partial class DiskAccess
                 if (!observed.Add(entry.FileIndex) || entry.IsIncomplete)
                     throw new IOException("Shared or incompletely checked contents are kept.");
                 CheckPermanentDeleteAttributes(record.Attributes, record.IsDirectory);
-                if (ProtectedPermanentDeleteName(Path.GetFileName(next.Path))) throw new IOException("Protected filesystem storage is kept.");
+                if (ProtectedPermanentDeleteName(Path.GetFileName(next.Path)) && !(recycleBin is not null && next.Link == rootLink))
+                    throw new IOException("Protected filesystem storage is kept.");
 
                 // Attribute-only metadata is checked before any readable/list
                 // acquisition, so provider placeholders cannot be recalled.
@@ -121,6 +129,11 @@ public sealed partial class DiskAccess
             for (int index = entries.Count - 1; index >= 0; index--)
             {
                 token.ThrowIfCancellationRequested();
+                if (recycleBin is not null)
+                {
+                    CheckBinNameLookup(recycleBin.Last);
+                    RequireMissingMate(recycleBin.Path, Path.GetFileName(path));
+                }
                 if (index == entries.Count - 1) mutationStarted?.Invoke();
                 token.ThrowIfCancellationRequested();
                 MarkPermanentDelete(entries[index].Handle);

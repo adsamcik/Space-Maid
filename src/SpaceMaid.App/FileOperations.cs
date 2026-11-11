@@ -103,6 +103,10 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public DiskAccess.RecycleLeftoverReview ReviewRecycleLeftovers(RecycleBinSnapshot confirmed, CancellationToken token)
         => _recycleBins.ReviewLeftovers(Files, confirmed, token);
 
+    public Task DeleteRecycleLeftoversAsync(RecycleBinSnapshot confirmed, DiskAccess.RecycleLeftoverReview review,
+        IReadOnlyList<DiskAccess.RecycleLeftover> approved, IProgress<DiskAccess.RecycleLeftoverResult> results, CancellationToken token)
+        => CleanupMutationLease.RunAsync(() => Task.Run(() => _recycleBins.DeleteLeftovers(confirmed, review, approved, results, token), token), token);
+
     public Task<RecycleBinCleanupResult> EmptyRecycleBinAsync(RecycleBinSnapshot confirmed, nint owner,
         CancellationToken token, Action<string, object>? diagnostic = null)
         => CleanupMutationLease.RunAsync(() => _recycleBins.EmptyAsync(confirmed, owner, token, diagnostic), token);

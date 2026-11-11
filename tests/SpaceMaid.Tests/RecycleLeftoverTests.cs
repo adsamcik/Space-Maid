@@ -153,6 +153,90 @@ public sealed class RecycleLeftoverTests
         Assert.False(row.CanDelete);
     }
 
+    [Fact]
+    [Trait("Stage", "System")]
+    public void DirectDeletionRemovesOnlyApprovedOrphansInTheCapturedAccount()
+    {
+        using var fixture = new TestDirectory();
+        string bin = Directory.CreateDirectory(Path.Join(fixture.Path, "$Recycle.Bin", "S-current")).FullName;
+        string other = Directory.CreateDirectory(Path.Join(fixture.Path, "$Recycle.Bin", "S-other")).FullName;
+        File.WriteAllText(Path.Join(other, "$Rother"), "keep other account");
+        File.WriteAllText(Path.Join(bin, "$Rpaired"), "keep paired");
+        File.WriteAllText(Path.Join(bin, "$Ipaired"), "record");
+        File.WriteAllText(Path.Join(bin, "$Rkeep"), "keep unapproved");
+        File.WriteAllText(Path.Join(bin, "$Rfile"), "delete");
+        string nested = Directory.CreateDirectory(Path.Join(bin, "$Rfolder", "nested")).FullName;
+        File.WriteAllText(Path.Join(nested, "content.txt"), "delete nested content");
+        var review = Read(bin);
+
+        var results = Delete(review, "$Rfile", "$Rfolder");
+
+        Assert.All(results, result => { Assert.True(result.Completed, result.Issue); Assert.Null(result.RecoveryPath); });
+        Assert.False(File.Exists(Path.Join(bin, "$Rfile")));
+        Assert.False(Directory.Exists(Path.Join(bin, "$Rfolder")));
+        Assert.Equal("keep paired", File.ReadAllText(Path.Join(bin, "$Rpaired")));
+        Assert.Equal("record", File.ReadAllText(Path.Join(bin, "$Ipaired")));
+        Assert.Equal("keep unapproved", File.ReadAllText(Path.Join(bin, "$Rkeep")));
+        Assert.Equal("keep other account", File.ReadAllText(Path.Join(other, "$Rother")));
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public void DirectDeletionKeepsChangedPairedAndLockedEntriesInPlace()
+    {
+        using var fixture = new TestDirectory();
+        string bin = fixture.Path;
+        foreach (string name in new[] { "$Rpaired", "$Rreplaced", "$Rlocked" }) File.WriteAllText(Path.Join(bin, name), "before");
+        string folder = Directory.CreateDirectory(Path.Join(bin, "$Rfolder", "nested")).FullName;
+        string child = Path.Join(folder, "content.txt");
+        File.WriteAllText(child, "before");
+        DateTime written = File.GetLastWriteTimeUtc(child);
+        var review = Read(bin);
+        File.WriteAllText(Path.Join(bin, "$Ipaired"), "new record");
+        File.Move(Path.Join(bin, "$Rreplaced"), Path.Join(bin, "original"));
+        File.WriteAllText(Path.Join(bin, "$Rreplaced"), "replacement");
+        File.WriteAllText(child, "edited");
+        File.SetLastWriteTimeUtc(child, written);
+        using var held = File.Open(Path.Join(bin, "$Rlocked"), FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        var results = Delete(review, "$Rpaired", "$Rreplaced", "$Rlocked", "$Rfolder");
+
+        Assert.All(results, result => { Assert.False(result.Completed); Assert.False(result.MutationAttempted); Assert.Null(result.RecoveryPath); });
+        Assert.Equal("before", File.ReadAllText(Path.Join(bin, "$Rpaired")));
+        Assert.Equal("replacement", File.ReadAllText(Path.Join(bin, "$Rreplaced")));
+        Assert.Equal("edited", File.ReadAllText(child));
+        Assert.True(File.Exists(Path.Join(bin, "$Rlocked")));
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public void DirectDeletionRejectsForeignApprovalAndStopsBetweenEntries()
+    {
+        using var fixture = new TestDirectory();
+        File.WriteAllText(Path.Join(fixture.Path, "$Rfirst"), "first");
+        File.WriteAllText(Path.Join(fixture.Path, "$Rsecond"), "second");
+        var review = Read(fixture.Path);
+        var updates = new List<DiskAccess.RecycleLeftoverResult>();
+        Assert.Throws<IOException>(() => review.Delete(Read(fixture.Path).Entries, new InlineProgress<DiskAccess.RecycleLeftoverResult>(updates.Add), default));
+        Assert.Empty(updates);
+        using var stop = new CancellationTokenSource();
+        var approved = new[] { "$Rfirst", "$Rsecond" }.Select(name => review.Entries.Single(entry => entry.Name == name)).ToArray();
+        Assert.ThrowsAny<OperationCanceledException>(() => review.Delete(approved,
+            new InlineProgress<DiskAccess.RecycleLeftoverResult>(result => { updates.Add(result); stop.Cancel(); }), stop.Token));
+        Assert.True(Assert.Single(updates).Completed);
+        Assert.False(File.Exists(Path.Join(fixture.Path, "$Rfirst")));
+        Assert.Equal("second", File.ReadAllText(Path.Join(fixture.Path, "$Rsecond")));
+    }
+
+    private static List<DiskAccess.RecycleLeftoverResult> Delete(DiskAccess.RecycleLeftoverReview review, params string[] names)
+    {
+        var results = new List<DiskAccess.RecycleLeftoverResult>();
+        review.Delete(names.Select(name => Assert.Single(review.Entries, entry => entry.Name == name)).ToArray(),
+            new InlineProgress<DiskAccess.RecycleLeftoverResult>(results.Add), default);
+        Assert.Equal(names.Length, results.Count);
+        return results;
+    }
+
     private static DiskAccess.RecycleLeftoverReview Read(string bin) =>
         DiskAccess.Default.ReviewRecycleLeftoversAt(bin, DateTime.UtcNow.AddMinutes(1), default);
 

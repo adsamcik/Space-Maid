@@ -38,6 +38,10 @@ internal sealed class RecycleBinService
     internal DiskAccess.RecycleLeftoverReview ReviewLeftovers(DiskAccess files, RecycleBinSnapshot confirmed, CancellationToken token)
         => OnConfirmedVolume(confirmed, root => _reviewLeftovers(files, root, token));
 
+    internal void DeleteLeftovers(RecycleBinSnapshot confirmed, DiskAccess.RecycleLeftoverReview review,
+        IReadOnlyList<DiskAccess.RecycleLeftover> approved, IProgress<DiskAccess.RecycleLeftoverResult> results, CancellationToken token)
+        => OnConfirmedVolume(confirmed, _ => { review.Delete(approved, results, token); return true; });
+
     private T OnConfirmedVolume<T>(RecycleBinSnapshot confirmed, Func<string, T> read)
     {
         string root = ValidateRoot(confirmed.RootPath);

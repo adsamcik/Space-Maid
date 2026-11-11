@@ -83,28 +83,32 @@ public partial class RecycleLeftoversWindow : Window
         if (_work is not null || _review is not { } review) return;
         var selected = _rows.Where(row => row.Picked && row.CanPick).ToArray();
         if (selected.Length == 0 || delete && selected.Any(row => !row.Entry.CanDelete)) return;
-        var picker = new OpenFolderDialog { Title = delete ? "Choose where to keep any entries that cannot be deleted" : "Choose a recovery folder on " + _drive,
-            InitialDirectory = _destination ?? _drive };
-        if (picker.ShowDialog(this) != true) return;
-        string destination = Path.TrimEndingDirectorySeparator(picker.FolderName);
+        string? destination = null;
         if (delete)
         {
             string groups = string.Join("\n", selected.GroupBy(row => row.Kind).Select(group =>
                 $"• {Describe(group.Key).Title} · {group.Count():N0} checked · {SizeText.Format(group.Sum(row => row.Bytes))} observed"));
             if (MessageBox.Show(this,
                 $"Permanently delete {selected.Length:N0} checked entries and their folder contents?\n\n{groups}\n\n"
-                + $"Space Maid first moves them to {destination}. Entries it cannot finish deleting may stay there. Permanent deletion cannot be undone.",
+                + "This cannot be undone. Files that cannot be deleted will stay in the Recycle Bin.",
                 "Delete selected Recycle Bin leftovers?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
         }
+        else
+        {
+            var picker = new OpenFolderDialog { Title = "Choose a recovery folder on " + _drive, InitialDirectory = _destination ?? _drive };
+            if (picker.ShowDialog(this) != true) return;
+            destination = Path.TrimEndingDirectorySeparator(picker.FolderName);
+            _destination = destination;
+        }
 
-        _destination = destination;
         var byName = selected.ToDictionary(row => row.Name, StringComparer.Ordinal);
-        int processed = 0, completed = 0;
+        int processed = 0, completed = 0, partial = 0;
         var progress = new Progress<DiskAccess.RecycleLeftoverResult>(result =>
         {
             processed++;
             if (result.Completed) completed++;
-            Changed |= result.Completed || result.RecoveryPath is not null;
+            else if (result.MutationAttempted) partial++;
+            Changed |= result.Completed || result.RecoveryPath is not null || result.MutationAttempted;
             byName[result.Name].Finish(result);
             if (processed % 32 == 0) StatusText.Text = $"Processed {processed:N0} of {selected.Length:N0}…";
         });
@@ -114,12 +118,17 @@ public partial class RecycleLeftoversWindow : Window
             try
             {
                 var approved = selected.Select(row => row.Entry).ToArray();
-                await CleanupMutationLease.RunAsync(() => Task.Run(() => review.Apply(approved, destination, delete, progress, token), token), token);
+                await CleanupMutationLease.RunAsync(() => Task.Run(() =>
+                {
+                    if (delete) review.Delete(approved, progress, token);
+                    else review.Apply(approved, destination!, false, progress, token);
+                }, token), token);
             }
             finally
             {
                 _message = $"{completed:N0} {(delete ? "deleted" : "recovered")} · {processed - completed:N0} need attention"
-                    + (token.IsCancellationRequested ? " · Stopped" : "");
+                    + (token.IsCancellationRequested ? " · Stopped" : "")
+                    + (partial > 0 ? $" · {partial:N0} could not be fully deleted; some contents may have been removed." : "");
                 ShowDetails();
             }
         });
@@ -306,8 +315,10 @@ public partial class RecycleLeftoversWindow : Window
         {
             _finished = true;
             Picked = false;
-            Status = result.Completed ? result.RecoveryPath is null ? "Deleted" : "Recovered" : "Check details";
-            Detail = string.Join("\n", new[] { result.RecoveryPath, result.Issue }.OfType<string>());
+            Status = result.Completed ? result.RecoveryPath is null ? "Deleted" : "Recovered" : result.MutationAttempted ? "Incomplete" : "Check details";
+            Detail = string.Join("\n", new[] { result.RecoveryPath,
+                !result.Completed && result.MutationAttempted ? "Some contents may have been permanently deleted. Remaining files are still in the Recycle Bin." : null,
+                result.Issue }.OfType<string>());
             Changed(nameof(CanPick)); Changed(nameof(Status));
         }
         private void Changed(string property) => PropertyChanged?.Invoke(this, new(property));
