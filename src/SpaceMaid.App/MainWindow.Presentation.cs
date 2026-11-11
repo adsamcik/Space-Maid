@@ -107,8 +107,7 @@ public partial class MainWindow
         string name = binStorage ? RecycleBinService.StorageName : contribution.Name;
         var text = new StackPanel();
         text.Children.Add(new TextBlock { Text = name + (isHeader ? " ›" : ""), FontWeight = contribution.Link == -2 ? FontWeights.Normal : FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes) + (isHeader ? $" · {share}" : ""), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = isHeader ? 11 : 12 });
-        if (!isHeader) text.Children.Add(new TextBlock { Text = share, Margin = new(0, 3, 0, 0), FontSize = 12, Opacity = .7 });
+        text.Children.Add(new TextBlock { Text = SizeText.Format(contribution.Bytes), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, isHeader ? 2 : 4, 0, 0), FontSize = 12 });
         string type = contribution.Link >= 0 && !scan.Entry(contribution.Link).IsDirectory
             ? FileTypeClassifier.DescribeDetails(contribution.Name) : "";
         var button = new Button { Content = text, Tag = text, DataContext = contribution, Style = (Style)FindResource("TreemapTile"), Padding = isHeader ? new(8, 5, 8, 5) : new(10), ToolTip = $"{contribution.Path}\n{SizeText.Format(contribution.Bytes)} · {share} of parent" + (type.Length > 0 ? $"\n{type}" : "") };
@@ -153,20 +152,25 @@ public partial class MainWindow
             if (contribution.Link >= 0)
             {
                 await NavigateToEntryAsync(contribution.Link);
-                SpaceTree.Focus();
+                FocusExplorerContent();
             }
-            else await BrowseAsync(async cancellation =>
+            else
             {
-                var ancestors = AncestorLinks(scan, folder.LinkIndex);
-                while (ancestors.TryPop(out int ancestor))
-                    if (!_explorer!.IsExpanded(ancestor))
-                        _explorer.Expand(ancestor, await ChildOrderAsync(scan.Entry(ancestor).FileIndex, cancellation));
-                if (!_explorer!.IsExpanded(folder.LinkIndex)) _explorer.Expand(folder.LinkIndex, await ChildOrderAsync(folder.FileIndex, cancellation));
-                SelectTree(folder.LinkIndex); SpaceTree.Focus();
-                await DisplayEntryAsync(folder.LinkIndex, cancellation);
-                _selectionIsGroup = true;
-                UpdateExplorerActions();
-            });
+                await BrowseAsync(async cancellation =>
+                {
+                    var ancestors = AncestorLinks(scan, folder.LinkIndex);
+                    while (ancestors.TryPop(out int ancestor))
+                        if (!_explorer!.IsExpanded(ancestor))
+                            _explorer.Expand(ancestor, await ChildOrderAsync(scan.Entry(ancestor).FileIndex, cancellation));
+                    if (!_explorer!.IsExpanded(folder.LinkIndex)) _explorer.Expand(folder.LinkIndex, await ChildOrderAsync(folder.FileIndex, cancellation));
+                    SelectTree(folder.LinkIndex);
+                    await DisplayEntryAsync(folder.LinkIndex, cancellation);
+                    _selectionIsGroup = true;
+                    UpdateExplorerActions();
+                    if (_compactExplorer) ListViewButton.IsChecked = true;
+                });
+                FocusExplorerContent();
+            }
         };
         return button;
     }
@@ -177,6 +181,7 @@ public partial class MainWindow
             if (button.ContextMenu is { } menu) { menu.IsOpen = false; menu.Items.Clear(); }
         SpaceMap.Children.Clear();
         SpaceMap.Weights = [];
+        UpdateMapLegend();
     }
 
     private void UpdateMapColors()
@@ -213,6 +218,22 @@ public partial class MainWindow
             }
         ProjectSwatch.Background = ColorFor(SpaceKind.Project); CacheSwatch.Background = ColorFor(SpaceKind.Cache);
         AgentSwatch.Background = ColorFor(SpaceKind.Agent); OtherSwatch.Background = ColorFor(SpaceKind.Other);
+        UpdateMapLegend();
+    }
+
+    private void UpdateMapLegend()
+    {
+        if (ProjectLegend is null) return;
+        var kinds = SpaceMap.Buttons.Select(button => (SpaceContribution)button.DataContext)
+            .Select(item => item.Children is { Count: > 0 } || item.Link == -2 ? SpaceKind.Other : item.Kind).ToHashSet();
+        // This key describes the current folder, including nested contributors
+        // whose tiles may be collapsed to fit. Its footprint is stable on resize.
+        // A neutral-only map needs no color key. High contrast uses one system color.
+        bool show = !SystemParameters.HighContrast && kinds.Any(kind => kind != SpaceKind.Other);
+        ProjectLegend.Visibility = show && kinds.Contains(SpaceKind.Project) ? Visibility.Visible : Visibility.Collapsed;
+        CacheLegend.Visibility = show && kinds.Contains(SpaceKind.Cache) ? Visibility.Visible : Visibility.Collapsed;
+        AgentLegend.Visibility = show && kinds.Contains(SpaceKind.Agent) ? Visibility.Visible : Visibility.Collapsed;
+        OtherLegend.Visibility = show && kinds.Contains(SpaceKind.Other) ? Visibility.Visible : Visibility.Collapsed;
     }
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {

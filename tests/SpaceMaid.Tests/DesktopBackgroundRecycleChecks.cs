@@ -62,6 +62,7 @@ public sealed partial class DesktopTests
             FinishTask(window.SetExplorerSizeBasisAsync(true));
             Assert.Equal(child, window.CurrentPath);
             Assert.Equal("Recycling first… · 1 queued", status.Text);
+            ((RadioButton)window.FindName("MapViewButton")).IsChecked = true;
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", "background-recycle.png"), 1020, 790);
             window.Activate();
             PumpUntil(() => window.IsActive, TimeSpan.FromSeconds(5));
@@ -105,6 +106,8 @@ public sealed partial class DesktopTests
             Directory.Move(waiting, original);
             Folder("waiting", 2048);
             var columns = (Button)window.FindName("ColumnsButton");
+            ((RadioButton)window.FindName("ListViewButton")).IsChecked = true;
+            window.UpdateLayout();
             Assert.True(columns.Focus());
             ReleaseMutationLease();
             Assert.Null(Finish(replaced));
@@ -358,6 +361,9 @@ public sealed partial class DesktopTests
 
         void CheckTreePosition()
         {
+            // A full-width compact list can fit the default columns. Make this
+            // fixture explicitly overflow to exercise horizontal restoration.
+            ((GridViewColumn)window.FindName("NameColumn")).Width = tree.ActualWidth + 200;
             for (int index = 0; index < 48; index++) Folder($"folder-{index:D2}", 1);
             window.SetScanTarget(fixture.Path);
             Assert.True(Finish(window.ScanCurrentPathAsync()));

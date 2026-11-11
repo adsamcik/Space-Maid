@@ -153,9 +153,19 @@
               <ContentControl x:Name="AppsContent" />
               <Border x:Name="AppsPlaceholder" Style="{StaticResource Card}"><TextBlock x:Name="AppsStatusText" Text="Loading Apps…" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" /></Border>
           </Grid>
-          <Grid x:Name="ExplorePanel" Grid.Row="1" PreviewKeyDown="Explore_KeyDown">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="1.1*" /></Grid.ColumnDefinitions>
-              <Border Style="{StaticResource Card}" Padding="0">
+          <Grid x:Name="ExplorePanel" Grid.Row="1" PreviewKeyDown="Explore_KeyDown" SizeChanged="Explorer_SizeChanged">
+              <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition x:Name="ListColumn" Width="*" MinWidth="340" /><ColumnDefinition x:Name="DividerColumn" Width="12" /><ColumnDefinition x:Name="MapColumn" Width="1.1*" MinWidth="340" /></Grid.ColumnDefinitions>
+              <StackPanel x:Name="CompactViews" Grid.ColumnSpan="3" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,8">
+                  <RadioButton x:Name="ListViewButton" Content="List" GroupName="ExplorerView" IsChecked="True" Checked="ExplorerView_Changed" Style="{StaticResource {x:Type ToggleButton}}" MinWidth="76" Margin="0,0,6,0" AutomationProperties.Name="Show file list" />
+                  <RadioButton x:Name="MapViewButton" Content="Map" GroupName="ExplorerView" Checked="ExplorerView_Changed" Style="{StaticResource {x:Type ToggleButton}}" MinWidth="76" AutomationProperties.Name="Show treemap" />
+                  <ComboBox x:Name="CompactSizeBasisSelector" Margin="16,0,0,0" MinWidth="120" AutomationProperties.Name="Map size basis"
+                            SelectedIndex="{Binding SelectedIndex, ElementName=SizeBasisSelector, Mode=TwoWay}" IsEnabled="{Binding IsEnabled, ElementName=SizeBasisSelector}" ToolTip="{Binding ToolTip, ElementName=SizeBasisSelector}">
+                      <ComboBox.Style><Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsChecked, ElementName=MapViewButton}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ComboBox.Style>
+                      <ComboBoxItem Content="Size on disk" /><ComboBoxItem Content="File size" />
+                  </ComboBox>
+              </StackPanel>
+              <Border x:Name="ListPane" Grid.Row="1" Grid.RowSpan="2" Style="{StaticResource Card}" Padding="0">
                   <Grid>
                       <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                       <local:ExplorerListView x:Name="SpaceTree" Style="{DynamicResource {x:Type ListView}}" SelectionMode="Extended" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
@@ -237,19 +247,31 @@
                       </DockPanel>
                   </Grid>
               </Border>
-              <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">
-                  <Grid x:Name="MapLayout">
-                      <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+              <GridSplitter x:Name="ExplorerDivider" Grid.Row="1" Grid.RowSpan="2" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                            ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" KeyboardIncrement="24" DragIncrement="1" Background="Transparent"
+                            ToolTip="Drag to resize the list and map. Use Left and Right arrow keys when focused." AutomationProperties.Name="Resize file list and treemap">
+                  <GridSplitter.Template><ControlTemplate TargetType="GridSplitter">
+                      <Border Background="{TemplateBinding Background}"><Border x:Name="Grip" Width="3" Height="40" CornerRadius="2" Background="{DynamicResource WindowForeground}" Opacity="0.3" /></Border>
+                      <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Grip" Property="Opacity" Value="0.8" /></Trigger>
+                          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Grip" Property="Opacity" Value="1" /><Setter TargetName="Grip" Property="Width" Value="5" /></Trigger>
+                      </ControlTemplate.Triggers>
+                  </ControlTemplate></GridSplitter.Template>
+              </GridSplitter>
+              <Border x:Name="MapPane" Grid.Row="1" Grid.RowSpan="2" Grid.Column="2" Style="{StaticResource Card}" Padding="0" BorderThickness="0" />
+                  <Grid x:Name="MapLayout" Grid.Row="1" Grid.Column="2" Margin="12">
+                      <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                       <local:TreemapPanel x:Name="SpaceMap" MinHeight="120" ClipToBounds="True" AutomationProperties.Name="Framed folder treemap with one nested child level. Choose a contributor to see its files." />
                       <TextBlock x:Name="MapHint" Text="Select a folder." HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.65" Margin="22" />
-                      <WrapPanel Grid.Row="1" Margin="0,8,0,0" Opacity="0.75">
-                          <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="ProjectSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Projects &amp; data" FontSize="11" /></StackPanel>
-                          <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="CacheSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Build &amp; cache" FontSize="11" /></StackPanel>
-                          <StackPanel Orientation="Horizontal" Margin="0,0,12,5"><Border x:Name="AgentSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Agent files" FontSize="11" /></StackPanel>
-                          <StackPanel Orientation="Horizontal" Margin="0,0,0,5"><Border x:Name="OtherSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Other" FontSize="11" /></StackPanel>
-                          <TextBlock x:Name="MapBasis" Text="Area = size on disk" FontSize="11" Margin="12,0,0,5" />
+                      <WrapPanel Grid.Row="1" Margin="0,8,0,0" AutomationProperties.Name="Size basis and categories in this folder" ToolTip="Colors identify categories in this folder, including its nested entries.">
+                          <TextBlock x:Name="MapBasis" Text="Area = size on disk" FontSize="12" Margin="0,0,16,0" />
+                          <StackPanel x:Name="ProjectLegend" Visibility="Collapsed" Orientation="Horizontal" Margin="0,0,12,0"><Border x:Name="ProjectSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Projects &amp; data" FontSize="12" /></StackPanel>
+                          <StackPanel x:Name="CacheLegend" Visibility="Collapsed" Orientation="Horizontal" Margin="0,0,12,0"><Border x:Name="CacheSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Build &amp; cache" FontSize="12" /></StackPanel>
+                          <StackPanel x:Name="AgentLegend" Visibility="Collapsed" Orientation="Horizontal" Margin="0,0,12,0"><Border x:Name="AgentSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Agent files" FontSize="12" /></StackPanel>
+                          <StackPanel x:Name="OtherLegend" Visibility="Collapsed" Orientation="Horizontal"><Border x:Name="OtherSwatch" Width="10" Height="10" CornerRadius="2" Margin="0,0,5,0" /><TextBlock Text="Other" FontSize="12" /></StackPanel>
                       </WrapPanel>
-                      <StackPanel Grid.Row="2" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
+                  </Grid>
+                      <StackPanel Grid.Row="2" Grid.Column="2" x:Name="EntryDetail" Visibility="Collapsed" Margin="12,0,12,12" AutomationProperties.LiveSetting="Polite">
                           <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,7" />
                           <TextBlock x:Name="SelectionTitle" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,0,6" />
                           <WrapPanel x:Name="SelectionActions" Margin="0,0,0,4">
@@ -261,12 +283,14 @@
                           <StackPanel x:Name="SelectionDetails">
                           <TextBox x:Name="SelectedEntryPath" Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
                           <TextBlock x:Name="EntryTypeText" Text="{Binding TypeDescription}" TextWrapping="Wrap" Opacity="0.7" FontSize="12" Margin="0,4,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding TypeDescription}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-                          <WrapPanel Margin="0,4,0,0"><TextBlock Text="Size on disk" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="File size" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
+                          <WrapPanel Margin="0,4,0,0">
+                              <StackPanel Orientation="Horizontal" Margin="0,0,16,0"><TextBlock Text="Size on disk" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" /></StackPanel>
+                              <StackPanel Orientation="Horizontal" Margin="0,0,16,0"><TextBlock Text="File size" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" /></StackPanel>
+                              <StackPanel Orientation="Horizontal"><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></StackPanel>
+                          </WrapPanel>
                           <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.8" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
                           </StackPanel>
                       </StackPanel>
-                  </Grid>
-              </Border>
           </Grid>
           <Border x:Name="PreliminaryPanel" Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed">
               <Grid>

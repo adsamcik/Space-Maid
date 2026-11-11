@@ -185,10 +185,11 @@ public partial class MainWindow
     {
         if (!_updatingSizeBasis && _explorer is not null && SizeBasisSelector.SelectedIndex >= 0)
         {
-            bool hadFocus = SizeBasisSelector.IsKeyboardFocusWithin;
+            var focusTarget = CompactSizeBasisSelector.IsKeyboardFocusWithin ? CompactSizeBasisSelector : SizeBasisSelector;
+            bool hadFocus = focusTarget.IsKeyboardFocusWithin;
             await SetExplorerSizeBasisAsync(SizeBasisSelector.SelectedIndex == 1);
-            if (hadFocus && !_closing && SizeBasisSelector.IsVisible && SizeBasisSelector.IsEnabled)
-                SizeBasisSelector.Focus();
+            if (hadFocus && !_closing && focusTarget.IsVisible && focusTarget.IsEnabled)
+                focusTarget.Focus();
         }
     }
 
@@ -282,6 +283,13 @@ public partial class MainWindow
     private void RestoreExplorerFocus(ExplorerFocus? focus)
     {
         if (focus is null || !IsActive || ExploreTab.IsChecked != true) return;
+        if (_compactExplorer && MapViewButton.IsChecked == true)
+        {
+            var visibleTile = SpaceMap.Buttons.FirstOrDefault(button => button.IsVisible
+                && button.DataContext is SpaceContribution item && item.Path == focus.Path);
+            if (visibleTile?.Focus() != true) FocusExplorerContent();
+            return;
+        }
         if (focus is { MapTile: true, Path: { } mapPath })
         {
             var tile = SpaceMap.Buttons.FirstOrDefault(button => button.DataContext is SpaceContribution { Link: >= 0 } item

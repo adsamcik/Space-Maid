@@ -175,6 +175,7 @@ public partial class MainWindow
         if (_closing || _work is not null || _browsing || _openingPath) return false;
         _driveRestoreAttempted = true;
         _openingPath = true;
+        bool opened = false;
         try
         {
             string path; int? link; var scan = _snapshot;
@@ -205,10 +206,7 @@ public partial class MainWindow
                 await NavigateToEntryAsync(destination);
             else
             { SetScanTarget(path); await ScanCurrentPathAsync(); }
-            // Focusing the list can restore its previously focused row and
-            // navigate away again. Focus the chosen row instead.
-            if (SpaceTree.SelectedItem is { } selected
-                && SpaceTree.ItemContainerGenerator.ContainerFromItem(selected) is ListBoxItem container) container.Focus();
+            opened = true;
             return true;
         }
         finally
@@ -218,6 +216,7 @@ public partial class MainWindow
             {
                 UpdatePathAvailability(_work is not null);
                 if (_editingPath) PathEditor.Focus();
+                else if (opened) FocusExplorerContent();
                 DrainExplorerRecheck();
             }
         }

@@ -121,6 +121,12 @@ public sealed partial class DesktopTests
                     CheckSidebar(window, app, FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "explorer-layout")
+                {
+                    BeginWorkflow("Resizable explorer panes and compact list/map navigation");
+                    CheckExplorerLayout(window, app, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cloud")
                 {
                     BeginWorkflow("Explorer allocated and logical size");
@@ -804,11 +810,13 @@ public sealed partial class DesktopTests
 #pragma warning restore WPF0001
                 Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 305);
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+                ((RadioButton)window.FindName("MapViewButton")).IsChecked = true;
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", "explorer-compact.png"), 1020, 790);
                 Assert.InRange(window.ActualWidth, 1019, 1021);
                 Assert.True(((FrameworkElement)window.Content).RenderSize.Width <= 1020, "Compact rendering used the previous window width.");
                 var detailPanel = (StackPanel)window.FindName("EntryDetail");
                 Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The treemap overlaps its selected-entry details.");
+                ((RadioButton)window.FindName("ListViewButton")).IsChecked = true;
 
                 BeginWorkflow("Explorer visualization and virtualization");
                 SetStage("checking wide-folder UI virtualization");
@@ -971,13 +979,16 @@ public sealed partial class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-{theme}.png"), 1220, 910);
                     Assert.InRange(((FrameworkElement)window.FindName("ScanHeader")).ActualHeight, 100, 130);
                     AssertMapFillsPane(window, map);
+                    ((RadioButton)window.FindName("MapViewButton")).IsChecked = true;
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-compact-{theme}.png"), 1020, 790);
                     AssertMapFillsPane(window, map);
                     Assert.True(map.TranslatePoint(new Point(0, map.ActualHeight), (UIElement)window.Content).Y
                         <= detailPanel.TranslatePoint(new Point(), (UIElement)window.Content).Y + 1, "The nested map overlaps entry details.");
                     var exploreLayout = (Grid)window.FindName("ExplorePanel");
+                    window.Width = 1220;
+                    window.UpdateLayout();
                     exploreLayout.ColumnDefinitions[0].Width = new(2, GridUnitType.Star);
-                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-narrow-{theme}.png"), 1020, 790);
+                    Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"framed-folders-narrow-{theme}.png"), 1220, 910);
                     var parentBand = map.Buttons.Single(button => ((SpaceContribution)button.DataContext).Name == "Github");
                     var title = Assert.IsType<Grid>(parentBand.Content);
                     var name = (TextBlock)title.Children[0]; var facts = (TextBlock)title.Children[1];
@@ -1083,6 +1094,8 @@ public sealed partial class DesktopTests
                 CheckFirstPass(window, app, fixture.Path, FindRepository());
                 CheckSidebar(window, app, FindRepository());
                 CheckExtensionWorkspace(window, app, FindRepository(), extensionFiles);
+                BeginWorkflow("Resizable explorer panes and compact list/map navigation");
+                CheckExplorerLayout(window, app, FindRepository());
                 BeginWorkflow("Cloud drive browsing and online-only review");
                 CheckCloudDrives(window, app, FindRepository());
                 BeginWorkflow("Agent access sharing and human review");
