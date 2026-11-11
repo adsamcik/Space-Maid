@@ -110,7 +110,7 @@ public partial class MainWindow
             }
             if (_closing || work.IsCancellationRequested) return;
             if (bin.Items == 0 && leftovers?.Entries.Count is not > 0 && leftoverNotice is null)
-            { message = emptyMessage + " No files with missing Recycle Bin records found."; return; }
+            { message = emptyMessage + " No files with missing or corrupted Recycle Bin records found."; return; }
 
             var binLink = string.Equals(scannedVolume, bin.VolumeId, StringComparison.OrdinalIgnoreCase)
                 ? scan?.FindEntry(Path.Combine(root, "$Recycle.Bin")) ?? scan?.FindEntry(Path.Combine(root, "Recycler")) : null;
@@ -128,12 +128,12 @@ public partial class MainWindow
                 StatusText.Text = "Emptying Recycle Bin on " + bin.RootPath + "…";
                 started = true;
                 var result = await operations.EmptyRecycleBinAsync(bin, new WindowInteropHelper(this).Handle, work.Token, log.Record);
-                message = result.Remaining.Items == 0 ? "Windows-listed items cleared."
-                    : $"Windows still lists {result.Remaining.Items:N0} items in your Recycle Bin.";
+                message = result.FailureHResult is not null ? "Windows could not finish its cleanup. See Details."
+                    : result.Remaining.Items == 0 ? "Windows-listed items cleared." : "Windows did not clear every listed item.";
                 log.Record("recycle-bin-result", result);
-                if (result.Cancelled || result.Remaining.Items > 0)
+                if (result.Cancelled)
                 {
-                    if (result.Cancelled) message = "Cleanup cancelled. " + message;
+                    message = "Cleanup cancelled. " + message;
                     if (approved.Length > 0) message += " Untracked files were not deleted.";
                     return;
                 }

@@ -5,7 +5,10 @@ using SpaceMaid.Core.IO;
 namespace SpaceMaid.App;
 
 internal sealed record RecycleBinSnapshot(string RootPath, string VolumeId, long Bytes, long Items);
-internal sealed record RecycleBinCleanupResult(bool Cancelled, RecycleBinSnapshot Remaining);
+internal sealed record RecycleBinCleanupResult(bool Cancelled, RecycleBinSnapshot Remaining)
+{
+    public int? FailureHResult { get; init; }
+}
 
 // Empty/null paths mean every drive to Windows and must never reach the Shell.
 internal sealed class RecycleBinService
@@ -86,13 +89,14 @@ internal sealed class RecycleBinService
                 int result = _empty(owner, current.RootPath);
                 diagnostic?.Invoke("recycle-bin-native-finish", new { current.RootPath, HResult = $"0x{result:X8}" });
                 bool cancelled = result is unchecked((int)0x800704C7) or unchecked((int)0x80270000) or unchecked((int)0x80270001);
-                if (!cancelled) Marshal.ThrowExceptionForHR(result);
                 // Cancellation cannot roll back items already permanently deleted.
                 var remaining = Query(current.RootPath);
                 if (!remaining.VolumeId.Equals(confirmed.VolumeId, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Drive changed. Cleanup results could not be checked.");
                 diagnostic?.Invoke("recycle-bin-checked", remaining);
-                completion.SetResult(new(cancelled, remaining));
+                // Native failure does not revoke separately reviewed leftover
+                // consent. Keep cancellation and volume/consent failures distinct.
+                completion.SetResult(new(cancelled, remaining) { FailureHResult = !cancelled && result < 0 ? result : null });
             }
             catch (Exception error) { completion.SetException(error); }
         }) { IsBackground = true, Name = "Space Maid emptying Recycle Bin" };

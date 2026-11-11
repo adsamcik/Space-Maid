@@ -29,7 +29,7 @@ public sealed partial class DiskAccess
 
     private void DeleteReviewedTree(string path, int rootLink, ulong volume, ScanSnapshot current,
         CancellationToken token, Action? mutationStarted, Action<SafeFileHandle, FileIdentity>? verifyRevision = null,
-        LeftoverDirectoryLease? recycleBin = null)
+        LeftoverDirectoryLease? recycleBin = null, Action? verifyRecycleRecord = null)
     {
         // A leftover review already holds every ancestor of this exact account
         // directory. Only its captured $R root gets the protected-name exception.
@@ -132,7 +132,8 @@ public sealed partial class DiskAccess
                 if (recycleBin is not null)
                 {
                     CheckBinNameLookup(recycleBin.Last);
-                    RequireMissingMate(recycleBin.Path, Path.GetFileName(path));
+                    if (verifyRecycleRecord is null) RequireMissingMate(recycleBin.Path, Path.GetFileName(path));
+                    else verifyRecycleRecord();
                 }
                 if (index == entries.Count - 1) mutationStarted?.Invoke();
                 token.ThrowIfCancellationRequested();

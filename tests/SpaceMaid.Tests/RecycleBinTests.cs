@@ -105,6 +105,21 @@ public sealed class RecycleBinTests
     }
 
     [Fact]
+    public async Task NativeFailureKeepsCheckedRemainingStateDistinctFromCancellationAndVolumeFailure()
+    {
+        const int corruption = unchecked((int)0x80070570);
+        string volume = "fixture";
+        var service = new RecycleBinService(_ => volume, _ => (4096, 1), (_, _) => corruption);
+        var bin = await service.QueryAsync(@"G:\");
+        var result = await service.EmptyAsync(bin, 0, default);
+        Assert.False(result.Cancelled);
+        Assert.Equal(corruption, result.FailureHResult);
+        Assert.Equal(1, result.Remaining.Items);
+        var replaced = new RecycleBinService(_ => volume, _ => (4096, 1), (_, _) => { volume = "replacement"; return corruption; });
+        await Assert.ThrowsAsync<IOException>(() => replaced.EmptyAsync(bin, 0, default));
+    }
+
+    [Fact]
     public async Task NativeSizeQueryIsReadOnlyOnTheSystemDrive()
     {
         string root = Path.GetPathRoot(Environment.SystemDirectory)!;

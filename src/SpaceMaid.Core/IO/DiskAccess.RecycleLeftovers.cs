@@ -32,7 +32,7 @@ public sealed partial class DiskAccess
         using (directories)
         {
             int budget = 250_000;
-            return ReadUnmatchedLeftoverNames(directories.Last, ref budget, token).Any();
+            return ReadUnmatchedLeftoverNames(bin, directories.Last, ref budget, token).Any();
         }
     }
 
@@ -54,11 +54,12 @@ public sealed partial class DiskAccess
         using var directories = PinLeftoverDirectories(bin, destination: false, token);
         var scope = InspectPermanentDeleteHandle(directories.Last);
         int budget = 250_000;
-        var names = ReadUnmatchedLeftoverNames(directories.Last, ref budget, token);
+        var names = ReadUnmatchedLeftoverNames(bin, directories.Last, ref budget, token);
         var rows = new List<RecycleLeftover>();
         long cutoff = changedBefore.ToFileTimeUtc();
-        foreach (var item in names)
+        foreach (var candidate in names)
         {
+            var item = candidate.Payload;
             token.ThrowIfCancellationRequested();
             var record = item.Record;
             long changed = item.Changed;
@@ -68,6 +69,9 @@ public sealed partial class DiskAccess
             bool canRecover = false;
             try
             {
+                if (candidate.Issue is { } issue) throw new IOException(issue);
+                if (candidate.DamagedRecord is { } mate && (mate.Changed <= 0 || mate.Changed > cutoff))
+                    throw new IOException("Recycle Bin record recently changed. Review again after 24 hours.");
                 string path = Path.Join(bin, item.Name);
                 using var handle = OpenPermanentDeleteHandle(path, record.IsDirectory ? 0x81u : 0x80u, 3);
                 var live = InspectPermanentDeleteHandle(handle);
@@ -90,7 +94,7 @@ public sealed partial class DiskAccess
                 }
             }
             catch (Exception error) when (IsLeftoverFailure(error)) { blocked = error.Message; }
-            rows.Add(new(item.Name, record, changed, contents, revisions, canRecover, blocked));
+            rows.Add(new(item.Name, record, changed, contents, revisions, canRecover, blocked) { DamagedRecord = candidate.DamagedRecord });
         }
         return new(this, bin, scope.Identity, scope.Volume, rows.AsReadOnly());
     }
@@ -103,6 +107,8 @@ public sealed partial class DiskAccess
 
         internal FileRecord Record { get; }
         internal long Changed { get; }
+        internal RecycleRecordSnapshot? DamagedRecord { get; init; }
+        public bool HasCorruptedRecord => DamagedRecord is not null;
         internal ScanSnapshot? Contents { get; }
         internal IReadOnlyDictionary<FileIdentity, long> Revisions { get; }
         public string Name { get; }
@@ -136,7 +142,7 @@ public sealed partial class DiskAccess
         public string Path { get; }
         public IReadOnlyList<RecycleLeftover> Entries { get; }
 
-        // Delete only the captured, explicitly approved orphan payloads. Hold the
+        // Delete only the captured, explicitly approved leftover payloads. Hold the
         // account namespace throughout; never move failures to a recovery folder.
         public void Delete(IReadOnlyList<RecycleLeftover> approved,
             IProgress<RecycleLeftoverResult> results, CancellationToken token)
@@ -155,11 +161,8 @@ public sealed partial class DiskAccess
                 bool attempted = false;
                 try
                 {
-                    void CheckMate()
-                    {
-                        _files.CheckBinNameLookup(source.Last);
-                        _files.RequireMissingMate(Path, item.Name);
-                    }
+                    using var mate = _files.PinCorruptRecycleRecord(Path, item, live.Volume, token);
+                    void CheckMate() => _files.CheckRecycleRecord(source, item, mate);
                     CheckMate();
                     string path = System.IO.Path.Join(Path, item.Name);
                     if (item.IsDirectory)
@@ -171,7 +174,7 @@ public sealed partial class DiskAccess
                                 long expected = identity == item.Record.Identity ? item.Changed : item.Revisions.GetValueOrDefault(identity);
                                 if (expected <= 0 || _files.ReadLeftoverChangeTime(handle) != expected)
                                     throw new IOException("Folder contents changed after review.");
-                            }, source);
+                            }, source, CheckMate);
                     }
                     else
                     {
@@ -188,6 +191,9 @@ public sealed partial class DiskAccess
                         attempted = true;
                         _files.MarkPermanentDelete(handle);
                     }
+                    // Keep the record if payload deletion was incomplete. Remove
+                    // it last through the same exclusive handle checked above.
+                    if (mate is not null) { CheckMate(); token.ThrowIfCancellationRequested(); _files.MarkPermanentDelete(mate); }
                     results.Report(new(item.Name, true, null, null) { MutationAttempted = attempted });
                 }
                 catch (Exception error) when (IsLeftoverFailure(error) || error is OperationCanceledException)
@@ -226,14 +232,11 @@ public sealed partial class DiskAccess
                 token.ThrowIfCancellationRequested();
                 string name = item.Name.Length <= 247 ? "Recovered-" + item.Name[2..] : "R-" + item.Name[2..];
                 string staged = System.IO.Path.Join(destination, name);
-                bool moved = false;
+                bool moved = false, payloadDeleted = false, deletionAttempted = false;
                 try
                 {
-                    void CheckMate()
-                    {
-                        _files.CheckBinNameLookup(source.Last);
-                        _files.RequireMissingMate(Path, item.Name);
-                    }
+                    using var mate = _files.PinCorruptRecycleRecord(Path, item, live.Volume, token);
+                    void CheckMate() => _files.CheckRecycleRecord(source, item, mate);
                     CheckMate();
                     string sourcePath = System.IO.Path.Join(Path, item.Name);
                     long stagedRevision = 0;
@@ -261,23 +264,26 @@ public sealed partial class DiskAccess
                             _files.VerifyPermanentDeleteStreams(handle, directory: false);
                             CheckMate();
                             token.ThrowIfCancellationRequested();
+                            deletionAttempted = true;
                             _files.MarkPermanentDelete(handle);
                         }
                         else if (delete)
                             stagedRevision = _files.ReadLeftoverChangeTime(handle);
                     }
                     if (delete && item.Contents is { } tree)
-                        _files.DeleteReviewedTree(staged, -1, live.Volume, tree, token, CheckMate, (handle, identity) =>
+                        _files.DeleteReviewedTree(staged, -1, live.Volume, tree, token, () => { CheckMate(); deletionAttempted = true; }, (handle, identity) =>
                         {
                             long expected = identity == item.Record.Identity ? stagedRevision : item.Revisions.GetValueOrDefault(identity);
                             if (expected <= 0 || _files.ReadLeftoverChangeTime(handle) != expected)
                                 throw new IOException("Folder contents changed after review.");
                         });
+                    payloadDeleted = delete;
+                    if (mate is not null) { CheckMate(); token.ThrowIfCancellationRequested(); _files.MarkPermanentDelete(mate); }
                     results.Report(new(item.Name, true, delete ? null : staged, null));
                 }
                 catch (Exception error) when (IsLeftoverFailure(error) || error is OperationCanceledException)
                 {
-                    results.Report(new(item.Name, false, moved ? staged : null, error.Message));
+                    results.Report(new(item.Name, false, moved && !payloadDeleted ? staged : null, error.Message) { MutationAttempted = deletionAttempted });
                     token.ThrowIfCancellationRequested();
                 }
             }
@@ -374,14 +380,42 @@ public sealed partial class DiskAccess
     }
 
     private sealed record LeftoverName(string Name, FileRecord Record, long Changed);
+    private sealed record LeftoverCandidate(LeftoverName Payload, RecycleRecordSnapshot? DamagedRecord = null, string? Issue = null);
 
-    private IEnumerable<LeftoverName> ReadUnmatchedLeftoverNames(SafeFileHandle directory, ref int budget, CancellationToken token)
+    private IEnumerable<LeftoverCandidate> ReadUnmatchedLeftoverNames(string path, SafeFileHandle directory, ref int budget, CancellationToken token)
     {
         CheckBinNameLookup(directory);
         var names = ReadLeftoverNames(directory, ref budget, token);
-        var allNames = names.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return names.Where(item => item.Name.Length > 2 && item.Name.StartsWith("$R", StringComparison.OrdinalIgnoreCase)
-            && SafeLeftoverName(item.Name) && !allNames.Contains(MateName(item.Name)));
+        var allNames = names.ToDictionary(item => item.Name, StringComparer.OrdinalIgnoreCase);
+        ulong volume = InspectPermanentDeleteHandle(directory).Volume;
+        return FindCandidates();
+
+        IEnumerable<LeftoverCandidate> FindCandidates()
+        {
+            long readBytes = 0;
+            foreach (var item in names)
+            {
+                token.ThrowIfCancellationRequested();
+                if (item.Name.Length <= 2 || !item.Name.StartsWith("$R", StringComparison.OrdinalIgnoreCase) || !SafeLeftoverName(item.Name)) continue;
+                if (!allNames.TryGetValue(MateName(item.Name), out var mate)) { yield return new(item); continue; }
+                readBytes += Math.Min(mate.Record.LogicalBytes, MaximumRecycleRecordBytes);
+                if (readBytes > 16 * 1024 * 1024) throw new IOException("Recycle Bin record checks reached their 16 MiB limit. No cleanup was approved.");
+                RecycleRecordSnapshot? damaged = null;
+                string? issue = null;
+                try
+                {
+                    var captured = ReadRecycleRecord(System.IO.Path.Join(path, mate.Name), mate, volume, token);
+                    switch (InspectRecycleRecord(captured.Bytes))
+                    {
+                        case RecycleRecordState.Valid: continue;
+                        case RecycleRecordState.Corrupt: damaged = captured; break;
+                        default: issue = "Unrecognized Recycle Bin record format. Entry kept."; break;
+                    }
+                }
+                catch (Exception error) when (IsLeftoverFailure(error)) { issue = "Recycle Bin record could not be verified. " + error.Message; }
+                yield return new(item, damaged, issue);
+            }
+        }
     }
 
     private List<LeftoverName> ReadLeftoverNames(SafeFileHandle directory, ref int budget, CancellationToken token)

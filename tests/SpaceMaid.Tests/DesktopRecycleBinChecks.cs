@@ -131,12 +131,14 @@ public sealed partial class DesktopTests
         string root = Path.GetPathRoot(window.CurrentPath)!;
         long items = 3, bytes = GiB(6); int emptyCalls = 0;
         int leftoverChecks = 0;
-        bool cancelNative = false, failProbe = false, recentReview = false;
+        bool cancelNative = false, failProbe = false, recentReview = false, corruptNative = false, partialNative = false;
         var roots = new List<string>();
         var operations = new FileOperations(recycleBins: new(path => "fixture-" + path, _ => (bytes, items), (_, path) =>
         {
             roots.Add(path); emptyCalls++;
             if (cancelNative) return unchecked((int)0x800704C7);
+            if (corruptNative) return unchecked((int)0x80070570);
+            if (partialNative) return 0;
             bytes = 0; items = 0; return 0;
         }, (files, _, token) =>
         {
@@ -250,9 +252,28 @@ public sealed partial class DesktopTests
         Assert.True(File.Exists(payload));
         Assert.Contains("1 untracked entry remains", ((TextBlock)window.FindName("StatusText")).Text);
         File.Delete(Path.Join(fixture.Path, "$Ileftover.txt"));
+        foreach (string nativeState in new[] { "empty", "failed", "partial" })
+        {
+            File.WriteAllText(payload, "Corrupt-record fixture payload");
+            File.WriteAllBytes(Path.Join(fixture.Path, "$Ileftover.txt"), RecycleRecordTests.ValidRecord()[..25]);
+            items = nativeState == "empty" ? 0 : 3; bytes = items == 0 ? 0 : GiB(6);
+            corruptNative = nativeState == "failed"; partialNative = nativeState == "partial";
+            RunConfirmation(accept: false, untracked: true, corrupted: true);
+            Assert.True(File.Exists(payload));
+            Assert.True(File.Exists(Path.Join(fixture.Path, "$Ileftover.txt")));
+            RunConfirmation(accept: true, untracked: true, corrupted: true);
+            Assert.False(File.Exists(payload));
+            Assert.False(File.Exists(Path.Join(fixture.Path, "$Ileftover.txt")));
+            Assert.Contains("1 untracked entry deleted", ((TextBlock)window.FindName("StatusText")).Text);
+            if (corruptNative) Assert.Contains("Windows could not finish", ((TextBlock)window.FindName("StatusText")).Text);
+        }
+        corruptNative = partialNative = false;
+        File.WriteAllText(payload, "Keep after native cancellation");
+        File.WriteAllBytes(Path.Join(fixture.Path, "$Ileftover.txt"), []);
         items = 3; bytes = GiB(6); cancelNative = true;
-        RunConfirmation(accept: true, untracked: true);
+        RunConfirmation(accept: true, untracked: true, corrupted: true);
         Assert.True(File.Exists(payload));
+        Assert.True(File.Exists(Path.Join(fixture.Path, "$Ileftover.txt")));
         Assert.Contains("Untracked files were not deleted", ((TextBlock)window.FindName("StatusText")).Text);
         cancelNative = false; items = 0; bytes = 0; recentReview = true;
         RunConfirmation(accept: false, notice: "24 hours");
@@ -268,7 +289,7 @@ public sealed partial class DesktopTests
         Assert.Equal(callsBeforeNavigation, emptyCalls); // An old menu cannot empty a newly selected drive.
 
         void RunConfirmation(bool accept, bool cancelWork = false, MenuItem? menuItem = null,
-            string? scannedSize = null, bool untracked = false, bool includeLeftovers = true, Action? afterReview = null, string? notice = null)
+            string? scannedSize = null, bool untracked = false, bool includeLeftovers = true, Action? afterReview = null, string? notice = null, bool corrupted = false)
         {
             Exception? failure = null;
             bool seen = false;
@@ -288,6 +309,7 @@ public sealed partial class DesktopTests
                     Assert.Contains($"{expectedItems} items listed by Windows", ((TextBlock)dialog.FindName("BinScope")).Text);
                     Assert.Equal(expectedSize, ((TextBlock)dialog.FindName("BinSize")).Text);
                     Assert.Contains(expectedItems > 0 || untracked ? "cannot be undone" : "Review leftovers", ((TextBlock)dialog.FindName("Explanation")).Text);
+                    if (corrupted) Assert.Contains("corrupted", Assert.IsType<TextBlock>(((StackPanel)dialog.FindName("LeftoverSummary")).Children[1]).Text);
                     if (scannedSize is not null) Assert.Equal(scannedSize, ((TextBlock)dialog.FindName("ScanSize")).Text);
                     Assert.Equal(untracked ? Visibility.Visible : Visibility.Collapsed, ((StackPanel)dialog.FindName("LeftoverSummary")).Visibility);
                     var include = (CheckBox)dialog.FindName("IncludeLeftovers");
@@ -307,7 +329,7 @@ public sealed partial class DesktopTests
                     foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
                     {
                         app.ThemeMode = theme;
-                        string state = untracked ? "untracked" : notice is not null ? recentReview ? "kept" : "unchecked" : "listed";
+                        string state = corrupted ? "corrupted" : untracked ? "untracked" : notice is not null ? recentReview ? "kept" : "unchecked" : "listed";
                         Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", $"empty-recycle-bin-{state}-{theme}.png"), 500, (int)Math.Ceiling(dialog.ActualHeight));
                     }
 #pragma warning restore WPF0001

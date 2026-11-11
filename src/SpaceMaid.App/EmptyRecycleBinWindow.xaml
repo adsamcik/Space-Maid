@@ -16,7 +16,7 @@
             <CheckBox x:Name="IncludeLeftovers" IsChecked="True" Checked="Selection_Changed" Unchecked="Selection_Changed">
                 <TextBlock x:Name="LeftoverSize" TextWrapping="Wrap" />
             </CheckBox>
-            <TextBlock Text="Files with missing Recycle Bin records. Original names may be unavailable."
+            <TextBlock Text="Files with missing or corrupted Recycle Bin records. Original names may be unavailable."
                        TextWrapping="Wrap" FontSize="13" Margin="26,4,0,0" />
         </StackPanel>
         <TextBlock x:Name="LeftoverNotice" Visibility="Collapsed" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,12" />

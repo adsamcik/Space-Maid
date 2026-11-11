@@ -53,7 +53,7 @@ public sealed class RecycleLeftoverTests
         Assert.False(files.HasRecycleLeftoversAt(bin, default));
         string folder = Directory.CreateDirectory(Path.Join(bin, "$Rpaired")).FullName;
         File.WriteAllText(Path.Join(folder, "$Runmatched.txt"), "part of the paired folder");
-        File.WriteAllText(Path.Join(bin, "$ipaired"), "record");
+        File.WriteAllBytes(Path.Join(bin, "$ipaired"), RecycleRecordTests.ValidRecord());
         File.WriteAllText(Path.Join(bin, "desktop.ini"), "metadata");
         Assert.False(files.HasRecycleLeftoversAt(bin, default));
 
@@ -72,7 +72,7 @@ public sealed class RecycleLeftoverTests
         string bin = Directory.CreateDirectory(Path.Join(fixture.Path, "account")).FullName;
         string recovery = Directory.CreateDirectory(Path.Join(fixture.Path, "recovery")).FullName;
         File.WriteAllText(Path.Join(bin, "$Rpaired.txt"), "paired");
-        File.WriteAllText(Path.Join(bin, "$ipaired.txt"), "index");
+        File.WriteAllBytes(Path.Join(bin, "$ipaired.txt"), RecycleRecordTests.ValidRecord());
         File.WriteAllText(Path.Join(bin, "$Rkeep.txt"), "keep");
         File.WriteAllText(Path.Join(bin, "$Rrecover.txt"), "recover");
         File.WriteAllText(Path.Join(bin, "$Rdelete.txt"), "delete");
@@ -162,7 +162,7 @@ public sealed class RecycleLeftoverTests
         string other = Directory.CreateDirectory(Path.Join(fixture.Path, "$Recycle.Bin", "S-other")).FullName;
         File.WriteAllText(Path.Join(other, "$Rother"), "keep other account");
         File.WriteAllText(Path.Join(bin, "$Rpaired"), "keep paired");
-        File.WriteAllText(Path.Join(bin, "$Ipaired"), "record");
+        File.WriteAllBytes(Path.Join(bin, "$Ipaired"), RecycleRecordTests.ValidRecord());
         File.WriteAllText(Path.Join(bin, "$Rkeep"), "keep unapproved");
         File.WriteAllText(Path.Join(bin, "$Rfile"), "delete");
         string nested = Directory.CreateDirectory(Path.Join(bin, "$Rfolder", "nested")).FullName;
@@ -175,7 +175,7 @@ public sealed class RecycleLeftoverTests
         Assert.False(File.Exists(Path.Join(bin, "$Rfile")));
         Assert.False(Directory.Exists(Path.Join(bin, "$Rfolder")));
         Assert.Equal("keep paired", File.ReadAllText(Path.Join(bin, "$Rpaired")));
-        Assert.Equal("record", File.ReadAllText(Path.Join(bin, "$Ipaired")));
+        Assert.Equal(RecycleRecordTests.ValidRecord(), File.ReadAllBytes(Path.Join(bin, "$Ipaired")));
         Assert.Equal("keep unapproved", File.ReadAllText(Path.Join(bin, "$Rkeep")));
         Assert.Equal("keep other account", File.ReadAllText(Path.Join(other, "$Rother")));
     }

@@ -72,7 +72,7 @@ public partial class RecycleLeftoversWindow : Window
             .OrderByDescending(group => group.Kind == RecycleLeftoverKind.NuGetPackages)
             .ThenByDescending(group => group.KnownTool).ThenByDescending(group => group.Bytes).ToArray();
         GroupList.SelectedIndex = _rows.Length == 0 ? -1 : 0;
-        _message = _rows.Length == 0 ? "No unmatched entries found." : $"{_rows.Length:N0} unmatched entries on this drive.";
+        _message = _rows.Length == 0 ? "No leftover entries found." : $"{_rows.Length:N0} leftover entries on this drive.";
     });
 
     private async void Recover_Click(object sender, RoutedEventArgs e) => await ApplyAsync(delete: false);
@@ -241,6 +241,7 @@ public partial class RecycleLeftoversWindow : Window
         NextPage.IsEnabled = _contentsOffset + ContentsPageSize < total;
         DetailsText.Text = row is null ? "Select an entry to see what it contains." :
             $"{row.Name}\nModified {row.Modified}" + (total > 0 ? $"\n{total:N0} names · Whole folder" : "")
+            + (row.Entry.HasCorruptedRecord ? "\nCorrupted Recycle Bin record" : "")
             + ((row.Detail ?? row.Entry.Blocked) is { } issue ? "\n" + issue : "");
     }
     private void Open_Click(object sender, RoutedEventArgs e)
