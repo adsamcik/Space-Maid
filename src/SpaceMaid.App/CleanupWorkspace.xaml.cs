@@ -104,7 +104,7 @@ internal partial class CleanupWorkspace : UserControl
         if (_stopped) return;
         if (scan is null)
         {
-            if (_prepared is not null) { _snapshotChanged = true; UpdateEstimateButton.Visibility = Visibility.Visible; }
+            if (_prepared is not null) { _snapshotChanged = true; UpdateImpact(); }
             return;
         }
         _latestScan = scan; _latestCandidates = candidates;
@@ -239,7 +239,7 @@ internal partial class CleanupWorkspace : UserControl
             AutomaticRadio.IsChecked = d.Schedule?.Automatic == true; AskFirstRadio.IsChecked = d.Schedule?.Automatic != true;
             LimitGiBBox.Text = ((decimal)d.Limits.MaxBytes / (1024 * 1024 * 1024)).ToString("0.##", CultureInfo.InvariantCulture);
             LimitTargetsBox.Text = d.Limits.MaxTargets.ToString(CultureInfo.InvariantCulture);
-            SaveOptions.IsExpanded = false; MoreOptions.IsExpanded = d.Cache || d.Worktrees || d.ExcludedPaths.Length > 0;
+            SaveOptions.IsExpanded = false; MoreOptions.IsExpanded = d.Cache || d.Worktrees || d.ManualRuleKeys.Length > 0 || d.ExcludedPaths.Length > 0;
         }
         finally { _writing = false; }
         UpdateScopes(); UpdateManualChoices(); UpdateFormState();
@@ -295,20 +295,37 @@ internal partial class CleanupWorkspace : UserControl
     private IReadOnlyList<Opportunity> IncludedLocations() => _prepared?.Plan.Preview.Locations.Where(item => !_omitted.Contains((item.ProviderId, item.RuleId, item.Path))).ToArray() ?? [];
     private void UpdateImpact()
     {
-        if (_prepared is null) { CleanupButton.IsEnabled = false; return; }
+        if (_prepared is null)
+        {
+            CleanupButton.IsEnabled = false;
+            EstimateText.Text = _scan is null ? "Scan a location first" : "No estimate yet";
+            EstimateCaption.Text = "Estimated reclaimable space";
+            ReadyText.Text = ""; KeptButton.Visibility = EstimateDetails.Visibility = PermanentText.Visibility = Visibility.Collapsed;
+            ConsequenceText.Text = "Choose what to clean, then review the folders.";
+            ConsequenceText.Visibility = Visibility.Visible;
+            SelectedConsequences.Visibility = Visibility.Collapsed;
+            return;
+        }
         var locations = IncludedLocations();
         try
         {
             var preview = locations.Count == _prepared.Plan.Preview.Locations.Count ? _prepared.Plan.Preview
-                : _operations.EstimateCleanup(_prepared.Plan.Snapshot, locations);
-            bool permanent = _prepared.Definition.Build && _prepared.Definition.BuildAction == BuildCleanupAction.PermanentlyDelete;
-            EstimateText.Text = locations.Count == 0 ? "Nothing ready" : SizeText.Format(preview.EstimatedBytes);
-            EstimateCaption.Text = permanent ? "Estimated data to clean" : "Estimated data to recycle";
-            ReadyText.Text = $"{locations.Count:N0} {(locations.Count == 1 ? "folder" : "folders")} ready";
+                : CleanupPlanner.WithBuildAction(_operations.EstimateCleanup(_prepared.Plan.Snapshot, locations), _prepared.Plan.BuildAction);
+            var impact = CleanupImpact.Describe(preview, _prepared.Plan.BuildAction);
+            EstimateText.Text = locations.Count == 0 ? _prepared.Plan.Preview.Locations.Count == 0 ? "Nothing ready" : "Nothing selected" : SizeText.Format(preview.EstimatedBytes);
+            EstimateCaption.Text = impact.Caption;
+            ReadyText.Text = $"{locations.Count:N0} {(locations.Count == 1 ? "folder" : "folders")} selected";
             int kept = _prepared.Plan.BlockedLocations.Count + _prepared.Plan.Preview.Locations.Count - locations.Count;
             KeptButton.Content = $"{kept:N0} kept"; KeptButton.Visibility = kept > 0 ? Visibility.Visible : Visibility.Collapsed;
-            string folders = locations.Count == 1 ? "folder" : "folders";
-            CleanupButton.Content = permanent ? $"Delete {locations.Count:N0} {folders} · permanent builds" : $"Recycle {locations.Count:N0} {folders}";
+            CleanupButton.Content = impact.Action;
+            PermanentText.Text = ConsequenceText.Text = impact.Consequence;
+            PermanentText.Visibility = impact.Permanent ? Visibility.Visible : Visibility.Collapsed;
+            ConsequenceText.Visibility = impact.Permanent ? Visibility.Collapsed : Visibility.Visible;
+            SelectedConsequences.Text = string.Join("\n", locations.Where(item => !item.IsBuildOutput).Select(item => item.Caution)
+                .Where(text => !string.IsNullOrWhiteSpace(text)).Distinct(StringComparer.Ordinal));
+            SelectedConsequences.Visibility = SelectedConsequences.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            EstimateNotes.Text = string.Join("\n", preview.Cautions);
+            EstimateDetails.Visibility = preview.Cautions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             UpdateApprovalAvailability();
             FreshnessText.Text = _snapshotChanged ? "Scan changed · Update the estimate to include new matches." : $"Scan from {_prepared.Plan.Snapshot.ScannedAtUtc.ToLocalTime():g}";
             UpdateEstimateButton.Visibility = _snapshotChanged || locations.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -331,8 +348,13 @@ internal partial class CleanupWorkspace : UserControl
         WorktreeFields.Visibility = WorktreeCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         WorktreeDaysBox.IsEnabled = WorktreeRuleBox.SelectedIndex != 2;
         int exclusions = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
-        OptionsSummary.Text = $"Caches {(CacheCheck.IsChecked == true ? "on" : "off")} · Worktrees {(WorktreeCheck.IsChecked == true ? "on" : "off")}" + (exclusions > 0 ? $" · {exclusions:N0} exclusions" : "");
-        int otherRules = _manualChoices.Values.Count(value => value); if (otherRules > 0) OptionsSummary.Text += $" · {otherRules:N0} other rules";
+        var options = new List<string>();
+        if (CacheCheck.IsChecked == true) options.Add("Package caches");
+        if (WorktreeCheck.IsChecked == true) options.Add("Worktrees");
+        int otherRules = _manualChoices.Values.Count(value => value);
+        if (otherRules > 0) options.Add($"{otherRules:N0} other selected types");
+        if (exclusions > 0) options.Add($"{exclusions:N0} exclusions");
+        OptionsSummary.Text = options.Count == 0 ? "Caches, worktrees and exclusions" : string.Join(" · ", options);
         bool automaticEligible = BuildCheck.IsChecked == true && CacheCheck.IsChecked != true && WorktreeCheck.IsChecked != true && !_manualChoices.Values.Any(selected => selected);
         AutomaticRadio.IsEnabled = automaticEligible;
         if (!automaticEligible && AutomaticRadio.IsChecked == true) { _writing = true; AskFirstRadio.IsChecked = true; _writing = false; }
@@ -343,7 +365,6 @@ internal partial class CleanupWorkspace : UserControl
         DraftText.Visibility = _savedDefinition is null ? Visibility.Collapsed : Visibility.Visible;
         NewButton.Visibility = _savedDefinition is not null || _savedView || _historyView ? Visibility.Visible : Visibility.Collapsed;
         DraftText.Text = _savedDefinition?.Name + (IsSavedUnchanged() ? "" : " · Unsaved changes");
-        PermanentText.Visibility = BuildCheck.IsChecked == true && ActionBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
         CleanupButton.Visibility = SaveOptions.IsExpanded ? Visibility.Collapsed : Visibility.Visible;
         SaveButton.Content = automatic ? "Save and enable automatic cleanup" : weekly ? "Save weekly review" : "Save cleanup";
         if (weekly && _savedDefinition?.Schedule is not null && !_savedDefinition.Enabled) SaveButton.Content = "Save changes · schedule paused";
@@ -462,15 +483,21 @@ internal partial class CleanupWorkspace : UserControl
         catch (Exception error) when (CleanupBatch.IsExpected(error)) { ShowNotice(error.Message); }
     }
     private async void UpdateEstimate_Click(object sender, RoutedEventArgs e) => await RefreshPreviewAsync(true);
-    private void Inspect_Click(object sender, RoutedEventArgs e) { _inspecting = !_inspecting; UpdateInspector(); }
-    private void Kept_Click(object sender, RoutedEventArgs e) { _inspecting = true; UpdateInspector(); _inspector.ShowKept(); }
+    private void Inspect_Click(object sender, RoutedEventArgs e)
+    {
+        _inspecting = !_inspecting; UpdateInspector();
+        if (_inspecting) InspectorHost.BringIntoView();
+    }
+    private void Kept_Click(object sender, RoutedEventArgs e)
+    { _inspecting = true; UpdateInspector(); _inspector.ShowKept(); InspectorHost.BringIntoView(); }
     private void Browse_Click(object sender, RoutedEventArgs e) => BrowseRequested?.Invoke();
 
     private void UpdateInspector()
     {
         _inspector.SetCanExclude(_shownRecord is null);
         InspectorHost.Visibility = _inspecting && (_prepared is not null || _shownRecord is not null) ? Visibility.Visible : Visibility.Collapsed;
-        InspectButton.Content = InspectResultsButton.Content = _inspecting ? "Hide folder details" : _result is null && _shownRecord is null ? "Inspect folders" : "Inspect results";
+        InspectButton.Content = InspectResultsButton.Content = _inspecting ? "Hide folders"
+            : _result is null && _shownRecord is null or { State: CleanupRunState.Review } ? "Review folders" : "View results";
         if (_inspecting && _shownRecord is not null && _shownRecord.State != CleanupRunState.Review) _inspector.ShowRecord(_shownRecord);
         else if (_inspecting && _prepared is not null)
         {
@@ -518,6 +545,7 @@ internal partial class CleanupWorkspace : UserControl
         if (pending && _prepared is null) ResultSummary.Text = "Reconnect the location, then reopen this review. Its captured folders remain unchanged.";
         DoneButton.Content = pending ? "Back" : "Done";
         ApprovePendingButton.Visibility = DismissPendingButton.Visibility = pending ? Visibility.Visible : Visibility.Collapsed;
+        PendingImpactCaption.Visibility = PendingConsequenceText.Visibility = pending && _prepared is not null ? Visibility.Visible : Visibility.Collapsed;
         UpdateApprovalAvailability();
         ApprovePendingButton.Content = _prepared?.Definition.BuildAction == BuildCleanupAction.PermanentlyDelete ? "Delete approved builds permanently" : "Recycle approved folders";
         ReviewRemainingButton.Visibility = !pending && record is not null && RemainingTargets(record).Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -532,8 +560,17 @@ internal partial class CleanupWorkspace : UserControl
             .Select(CleanupInspectionData.Key).ToHashSet(StringComparer.Ordinal);
         var entries = CleanupInspectionData.Build(_prepared.Plan, omitted);
         var selected = IncludedLocations();
-        ResultHeadline.Text = SizeText.Format(selected.Count == _prepared.Plan.Preview.Locations.Count ? _prepared.Plan.Preview.EstimatedBytes
-            : _operations.EstimateCleanup(_prepared.Plan.Snapshot, selected).EstimatedBytes);
+        var preview = selected.Count == _prepared.Plan.Preview.Locations.Count ? _prepared.Plan.Preview
+            : CleanupPlanner.WithBuildAction(_operations.EstimateCleanup(_prepared.Plan.Snapshot, selected), _prepared.Plan.BuildAction);
+        var impact = CleanupImpact.Describe(preview, _prepared.Plan.BuildAction);
+        ResultHeadline.Text = SizeText.Format(preview.EstimatedBytes);
+        PendingImpactCaption.Text = impact.Caption;
+        PendingConsequenceText.Text = impact.Consequence;
+        var cautions = selected.Where(item => !item.IsBuildOutput).Select(item => item.Caution)
+            .Where(text => !string.IsNullOrWhiteSpace(text)).Distinct(StringComparer.Ordinal).ToArray();
+        if (cautions.Length > 0) PendingConsequenceText.Text += "\n" + string.Join("\n", cautions);
+        PendingConsequenceText.FontWeight = impact.Permanent ? FontWeights.SemiBold : FontWeights.Normal;
+        ApprovePendingButton.Content = impact.Action;
         int kept = entries.Count(item => item.Decision == CleanupInspectionDecision.Kept), skipped = entries.Count(item => item.Decision == CleanupInspectionDecision.Skipped);
         ResultSummary.Text = $"{selected.Count:N0} ready · {kept:N0} kept" + (skipped > 0 ? $" · {skipped:N0} skipped for this run" : "");
         UpdateApprovalAvailability();
@@ -738,7 +775,7 @@ internal partial class CleanupWorkspace : UserControl
         _shownRecord = null; _result = null; _inspecting = false; UpdateInspector(); UpdateFormState();
     }
     private void ResetPreview()
-    { _prepared = null; _matchingSignature = null; _shownRecord = null; _result = null; _omitted.Clear(); _snapshotChanged = false; _inspecting = false; }
+    { _prepared = null; _matchingSignature = null; _shownRecord = null; _result = null; _omitted.Clear(); _snapshotChanged = false; _inspecting = false; UpdateImpact(); }
 
     private async Task RefreshBackgroundStatusAsync()
     {

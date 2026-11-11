@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
@@ -158,6 +160,7 @@ public sealed partial class DesktopTests
             store.SaveDefinition(workspace.Prepared.Definition with { Id = Guid.NewGuid(), Name = "Saved navigation fixture" });
             ClickCleanupState(workspace, "InspectButton");
             var inspector = Assert.IsType<CleanupInspector>(((Border)workspace.FindName("InspectorHost")).Child);
+            ((RadioButton)inspector.FindName("SummaryTab")).IsChecked = true;
             ((ComboBox)inspector.FindName("GroupPicker")).SelectedIndex = 2;
             var summary = (ListBox)inspector.FindName("SummaryList"); window.UpdateLayout();
             PumpUntil(() => Descendants(summary).OfType<Button>().Any(button => Equals(button.Content, "View folders")), TimeSpan.FromSeconds(5));
@@ -199,6 +202,25 @@ public sealed partial class DesktopTests
                 Assert.Equal(omitted, Assert.Single(inspector.Entries, entry => entry.CanChoose && !entry.Included).Location.Path);
             }
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-draft-resumed.png"), 1220, 940);
+            // Removing the last Ready row on the last page must leave a usable
+            // keyboard target and preserve Undo when pagination moves backward.
+            ((ComboBox)inspector.FindName("OutcomePicker")).SelectedIndex = 1;
+            int lastPage = (inspector.Entries.Count(entry => entry.CanChoose && entry.Included) - 1) / 100;
+            for (int page = 0; page < lastPage; page++)
+                ((Button)inspector.FindName("NextButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            window.Activate(); PumpUntil(() => window.IsActive, TimeSpan.FromSeconds(5));
+            int lastPageRows = folders.Items.Count;
+            for (int index = 0; index < lastPageRows; index++)
+            {
+                var row = folders.Items[0]; folders.ScrollIntoView(row); window.UpdateLayout();
+                var check = Descendants(folders.ItemContainerGenerator.ContainerFromItem(row)).OfType<CheckBox>().Single();
+                Assert.True(check.Focus());
+                ((IToggleProvider)new CheckBoxAutomationPeer(check).GetPattern(PatternInterface.Toggle)).Toggle();
+                window.UpdateLayout();
+                Assert.True(((DockPanel)inspector.FindName("UndoPanel")).IsKeyboardFocusWithin);
+            }
+            Assert.Equal(lastPage - 1, inspector.CapturePresentation().Page);
+            Descendants((DockPanel)inspector.FindName("UndoPanel")).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.All(findings, item => Assert.True(Directory.Exists(item.Path)));
         }
         finally { AwaitCleanupState(workspace.StopAsync()); host.Content = null; }

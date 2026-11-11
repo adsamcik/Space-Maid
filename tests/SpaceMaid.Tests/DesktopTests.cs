@@ -184,6 +184,16 @@ public sealed partial class DesktopTests
                     CheckRuleCleanupRun(window, app, artifactRoot: FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-clarity")
+                {
+                    BeginWorkflow("Cleanup estimates, consequences and direct folder review");
+                    CheckCleanupClarity(window, app, FindRepository());
+                    BeginWorkflow("Cleanup draft and captured-review state");
+                    CheckCleanupWorkspaceState(window, app, FindRepository());
+                    BeginWorkflow("Explicit build cleanup approval");
+                    CheckRuleCleanupRun(window, app, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "worktree-selection")
                 {
                     BeginWorkflow("Worktree group selection and Git checks");
@@ -1096,6 +1106,8 @@ public sealed partial class DesktopTests
                 CheckExtensionWorkspace(window, app, FindRepository(), extensionFiles);
                 BeginWorkflow("Resizable explorer panes and compact list/map navigation");
                 CheckExplorerLayout(window, app, FindRepository());
+                BeginWorkflow("Cleanup estimates, consequences and direct folder review");
+                CheckCleanupClarity(window, app, FindRepository());
                 BeginWorkflow("Cloud drive browsing and online-only review");
                 CheckCloudDrives(window, app, FindRepository());
                 BeginWorkflow("Agent access sharing and human review");

@@ -46,7 +46,7 @@
         </Style>
     </UserControl.Resources>
     <Grid Background="{DynamicResource WindowBackground}">
-        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <DockPanel Margin="2,0,2,14" LastChildFill="True">
             <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                 <Button x:Name="BackButton" Content="Back to cleanup" Style="{StaticResource CleanupLink}" Click="Back_Click" Visibility="Collapsed" Margin="0,0,18,0" />
@@ -67,10 +67,17 @@
                 </StackPanel>
                 <StackPanel x:Name="PlanPanel">
                     <TextBlock x:Name="DraftText" FontSize="12" Opacity="0.7" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,0,0,10" />
-                    <WrapPanel VerticalAlignment="Center" Margin="0,0,0,22"><TextBlock Text="In" VerticalAlignment="Center" Margin="0,0,10,0" /><ComboBox x:Name="ScopeBox" MinWidth="220" MaxWidth="580" DisplayMemberPath="Label" SelectionChanged="Scope_Changed" AutomationProperties.Name="Cleanup scope" /><Button x:Name="UseCurrentScanButton" Content="Use current scan" Style="{StaticResource CleanupLink}" Click="UseCurrentScan_Click" Margin="16,0,0,0" Visibility="Collapsed" /></WrapPanel>
+                    <WrapPanel VerticalAlignment="Center" Margin="0,0,0,16"><TextBlock Text="Location" VerticalAlignment="Center" Margin="0,0,10,0" /><ComboBox x:Name="ScopeBox" MinWidth="220" MaxWidth="580" DisplayMemberPath="Label" SelectionChanged="Scope_Changed" AutomationProperties.Name="Cleanup scope" /><Button x:Name="UseCurrentScanButton" Content="Use current scan" Style="{StaticResource CleanupLink}" Click="UseCurrentScan_Click" Margin="16,0,0,0" Visibility="Collapsed" /></WrapPanel>
+                    <StackPanel Margin="0,0,0,20">
+                        <TextBlock x:Name="EstimateCaption" Text="Estimated reclaimable space" FontSize="13" TextWrapping="Wrap" />
+                        <TextBlock x:Name="EstimateText" Text="Scan a location first" FontSize="30" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,2" />
+                        <WrapPanel><TextBlock x:Name="ReadyText" VerticalAlignment="Center" FontSize="13" Margin="0,0,14,0" /><Button x:Name="KeptButton" Style="{StaticResource CleanupLink}" Click="Kept_Click" /></WrapPanel>
+                        <TextBlock x:Name="FreshnessText" FontSize="12" Opacity="0.75" Margin="0,2,0,0" TextWrapping="Wrap" />
+                        <Expander x:Name="EstimateDetails" Header="How this estimate works" FontSize="12" Margin="0,6,0,0" Visibility="Collapsed"><TextBlock x:Name="EstimateNotes" TextWrapping="Wrap" Margin="0,6,0,0" /></Expander>
+                    </StackPanel>
                     <CheckBox x:Name="BuildCheck" Content="Build outputs" IsChecked="True" FontWeight="SemiBold" Checked="Conditions_Changed" Unchecked="Conditions_Changed" />
                     <StackPanel x:Name="BuildFields" Margin="30,4,0,14">
-                        <TextBlock Text="Verified rebuildable folders only" FontSize="12" Opacity="0.75" />
+                        <TextBlock Text="Recommended starting point: verified, inactive builds." FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
                         <WrapPanel Margin="0,10,0,0"><TextBlock Text="Inactive for" VerticalAlignment="Center" Margin="0,0,8,6" /><TextBox x:Name="DaysBox" Text="30" Width="100" MaxLength="3" TextChanged="Conditions_Changed" AutomationProperties.Name="Build inactivity in days" Margin="0,0,8,6" /><TextBlock Text="days" VerticalAlignment="Center" Margin="0,0,18,6" /><ComboBox x:Name="ActionBox" Width="235" SelectedIndex="0" SelectionChanged="Conditions_Changed" AutomationProperties.Name="Build removal policy" Margin="0,0,0,6"><ComboBoxItem Content="Recycle" /><ComboBoxItem Content="Delete builds permanently" /></ComboBox></WrapPanel>
                     </StackPanel>
                     <Expander x:Name="MoreOptions" Style="{StaticResource CleanupExpander}" AutomationProperties.Name="More cleanup options">
@@ -85,10 +92,8 @@
                             <Button x:Name="BrowseButton" Content="Browse all cleanup types" Style="{StaticResource CleanupLink}" Click="Browse_Click" />
                         </StackPanel>
                     </Expander>
-                    <StackPanel Margin="0,24,0,12"><TextBlock x:Name="EstimateCaption" Text="Estimated data to recycle" FontSize="12" Opacity="0.75" /><TextBlock x:Name="EstimateText" Text="Scan a location first" FontSize="32" FontWeight="SemiBold" Margin="0,2,0,6" /><WrapPanel><TextBlock x:Name="ReadyText" VerticalAlignment="Center" FontSize="13" Opacity="0.8" Margin="0,0,14,0" /><Button x:Name="KeptButton" Style="{StaticResource CleanupLink}" Click="Kept_Click" /></WrapPanel><TextBlock x:Name="FreshnessText" FontSize="12" Opacity="0.7" Margin="0,4,0,0" TextWrapping="Wrap" /></StackPanel>
-                    <TextBlock x:Name="PermanentText" Text="Builds will be permanently deleted, with no recovery. Other selected types recycle." Visibility="Collapsed" TextWrapping="Wrap" Margin="0,0,0,12" />
-                    <Grid Margin="0,0,0,20"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><WrapPanel><Button x:Name="InspectButton" Content="Inspect folders" Style="{StaticResource CleanupLink}" Click="Inspect_Click" /><Button x:Name="UpdateEstimateButton" Content="Update estimate" Style="{StaticResource CleanupLink}" Click="UpdateEstimate_Click" Margin="18,0,0,0" Visibility="Collapsed" /></WrapPanel><Button x:Name="CleanupButton" Grid.Column="1" Content="Recycle folders" MinWidth="185" Padding="16,9" Style="{DynamicResource AccentButtonStyle}" Click="Cleanup_Click" IsEnabled="False" /></Grid>
-                    <Expander x:Name="SaveOptions" Style="{StaticResource CleanupExpander}" Expanded="SaveExpansion_Changed" Collapsed="SaveExpansion_Changed" AutomationProperties.Name="Save and schedule cleanup">
+                    <TextBlock x:Name="SelectedConsequences" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
+                    <Expander x:Name="SaveOptions" Style="{StaticResource CleanupExpander}" Margin="0,10,0,0" Expanded="SaveExpansion_Changed" Collapsed="SaveExpansion_Changed" AutomationProperties.Name="Save and schedule cleanup">
                         <Expander.Header><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="&#xE787;" FontFamily="Segoe Fluent Icons" FontSize="20" VerticalAlignment="Center" Margin="0,0,12,0" /><StackPanel Grid.Column="1"><TextBlock Text="Save &amp; schedule" FontWeight="SemiBold" /><TextBlock x:Name="ScheduleSummary" Text="Not saved · Run manually" FontSize="12" Opacity="0.75" TextWrapping="Wrap" Margin="0,2,0,0" /></StackPanel></Grid></Expander.Header>
                         <StackPanel>
                             <TextBlock Text="Name" FontSize="12" Opacity="0.75" Margin="0,0,0,5" /><TextBox x:Name="NameBox" Text="Build cleanup" MaxLength="80" MaxWidth="460" HorizontalAlignment="Left" MinWidth="250" TextChanged="SaveFields_Changed" AutomationProperties.Name="Saved cleanup name" />
@@ -103,11 +108,30 @@
                         </StackPanel>
                     </Expander>
                 </StackPanel>
-                <StackPanel x:Name="ResultPanel" Visibility="Collapsed"><TextBlock x:Name="ResultTitle" FontSize="18" FontWeight="SemiBold" /><TextBlock x:Name="ResultPolicy" TextWrapping="Wrap" Margin="0,8,0,18" /><TextBlock x:Name="ResultHeadline" FontSize="30" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock x:Name="ResultSummary" TextWrapping="Wrap" Margin="0,8,0,8" AutomationProperties.LiveSetting="Polite" /><WrapPanel><Button x:Name="InspectResultsButton" Content="Inspect results" Style="{StaticResource CleanupLink}" Click="Inspect_Click" /><Button x:Name="ReviewRemainingButton" Content="Review remaining" Style="{StaticResource CleanupLink}" Click="Remaining_Click" Margin="18,0,0,0" Visibility="Collapsed" /></WrapPanel><WrapPanel Margin="0,18,0,10"><Button x:Name="DoneButton" Content="Done" Click="Back_Click" /><Button x:Name="ApprovePendingButton" Content="Run cleanup" Click="Cleanup_Click" Visibility="Collapsed" Margin="12,0,0,0" /><Button x:Name="DismissPendingButton" Content="Dismiss review" Style="{StaticResource CleanupLink}" Click="Dismiss_Click" Visibility="Collapsed" Margin="18,0,0,0" /></WrapPanel></StackPanel>
+                <StackPanel x:Name="ResultPanel" Visibility="Collapsed">
+                    <TextBlock x:Name="ResultTitle" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="ResultPolicy" TextWrapping="Wrap" Margin="0,8,0,18" />
+                    <TextBlock x:Name="PendingImpactCaption" FontSize="13" TextWrapping="Wrap" Margin="0,0,0,4" Visibility="Collapsed" />
+                    <TextBlock x:Name="ResultHeadline" FontSize="30" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock x:Name="ResultSummary" TextWrapping="Wrap" Margin="0,8,0,8" AutomationProperties.LiveSetting="Polite" />
+                    <WrapPanel><Button x:Name="InspectResultsButton" Content="View results" Style="{StaticResource CleanupLink}" Click="Inspect_Click" /><Button x:Name="ReviewRemainingButton" Content="Review remaining" Style="{StaticResource CleanupLink}" Click="Remaining_Click" Margin="18,0,0,0" Visibility="Collapsed" /></WrapPanel>
+                    <TextBlock x:Name="PendingConsequenceText" TextWrapping="Wrap" Margin="0,12,0,0" Visibility="Collapsed" />
+                    <WrapPanel Margin="0,18,0,10"><Button x:Name="DoneButton" Content="Done" Click="Back_Click" /><Button x:Name="ApprovePendingButton" Content="Run cleanup" Click="Cleanup_Click" Visibility="Collapsed" Margin="12,0,0,0" /><Button x:Name="DismissPendingButton" Content="Dismiss review" Style="{StaticResource CleanupLink}" Click="Dismiss_Click" Visibility="Collapsed" Margin="18,0,0,0" /></WrapPanel>
+                </StackPanel>
                 <StackPanel x:Name="LibraryPanel" Visibility="Collapsed" />
                 <Border x:Name="InspectorHost" Visibility="Collapsed" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" Padding="0,14,0,0" />
                 <Expander x:Name="DiagnosticsPanel" Header="Diagnostics" Visibility="Collapsed" Margin="0,18,0,0"><StackPanel><CheckBox x:Name="IncludePathsCheck" Content="Include full paths" Checked="ReportOptions_Changed" Unchecked="ReportOptions_Changed" Margin="0,8" /><TextBox x:Name="ReportBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="200" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Cleanup diagnostic report" /><Button Content="Copy report" HorizontalAlignment="Left" Click="CopyReport_Click" Margin="0,8,0,0" /></StackPanel></Expander>
             </StackPanel>
         </ScrollViewer>
+        <Border Grid.Row="2" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="2,12,12,0" Visibility="{Binding Visibility, ElementName=PlanPanel}">
+            <StackPanel>
+                <TextBlock x:Name="PermanentText" Visibility="Collapsed" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,6" />
+                <TextBlock x:Name="ConsequenceText" Text="Choose what to clean, then review the folders." TextWrapping="Wrap" Margin="0,0,0,8" />
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <WrapPanel VerticalAlignment="Center"><Button x:Name="InspectButton" Content="Review folders" Style="{StaticResource CleanupLink}" Click="Inspect_Click" /><Button x:Name="UpdateEstimateButton" Content="Update estimate" Style="{StaticResource CleanupLink}" Click="UpdateEstimate_Click" Margin="18,0,0,0" Visibility="Collapsed" /></WrapPanel>
+                    <Button x:Name="CleanupButton" Grid.Column="1" Content="Recycle folders" MinWidth="185" Padding="16,9" Style="{DynamicResource AccentButtonStyle}" Click="Cleanup_Click" IsEnabled="False" />
+                </Grid>
+            </StackPanel>
+        </Border>
     </Grid>
 </UserControl>

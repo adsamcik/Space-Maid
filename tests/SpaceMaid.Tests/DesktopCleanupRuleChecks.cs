@@ -41,7 +41,7 @@ public sealed partial class DesktopTests
         Assert.Contains("permanent", action.Content.ToString());
         ((Button)workspace.FindName("InspectButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var inspector = Assert.IsType<CleanupInspector>(((Border)workspace.FindName("InspectorHost")).Child);
-        Assert.True(((RadioButton)inspector.FindName("SummaryTab")).IsChecked);
+        Assert.True(((RadioButton)inspector.FindName("ListTab")).IsChecked);
         ((RadioButton)inspector.FindName("ListTab")).IsChecked = true;
         var list = (ListBox)inspector.FindName("FolderList");
         list.SelectedItem = list.Items.Cast<CleanupInspectionEntry>().Single(row => row.Location.Path == old.Output);

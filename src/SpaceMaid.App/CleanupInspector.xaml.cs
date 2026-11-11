@@ -25,6 +25,8 @@ internal sealed partial class CleanupInspector : UserControl
     private int _page, _presentationVersion;
     private bool _updating, _busy, _canExclude = true;
     private bool ReadOnly => _record is not null || _results is not null;
+    public static readonly DependencyProperty CanEditSelectionProperty = DependencyProperty.Register(nameof(CanEditSelection), typeof(bool), typeof(CleanupInspector), new PropertyMetadata(false));
+    public bool CanEditSelection { get => (bool)GetValue(CanEditSelectionProperty); private set => SetValue(CanEditSelectionProperty, value); }
     internal event Action<Opportunity, bool>? InclusionChanged;
     internal event Action<Opportunity>? ExcludeRequested;
     internal event Action<Opportunity>? RevealRequested;
@@ -42,7 +44,7 @@ internal sealed partial class CleanupInspector : UserControl
         if (_context == context) return;
         _presentationVersion++; _context = context; _omitted.Clear(); _selected = _drill = null; _undo = null; _page = 0;
         _updating = true;
-        try { SearchBox.Text = ""; OutcomePicker.SelectedIndex = GroupPicker.SelectedIndex = 0; SummaryTab.IsChecked = true; }
+        try { SearchBox.Text = ""; OutcomePicker.SelectedIndex = GroupPicker.SelectedIndex = 0; ListTab.IsChecked = true; }
         finally { _updating = false; }
     }
 
@@ -157,7 +159,7 @@ internal sealed partial class CleanupInspector : UserControl
         bool list = ListTab.IsChecked == true;
         SummaryList.Visibility = list ? Visibility.Collapsed : Visibility.Visible;
         FolderList.Visibility = list ? Visibility.Visible : Visibility.Collapsed;
-        Pagination.Visibility = list ? Visibility.Visible : Visibility.Collapsed;
+        Pagination.Visibility = list && _filtered.Count > PageSize ? Visibility.Visible : Visibility.Collapsed;
         DrillPanel.Visibility = _drill is not null && list ? Visibility.Visible : Visibility.Collapsed; DrillText.Text = _drill ?? "";
         EmptyText.Visibility = (list ? _filtered.Count : candidates.Length) == 0 ? Visibility.Visible : Visibility.Collapsed;
         _updating = true;
@@ -179,6 +181,7 @@ internal sealed partial class CleanupInspector : UserControl
     private void UpdateDetails()
     {
         if (FolderDetail is null) return;
+        CanEditSelection = !_busy && !ReadOnly;
         var entry = FolderList.SelectedItem as CleanupInspectionEntry;
         FolderDetail.Visibility = entry is null || ListTab.IsChecked != true ? Visibility.Collapsed : Visibility.Visible;
         if (entry is null) return;
@@ -221,6 +224,28 @@ internal sealed partial class CleanupInspector : UserControl
     private void Next_Click(object sender, RoutedEventArgs e) { if ((_page + 1) * PageSize < _filtered.Count) { _page++; ApplyFilters(false); } }
     private void Include_Click(object sender, RoutedEventArgs e)
     { if (_entries.FirstOrDefault(entry => entry.Key == _selected) is { } entry) ChangeInclusion(entry, !entry.Included); }
+    private void RowSelection_Changed(object sender, RoutedEventArgs e)
+    {
+        // Checked/Unchecked covers mouse, keyboard and UI Automation. Bindings
+        // also raise these events when recycled row containers receive new data.
+        if (_updating || sender is not CheckBox { DataContext: CleanupInspectionEntry entry } check
+            || check.IsChecked == entry.Included || !CanEditSelection || !entry.CanChoose) return;
+        double offset = FindScrollViewer(FolderList)?.VerticalOffset ?? 0;
+        bool hadFocus = check.IsKeyboardFocusWithin;
+        _selected = entry.Key;
+        ChangeInclusion(entry, check.IsChecked == true);
+        FolderList.UpdateLayout();
+        if (hadFocus)
+        {
+            bool restored = FolderList.SelectedItem is { } selected
+                && FolderList.ItemContainerGenerator.ContainerFromItem(selected) is DependencyObject container
+                && FindVisualChild<CheckBox>(container)?.Focus() == true;
+            // A Ready filter removes the skipped row. Keep Undo reachable even
+            // when the last row disappears and the pager moves back a page.
+            if (!restored) UndoPanel.Children.OfType<Button>().FirstOrDefault()?.Focus();
+        }
+        FindScrollViewer(FolderList)?.ScrollToVerticalOffset(offset);
+    }
     private void Exclude_Click(object sender, RoutedEventArgs e)
     { if (!_busy && !ReadOnly && _canExclude && _entries.FirstOrDefault(entry => entry.Key == _selected) is { } entry) ExcludeRequested?.Invoke(entry.Location); }
     private void Reveal_Click(object sender, RoutedEventArgs e)
@@ -233,11 +258,12 @@ internal sealed partial class CleanupInspector : UserControl
     }
     private static bool Covers(string root, string path) => root.Equals(path, StringComparison.OrdinalIgnoreCase)
         || path.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    private static ScrollViewer? FindScrollViewer(DependencyObject parent)
+    private static ScrollViewer? FindScrollViewer(DependencyObject parent) => FindVisualChild<ScrollViewer>(parent);
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
     {
-        if (parent is ScrollViewer viewer) return viewer;
+        if (parent is T found) return found;
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
-            if (FindScrollViewer(VisualTreeHelper.GetChild(parent, i)) is { } found) return found;
+            if (FindVisualChild<T>(VisualTreeHelper.GetChild(parent, i)) is { } child) return child;
         return null;
     }
 }
@@ -251,10 +277,20 @@ internal sealed record CleanupInspectionEntry(Opportunity Location, BuildCleanup
     CleanupInspectionDecision Decision, string Reason, bool Included, bool CanChoose, long SourceBytes, long AccountedBytes, string Project, DateTime ObservedUtc)
 {
     internal string Key => CleanupInspectionData.Key(Location);
-    public string Name => Path.GetFileName(Path.TrimEndingDirectorySeparator(Location.Path));
+    public string Name
+    {
+        get
+        {
+            string path = Path.TrimEndingDirectorySeparator(Location.Path);
+            string name = Path.GetFileName(path);
+            string? parent = Path.GetFileName(Path.GetDirectoryName(path));
+            return string.IsNullOrEmpty(parent) ? name : parent + " / " + name;
+        }
+    }
     public string DecisionText => CleanupInspectionData.Label(Decision);
     public string Size => SizeText.Format(SourceBytes);
     public string AutomationName => Location.Path + ". " + DecisionText + ". " + Size;
+    public string SelectionName => "Include " + Location.Path;
     public string Inactivity => Assessment.LastActivityUtc is not { } activity ? "Unknown / not applicable"
         : (ObservedUtc - activity.ToUniversalTime()).TotalDays switch { < 7 => "Under 7 days", < 30 => "7–29 days", < 90 => "30–89 days", _ => "90 days or more" };
 }
