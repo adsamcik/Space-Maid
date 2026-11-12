@@ -204,12 +204,72 @@ public sealed class InstallerTests
         Assert.Throws<IOException>(() => PortableInstaller.ValidateDestination("Portable"));
     }
 
+    [Fact]
+    public async Task PortableLauncherReusesTheSamePayloadAndKeepsDifferentPayloadsSeparate()
+    {
+        using var directory = new TestDirectory();
+        string cache = Path.Join(directory.Path, "Cache");
+        using var first = CreateLauncherArchive("first");
+        string firstHash = Digest(first);
+        string executable = await PortableLauncher.PrepareAsync(cache, firstHash, () => new MemoryStream(first.ToArray()));
+        Assert.Equal("first", await File.ReadAllTextAsync(executable));
+        Assert.Equal(executable, await PortableLauncher.PrepareAsync(cache, firstHash, () => throw new InvalidOperationException()));
+
+        using var next = CreateLauncherArchive("next");
+        string nextExecutable = await PortableLauncher.PrepareAsync(cache, Digest(next), () => new MemoryStream(next.ToArray()));
+        Assert.NotEqual(executable, nextExecutable);
+        Assert.Equal("first", await File.ReadAllTextAsync(executable));
+        Assert.Equal("next", await File.ReadAllTextAsync(nextExecutable));
+    }
+
+    [Fact]
+    public async Task SimultaneousPortableLaunchesUseOneCompleteCache()
+    {
+        using var directory = new TestDirectory();
+        using var payload = CreateLauncherArchive("app");
+        byte[] bytes = payload.ToArray();
+        string hash = Digest(payload);
+        using var ready = new Barrier(2);
+        Stream Open()
+        {
+            if (!ready.SignalAndWait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+            return new MemoryStream(bytes);
+        }
+
+        string[] paths = await Task.WhenAll(
+            Task.Run(() => PortableLauncher.PrepareAsync(directory.Path, hash, Open)),
+            Task.Run(() => PortableLauncher.PrepareAsync(directory.Path, hash, Open)));
+
+        Assert.Equal(paths[0], paths[1]);
+        Assert.Equal("app", await File.ReadAllTextAsync(paths[0]));
+        Assert.Single(Directory.EnumerateFileSystemEntries(directory.Path));
+    }
+
+    [Fact]
+    public async Task WrongPortablePayloadLeavesNoCachedExecutable()
+    {
+        using var directory = new TestDirectory();
+        using var setupArchive = CreateArchive();
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => PortableLauncher.PrepareAsync(directory.Path,
+            Digest(setupArchive), () => new MemoryStream(setupArchive.ToArray())));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(directory.Path));
+    }
+
+    private static MemoryStream CreateLauncherArchive(string app)
+        => CreateArchiveWithEntries([("SpaceMaid.App.exe", app), ("SpaceMaid.App.dll", "app library"),
+            ("SpaceMaid.App.runtimeconfig.json", "runtime config"), ("coreclr.dll", "runtime")]);
+
     private static MemoryStream CreateArchive(params (string Name, string Contents)[] additional)
+        => CreateArchiveWithEntries(new[] { (".portable", ""), ("Update.exe", "update"), ("Space Maid.exe", "launcher"),
+            ("current/SpaceMaid.App.exe", "app"), ("current/sq.version", "version") }.Concat(additional));
+
+    private static MemoryStream CreateArchiveWithEntries(IEnumerable<(string Name, string Contents)> entries)
     {
         var stream = new MemoryStream();
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
         {
-            foreach (var item in new[] { (".portable", ""), ("Update.exe", "update"), ("Space Maid.exe", "launcher"), ("current/SpaceMaid.App.exe", "app"), ("current/sq.version", "version") }.Concat(additional))
+            foreach (var item in entries)
             {
                 using var writer = new StreamWriter(zip.CreateEntry(item.Item1).Open());
                 writer.Write(item.Item2);

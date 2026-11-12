@@ -18,6 +18,9 @@
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>PortableSha256</_Parameter1><_Parameter2>$(InstallerPortableSha256)</_Parameter2>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(InstallerPortableLauncher)' == 'true'">
+      <_Parameter1>PortableLauncher</_Parameter1><_Parameter2>true</_Parameter2>
+    </AssemblyAttribute>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>UpdateSha256</_Parameter1><_Parameter2>$(InstallerUpdateSha256)</_Parameter2>
     </AssemblyAttribute>
@@ -25,9 +28,13 @@
     <EmbeddedResource Include="$(InstallerPortablePayload)" LogicalName="SpaceMaid.Installer.Payload.Portable.zip" Condition="'$(InstallerPortablePayload)' != ''" />
     <EmbeddedResource Include="$(InstallerUpdatePayload)" LogicalName="SpaceMaid.Installer.Payload.Update.nupkg" Condition="'$(InstallerUpdatePayload)' != ''" />
   </ItemGroup>
-  <Target Name="ValidateInstallerPayloads" BeforeTargets="PrepareForBuild" Condition="'$(InstallerSetupPayload)' != '' or '$(InstallerPortablePayload)' != '' or '$(InstallerUpdatePayload)' != ''">
+  <Target Name="ValidateInstallerPayloads" BeforeTargets="PrepareForBuild" Condition="'$(InstallerPortableLauncher)' != 'true' and ('$(InstallerSetupPayload)' != '' or '$(InstallerPortablePayload)' != '' or '$(InstallerUpdatePayload)' != '')">
     <Error Condition="!Exists('$(InstallerSetupPayload)') or !Exists('$(InstallerPortablePayload)') or !Exists('$(InstallerUpdatePayload)')" Text="Native Setup, portable ZIP and full update package payloads are required." />
     <Error Condition="'$(InstallerSetupSha256)' == '' or '$(InstallerPortableSha256)' == '' or '$(InstallerUpdateSha256)' == ''" Text="Installer payload SHA-256 values are required." />
+  </Target>
+  <Target Name="ValidateLauncherPayload" BeforeTargets="PrepareForBuild" Condition="'$(InstallerPortableLauncher)' == 'true'">
+    <Error Condition="!Exists('$(InstallerPortablePayload)') or '$(InstallerPortableSha256)' == '' or '$(InstallerSetupPayload)' != '' or '$(InstallerUpdatePayload)' != ''"
+           Text="The portable launcher requires only the self-contained app archive and its SHA-256 value." />
   </Target>
   <Target Name="EmbedInstallerRuntimeNotices" AfterTargets="ResolveFrameworkReferences" BeforeTargets="PrepareResourceNames" Condition="'$(SelfContained)' == 'true'">
     <ItemGroup>

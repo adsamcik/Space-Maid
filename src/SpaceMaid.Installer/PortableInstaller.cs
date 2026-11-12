@@ -8,9 +8,18 @@ internal static class PortableInstaller
 {
     private const long MaximumExpandedBytes = 8L * 1024 * 1024 * 1024;
     private const int MaximumEntries = 250_000;
+    private static readonly string[] SetupEntries =
+        [".portable", "Update.exe", "Space Maid.exe", Path.Join("current", "SpaceMaid.App.exe"), Path.Join("current", "sq.version")];
 
-    public static async Task<string> ExtractAsync(Stream payload, string expectedHash, string destination,
+    public static Task<string> ExtractAsync(Stream payload, string expectedHash, string destination,
         IProgress<double>? progress = null, CancellationToken cancellationToken = default)
+        => ExtractAsync(payload, expectedHash, destination, SetupEntries, true, progress, cancellationToken);
+
+    internal static Task<string> ExtractCachedAsync(Stream payload, string expectedHash, string destination, string[] requiredEntries)
+        => ExtractAsync(payload, expectedHash, destination, requiredEntries, false, null, CancellationToken.None);
+
+    private static async Task<string> ExtractAsync(Stream payload, string expectedHash, string destination,
+        string[] requiredEntries, bool replaceEmptyFolder, IProgress<double>? progress, CancellationToken cancellationToken)
     {
         string target = ValidateDestination(destination);
         if (!payload.CanSeek) throw new InvalidDataException("Installation files could not be read. Download Setup again.");
@@ -18,7 +27,7 @@ internal static class PortableInstaller
         await PayloadIntegrity.VerifyAsync(payload, expectedHash, cancellationToken);
         payload.Position = 0;
         using var archive = new ZipArchive(payload, ZipArchiveMode.Read, leaveOpen: true);
-        var entries = ValidateArchive(archive);
+        var entries = ValidateArchive(archive, requiredEntries);
         string parent = Path.GetDirectoryName(target)!;
         string staging = Path.Join(parent, "." + Path.GetFileName(target) + ".SpaceMaid-" + Guid.NewGuid().ToString("N"));
         SafeDirectories.EnsureNoReparseAncestors(staging);
@@ -55,7 +64,7 @@ internal static class PortableInstaller
             cancellationToken.ThrowIfCancellationRequested();
             // Recheck just before committing; an existing folder is never overwritten.
             ValidateDestination(target);
-            if (DiskAccess.Default.DirectoryExists(target)) DiskAccess.Default.DeleteDirectory(target, recursive: false);
+            if (replaceEmptyFolder && DiskAccess.Default.DirectoryExists(target)) DiskAccess.Default.DeleteDirectory(target, recursive: false);
             DiskAccess.Default.MoveDirectory(staging, target);
             progress?.Report(1);
             return target;
@@ -80,7 +89,7 @@ internal static class PortableInstaller
         return target;
     }
 
-    private static List<ArchiveItem> ValidateArchive(ZipArchive archive)
+    private static List<ArchiveItem> ValidateArchive(ZipArchive archive, string[] requiredEntries)
     {
         if (archive.Entries.Count is 0 or > MaximumEntries) throw InvalidArchive();
         var entries = new List<ArchiveItem>(archive.Entries.Count);
@@ -109,7 +118,7 @@ internal static class PortableInstaller
                 parent = Path.GetDirectoryName(parent);
             }
         }
-        foreach (string required in new[] { ".portable", "Update.exe", "Space Maid.exe", Path.Join("current", "SpaceMaid.App.exe"), Path.Join("current", "sq.version") })
+        foreach (string required in requiredEntries)
             if (!paths.TryGetValue(required, out bool directory) || directory) throw InvalidArchive();
         return entries;
     }

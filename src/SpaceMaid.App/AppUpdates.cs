@@ -32,6 +32,7 @@ internal sealed class AppUpdates : IDisposable
     internal bool Ready { get; private set; }
     internal int Progress { get; private set; }
     internal string CurrentVersion => _manager?.CurrentVersion?.ToString()
+        ?? (AppData.IsPortableExe ? Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] : null)
         ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "Development";
     internal string? AvailableVersion => _available?.TargetFullRelease.Version.ToString();
     internal string Status { get; private set; }
@@ -45,7 +46,8 @@ internal sealed class AppUpdates : IDisposable
         _settingsPath = settingsPath;
         _log = new(logDirectory);
         _time = time ?? TimeProvider.System;
-        Status = Supported ? "Check for updates" : "Updates are available in release installations.";
+        Status = Supported ? "Check for updates" : AppData.IsPortableExe
+            ? "Download a newer portable EXE from Releases." : "Updates are available in release installations.";
         try
         {
             if (DiskAccess.Default.FileExists(settingsPath))
@@ -70,7 +72,7 @@ internal sealed class AppUpdates : IDisposable
         var repository = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(item => item.Key == "GitHubRepository")?.Value;
         UpdateManager? manager = null;
-        if (RepositoryUrl(repository) is not null && VelopackLocator.Current.CurrentlyInstalledVersion is { } version)
+        if (!AppData.IsPortableExe && RepositoryUrl(repository) is not null && VelopackLocator.Current.CurrentlyInstalledVersion is { } version)
             manager = new VerifiedUpdateManager(new GitHubUpdateSource(repository!, version.IsPrerelease));
         return new(manager, settingsPath, logDirectory);
     }

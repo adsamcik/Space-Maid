@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$PackagePath)
+param([Parameter(Mandatory)][string]$PackagePath, [switch]$SelfContained)
 $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $required = @(
@@ -29,6 +29,10 @@ $required = @(
     'Extensions/space-maid.assistant/Worker/Runtime-LICENSE.TXT',
     'Extensions/space-maid.assistant/Worker/Runtime-THIRD-PARTY-NOTICES.TXT'
 )
+if ($SelfContained) {
+    $required += @('wpfgfx_cor3.dll', 'Notices/Microsoft.NETCore.App/LICENSE.TXT',
+        'Notices/Microsoft.NETCore.App/THIRD-PARTY-NOTICES.TXT', 'Notices/Microsoft.WindowsDesktop.App/LICENSE')
+}
 foreach ($relative in $required) {
     $file = Join-Path $package $relative
     if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
@@ -61,4 +65,14 @@ $worker = Join-Path $package 'Extensions/space-maid.assistant/Worker'
 $runtime = Get-Content -LiteralPath (Join-Path $worker 'SpaceMaid.ModelWorker.runtimeconfig.json') -Raw | ConvertFrom-Json
 if (-not $runtime.runtimeOptions.includedFrameworks) { throw 'The isolated worker must remain self-contained.' }
 if (-not (Get-ChildItem -LiteralPath $worker -Recurse -Filter 'llama.dll')) { throw 'The CPU worker native backend is missing.' }
+if ($SelfContained) {
+    foreach ($executable in @('SpaceMaid.App', 'ScanHelper/SpaceMaid.ScanHelper', 'Extensions/space-maid.containers/DiskHelper/SpaceMaid.DiskHelper')) {
+        $base = Join-Path $package $executable
+        $runtime = Get-Content -LiteralPath "$base.runtimeconfig.json" -Raw | ConvertFrom-Json
+        if (-not $runtime.runtimeOptions.includedFrameworks -or
+            -not (Test-Path -LiteralPath (Join-Path (Split-Path $base) 'coreclr.dll') -PathType Leaf)) {
+            throw "$executable must include its .NET runtime."
+        }
+    }
+}
 Write-Host "Verified $($required.Count) required package assets, Windows x64 executables and isolated worker runtime."

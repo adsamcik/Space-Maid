@@ -28,9 +28,9 @@ $changes = if (Test-Path -LiteralPath $versionNotes -PathType Leaf) { Get-Conten
 (@"
 $changes
 
-Windows x64. Run **SpaceMaid-$($release.Version)-win-x64-Setup.exe**, or extract the portable ZIP and run **Space Maid.exe**.
+Windows x64. Double-click **SpaceMaid-$($release.Version)-win-x64-Portable.exe** to launch without installing .NET or unpacking a ZIP. It caches its files under %LOCALAPPDATA%\SpaceMaid.Portable\Cache. Download a newer Portable.exe to update. Settings and catalogs are stored separately under %LOCALAPPDATA%\SpaceMaid.Portable\UserData.
 
-Setup detects an existing installation and offers to update it while keeping settings and catalogs. New installations can use normal installation or a portable folder. Normal installation installs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) when needed; portable mode requires it to be installed already.
+Run **SpaceMaid-$($release.Version)-win-x64-Setup.exe** to install, update an existing installation or create a portable folder. You can also extract the portable ZIP and run **Space Maid.exe**. Setup installs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for normal installation when needed. The portable folder and ZIP require it to be installed already.
 Original code is MIT licensed; dependency and imported-data terms are in the included notices.
 "@).TrimStart() | Set-Content -LiteralPath $notes -Encoding utf8NoBOM
 Push-Location $repository
@@ -88,6 +88,8 @@ finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $bootstrap 'published/SpaceMaid.Installer.exe') -Destination $installerDownload
 Get-ChildItem -LiteralPath (Join-Path $bootstrap 'published') -File -Filter '*.txt' |
     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $output }
+& (Join-Path $PSScriptRoot 'New-PortableExe.ps1') -Version $release.Version -WorkPath (Join-Path $bootstrap 'portable') `
+    -Destination (Join-Path $output "SpaceMaid-$($release.Version)-win-x64-Portable.exe")
 $assetIndex = Join-Path $output 'assets.win.json'
 $assets = @(Get-Content -LiteralPath $assetIndex -Raw | ConvertFrom-Json)
 foreach ($asset in $assets) {
@@ -102,4 +104,4 @@ foreach ($asset in Get-ChildItem -LiteralPath $output -File | Where-Object Exten
     $hash = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($asset.FullName + '.sha256', "$hash  $($asset.Name)`n", [Text.UTF8Encoding]::new($false))
 }
-Write-Host 'Prepared installer, portable app, update feed and SHA-256 checksums.'
+Write-Host 'Prepared installer, portable EXE and ZIP, update feed and SHA-256 checksums.'

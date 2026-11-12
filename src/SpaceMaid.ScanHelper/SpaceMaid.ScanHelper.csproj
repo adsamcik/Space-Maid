@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>WinExe</OutputType><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The app launches this process without linking its assembly. -->
+    <ShouldBeValidatedAsExecutableReference>false</ShouldBeValidatedAsExecutableReference>
+  </PropertyGroup>
   <ItemGroup><ProjectReference Include="../SpaceMaid.Core/SpaceMaid.Core.csproj" /></ItemGroup>
 </Project>

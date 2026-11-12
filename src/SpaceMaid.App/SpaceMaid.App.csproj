@@ -7,6 +7,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <StartupObject>SpaceMaid.App.App</StartupObject>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(SpaceMaidPortableExe)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <DefineConstants>$(DefineConstants);SPACE_MAID_PORTABLE_EXE</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <ApplicationDefinition Remove="App.xaml" />
     <Page Include="App.xaml" />
@@ -70,6 +74,16 @@
     <ItemGroup>
       <WorkerFiles Include="%(WorkerPublish.Identity)/**/*" />
       <Content Include="@(WorkerFiles)" Link="Extensions/space-maid.assistant/Worker/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IncludePortableRuntimeNotices" AfterTargets="ResolveFrameworkReferences" Condition="'$(SpaceMaidPortableExe)' == 'true'">
+    <ItemGroup>
+      <_PortableRuntimePack Include="@(ResolvedRuntimePack)" Condition="'%(FrameworkName)' == 'Microsoft.NETCore.App' or '%(FrameworkName)' == 'Microsoft.WindowsDesktop.App'" />
+      <_PortableRuntimeNotice Include="%(_PortableRuntimePack.PackageDirectory)/LICENSE*;%(_PortableRuntimePack.PackageDirectory)/THIRD-PARTY-NOTICES*">
+        <Framework>%(_PortableRuntimePack.FrameworkName)</Framework>
+      </_PortableRuntimeNotice>
+      <Content Include="@(_PortableRuntimeNotice)" Link="Notices/%(_PortableRuntimeNotice.Framework)/%(_PortableRuntimeNotice.Filename)%(_PortableRuntimeNotice.Extension)"
+               CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>
 </Project>

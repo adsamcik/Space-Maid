@@ -15,11 +15,15 @@ A Windows app for finding what fills your drives and cleaning up development clu
 
 ## Download and run
 
+For a single download, double-click **SpaceMaid-&lt;version&gt;-win-x64-Portable.exe** from [Releases](https://github.com/adsamcik/Space-Maid/releases). It opens without setup or a separate .NET installation. First launch extracts the app into `%LOCALAPPDATA%\SpaceMaid.Portable\Cache`. To update, download and run a newer portable EXE. Settings and photo catalogs stay in `%LOCALAPPDATA%\SpaceMaid.Portable\UserData`. Re-enable any saved cleanup schedules after switching versions, since they target the cached app.
+
+You can clear the cache when Space Maid is closed. Keep the portable EXE to rebuild it on the next launch.
+
 Download the **Setup** installer from [Releases](https://github.com/adsamcik/Space-Maid/releases) and choose **Install** or a **Portable** folder. Setup detects an existing installation and offers **Update**, keeping settings and photo catalogs. If the same or a newer version is installed, Setup offers to open it. Normal installation adds the .NET 10 Desktop Runtime when needed. Portable mode requires the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) already installed. A portable ZIP is also available: extract it and open `Space Maid.exe`. Keep the extracted folders together. Existing portable apps update through **More → Updates**.
 
 Release binaries are currently unsigned.
 
-Release builds check this repository's GitHub Releases daily when enabled, including while the app stays open. In **More → Updates**, enable **Download updates automatically** to prepare updates in the background, or download them manually. Automatic downloads wait until both the release publication and the update package's last change are at least 24 hours old; manual downloads remain available during this protection period. Choose **Restart and update** when ready; active jobs must finish first, and settings and photo catalogs are retained. Downloads use HTTPS, stay on GitHub's release hosts and are checked against the release's SHA-256 and size before installation. Older versions are rejected; stable builds ignore prereleases. Source builds do not check for updates.
+Setup and portable ZIP builds check this repository's GitHub Releases daily when enabled, including while the app stays open. In **More → Updates**, enable **Download updates automatically** to prepare updates in the background, or download them manually. Automatic downloads wait until both the release publication and the update package's last change are at least 24 hours old; manual downloads remain available during this protection period. Choose **Restart and update** when ready; active jobs must finish first, and settings and photo catalogs are retained. Downloads use HTTPS, stay on GitHub's release hosts and are checked against the release's SHA-256 and size before installation. Older versions are rejected; stable builds ignore prereleases. Source builds do not check for updates.
 
 Enable fast scanning when prompted to authorize the read-only NTFS helper. The app stays unelevated; standard scanning remains available if you decline.
 
@@ -39,7 +43,7 @@ On Windows, install the .NET 10 SDK version specified in [global.json](global.js
 dotnet run --project src/SpaceMaid.App -c Release
 ```
 
-[Contributing](CONTRIBUTING.md) covers builds, tests, bug reports and releases. [CI](.github/workflows/ci.yml) builds on Linux and runs Windows integration tests. Version tags such as `v1.2.3` or `v1.2.3-beta.1` trigger the [release workflow](.github/workflows/release.yml), which publishes an installer, portable ZIP, update feed and checksums after those checks pass.
+[Contributing](CONTRIBUTING.md) covers builds, tests, bug reports and releases. [CI](.github/workflows/ci.yml) builds on Linux and runs Windows integration tests. Version tags such as `v1.2.3` or `v1.2.3-beta.1` trigger the [release workflow](.github/workflows/release.yml), which publishes Setup, a portable EXE and ZIP, an update feed and checksums after those checks pass.
 
 ## Details
 

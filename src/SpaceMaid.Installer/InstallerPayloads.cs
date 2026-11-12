@@ -12,6 +12,7 @@ internal sealed class InstallerPayloads(Assembly assembly)
     private const string UpdateResource = "SpaceMaid.Installer.Payload.Update.nupkg";
     public string Version { get; } = (assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Development build").Split('+')[0];
     public string PortableSha256 => Metadata("PortableSha256");
+    public bool IsPortableLauncher => Metadata("PortableLauncher") == "true";
     public bool IsAvailable => PayloadIntegrity.IsSha256(Metadata("SetupSha256")) && PayloadIntegrity.IsSha256(PortableSha256)
         && PayloadIntegrity.IsSha256(Metadata("UpdateSha256"))
         && new[] { SetupResource, PortableResource, UpdateResource }.All(assembly.GetManifestResourceNames().Contains);
