@@ -9,6 +9,8 @@ internal static partial class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--repair-permission")
+            return await RepairPermissionAsync(args[1], args[2]);
         if (args.Length != 2 || !args[0].StartsWith("SpaceMaid-", StringComparison.Ordinal)
             || args[0].Length > 80 || args[0].Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-')
             || !uint.TryParse(args[1], out uint parent)) return 2;

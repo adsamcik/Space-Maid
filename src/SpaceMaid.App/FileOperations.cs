@@ -77,6 +77,13 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     internal async Task<RecycleResult> RecycleWithRecoveryAsync(FolderDeletionTarget target, nint owner,
         CancellationToken token, Action<string, object> diagnostic, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmRetry,
         Func<Task> recheck, Action? validateScope, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks)
+        => await RecycleWithRepairRecoveryAsync(target, owner, token, diagnostic, confirmRetry, recheck, validateScope, resolveLocks, null)
+            .ConfigureAwait(false);
+
+    internal async Task<RecycleResult> RecycleWithRepairRecoveryAsync(FolderDeletionTarget target, nint owner,
+        CancellationToken token, Action<string, object> diagnostic, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmRetry,
+        Func<Task> recheck, Action? validateScope, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks,
+        Func<FolderDeletionTarget, RecyclePermissionTarget, CancellationToken, Task<bool>>? confirmRepair)
     {
         bool administrator = false, retriedLocks = false;
         Action? scopeCheck = null;
@@ -95,6 +102,16 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
                 if (!await confirmRetry(target, token).ConfigureAwait(false)) throw;
                 administrator = true;
             }
+            catch (FolderRecycler.RepairablePermissionException error) when (confirmRepair is not null)
+            {
+                token.ThrowIfCancellationRequested();
+                var item = await Task.Run(() => Files.CaptureRecyclePermissionTarget(target.ExportCapturedIdentity(), error.ItemPath), token)
+                    .ConfigureAwait(false);
+                if (!await confirmRepair(target, item, token).ConfigureAwait(false)) throw;
+                await recheck().ConfigureAwait(false);
+                validateScope?.Invoke();
+                return await RepairAndRecycleAsync(target, item, owner, token, diagnostic, validateScope, recheck).ConfigureAwait(false);
+            }
             catch (FolderRecycler.SharingException) when (!retriedLocks && resolveLocks is not null)
             {
                 token.ThrowIfCancellationRequested();
@@ -109,6 +126,42 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
             scopeCheck = validateScope;
         }
     }
+
+    internal Task<RecycleResult> RepairAndRecycleAsync(FolderDeletionTarget target, RecyclePermissionTarget item,
+        nint owner, CancellationToken token, Action<string, object> diagnostic, Action? validateScope = null, Func<Task>? recheck = null)
+        => CleanupMutationLease.RunAsync(async () =>
+        {
+            var folder = target.ExportCapturedIdentity();
+            void ValidateExactItem()
+            {
+                if (Files.CaptureRecyclePermissionTarget(folder, item.Path) != item)
+                    throw new IOException("The item changed after confirmation.");
+                validateScope?.Invoke();
+            }
+            ValidateExactItem();
+            token.ThrowIfCancellationRequested();
+            var reply = await RecyclePermissionClient.RepairAsync(Files, new(folder, item), token).ConfigureAwait(false);
+            if (!reply.Applied)
+            {
+                if (reply.Error is { } error) throw new IOException(error);
+                return new RecycleResult(true, null);
+            }
+            diagnostic("recycle-permission-repaired", new { item.Path });
+            try
+            {
+                if (token.IsCancellationRequested)
+                    throw new IOException("Recycling was cancelled before the move.");
+                if (recheck is not null) await recheck().ConfigureAwait(false);
+                var result = await FolderRecycler.RecycleAsync(target, owner, token, diagnostic, ValidateExactItem).ConfigureAwait(false);
+                if (result.Cancelled)
+                    throw new IOException("Recycling stopped before Windows confirmed the move.");
+                return result;
+            }
+            catch (Exception error) when (CleanupBatch.IsExpected(error))
+            {
+                throw new IOException("Ownership and permissions were changed. The Recycle Bin move was not confirmed. " + error.Message, error);
+            }
+        }, token);
 
     public Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,

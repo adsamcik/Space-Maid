@@ -23,6 +23,12 @@ public partial class MainWindow
             openApps.Visibility = target is not null && CanReviewRecycleRecovery ? Visibility.Visible : Visibility.Collapsed;
             openApps.ToolTip = target?.Path;
         }
+        if (RepairRecycleButton is { } repair)
+        {
+            var target = SelectedRecycleRepair;
+            repair.Visibility = target is not null && CanReviewRecycleRecovery ? Visibility.Visible : Visibility.Collapsed;
+            repair.ToolTip = target?.Item.Path;
+        }
         var selected = SelectedTreeRows();
         bool single = selected.Length == 1 && !_selectionIsGroup;
         var row = single ? selected[0] : null;

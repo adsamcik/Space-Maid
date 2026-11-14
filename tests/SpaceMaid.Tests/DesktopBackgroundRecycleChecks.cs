@@ -78,6 +78,15 @@ public sealed partial class DesktopTests
             Assert.Equal("Replacement", File.ReadAllText(payload));
             Assert.Equal(contents, File.ReadAllText(Path.Join(original, "payload.txt")));
 
+            var reviewTarget = FolderDeletionTarget.CaptureCurrent(folder.FullName, 11);
+            var repairTarget = window.Operations.Files.CaptureRecyclePermissionTarget(reviewTarget.ExportCapturedIdentity(), payload);
+            var repairDialog = new RecycleFolderWindow(reviewTarget, repairTarget) { Owner = window };
+            repairDialog.ContentRendered += (_, _) => repairDialog.Close();
+            Render(repairDialog, Path.Join(artifactRoot, "artifacts", "ui", "recycle-permission-repair.png"), 520, 340);
+            Assert.Equal(payload, ((TextBox)repairDialog.FindName("TargetPath")).Text);
+            Assert.Contains(folder.FullName, ((TextBlock)repairDialog.FindName("SelectionNote")).Text);
+            Assert.Equal("Replacement", File.ReadAllText(payload));
+
             using var replacedPermissions = new RecyclePermissionFixture(folder.FullName);
             using var otherPermissions = new RecyclePermissionFixture(second.FullName);
             var tree = (ListBox)window.FindName("SpaceTree");

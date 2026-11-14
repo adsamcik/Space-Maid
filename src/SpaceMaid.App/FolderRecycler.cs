@@ -24,6 +24,11 @@ internal static class FolderRecycler
     private const uint ShowElevationPrompt = 0x00040000; // FOFX_SHOWELEVATIONPROMPT
 
     internal sealed class PermissionException(string message, int result) : IOException(message, result);
+    internal sealed class RepairablePermissionException(string path, int result)
+        : IOException("Windows still denied access after the administrator retry.", result)
+    {
+        internal string ItemPath { get; } = path;
+    }
     internal sealed class SharingException(int result) : IOException("A file is in use. Check which apps have it open, then try again.", result);
 
     public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
@@ -102,6 +107,9 @@ internal static class FolderRecycler
             {
                 throw new PermissionException("Windows denied access. Check folder permissions, then try again.", failure);
             }
+            if (administratorRetry && !sink.ItemMayHaveMoved && IsItemAccessDenied(failure)
+                && sink.DeniedPath is { } deniedPath && sink.DeniedPathsAgree)
+                throw new RepairablePermissionException(deniedPath, failure);
             // The Shell may label its Recycle Bin transfer as a destination
             // sharing error. Recovery still inspects only files under the source.
             if (!sink.ItemMayHaveMoved && unchecked((uint)failure) is 0x80070020 or 0x80070021 or 0x80270027 or 0x80270028)
@@ -164,6 +172,8 @@ internal static class FolderRecycler
     internal static bool IsPermissionFailure(int result) => unchecked((uint)result) is
         0x80070005 or 0x800702E4 or 0x80270002 or 0x80270021;
 
+    private static bool IsItemAccessDenied(int result) => unchecked((uint)result) == 0x80270021;
+
     private static void ThrowIfFailed(int result)
     {
         if (result >= 0) return;
@@ -195,6 +205,8 @@ internal static class FolderRecycler
         public int Result { get; private set; }
         public int FinishResult { get; private set; }
         public bool ItemMayHaveMoved { get; private set; }
+        public string? DeniedPath { get; private set; }
+        public bool DeniedPathsAgree { get; private set; } = true;
         public bool RootCompleted { get; private set; }
         public int CallbackCount { get; private set; }
         public int StartOperations() => token.IsCancellationRequested ? CancelledHResult : 0;
@@ -228,6 +240,11 @@ internal static class FolderRecycler
             {
                 item.GetDisplayName(0x80058000, out string source);
                 bool root = source.Equals(target.Path, StringComparison.OrdinalIgnoreCase);
+                if (IsItemAccessDenied(result))
+                {
+                    DeniedPathsAgree &= DeniedPath is null || string.Equals(DeniedPath, source, StringComparison.Ordinal);
+                    DeniedPath ??= source;
+                }
                 if (root || result < 0)
                     diagnostic?.Invoke("recycle-delete-result", new { Path = source, Root = root, Flags = $"0x{flags:X8}", HResult = $"0x{result:X8}" });
                 if (root)

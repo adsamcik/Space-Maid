@@ -4,6 +4,8 @@ Cleanup rule reviews use scan estimates and captured root identities. Only the a
 
 Explore and interactive Cleanup can look up apps using files affected by a sharing violation. Discovery probes deletion sharing through the configured `DiskAccess` and uses Windows Restart Manager for app names. Only selected, still-matching desktop apps receive a normal close request. The retry uses the original folder identity and Recycle Bin checks.
 
+After Windows identifies a single source item it cannot access in an administrator retry, Explore and interactive Cleanup can review an exact-item permission repair. A fresh same-account UAC prompt starts a one-request helper. It checks the local NTFS path and captured identity, takes ownership, and adds a non-inheriting DELETE grant. Existing deny rules, protected items and linked paths are kept. The normal app then rechecks the original folder and retries recycling. The ownership and grant can remain after a failed move or restore from the bin.
+
 `SpaceMaid.Core.IO.DiskAccess` is the runtime boundary for file access. Use it for file/directory probes, content streams, enumeration, settings/cache writes, moves, deletes, drive information and native file handles. The host's `FileOperations` composes it with confirmation, inventory caching, Shell recycling and sync-provider workflows. Extensions receive the same configured instance as `IExtensionHost.Files`, including the host's current NTFS helper. Use that service for extension file access; keep inventory references and cached measurements on `host.Inventory`.
 
 ```csharp

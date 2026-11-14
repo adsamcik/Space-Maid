@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.IO;
 
 namespace SpaceMaid.App;
 
@@ -56,6 +57,23 @@ public partial class RecycleFolderWindow : Window
         }
         SelectionNote.Text = string.Join(Environment.NewLine, notes);
         SelectionNote.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    internal RecycleFolderWindow(FolderDeletionTarget folder, RecyclePermissionTarget item) : this(folder)
+    {
+        Title = "Repair permissions";
+        Heading.Text = "Take ownership and retry recycling?";
+        SingleTargetHeader.Visibility = DeletionDetails.Visibility = PartialScanNote.Visibility = Visibility.Collapsed;
+        TargetPath.Text = item.Path;
+        TargetPath.ToolTip = item.Path;
+        AutomationProperties.SetName(TargetPath, "Exact item whose permissions will change");
+        RecycleNote.Text = "Approve Windows elevation with your current account. Space Maid will take ownership for that account and add a delete permission for this item only. These changes may remain if the move fails or the item is restored.";
+        if (item.Path != folder.Path)
+        {
+            SelectionNote.Text = $"Folder to recycle\n{folder.Path}";
+            SelectionNote.Visibility = Visibility.Visible;
+        }
+        RecycleButton.Content = "Take ownership and retry";
     }
     private void Recycle_Click(object sender, RoutedEventArgs e) => DialogResult = true;
 }

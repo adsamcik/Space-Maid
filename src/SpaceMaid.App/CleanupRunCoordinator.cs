@@ -2,6 +2,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Core.Optimization;
 using SpaceMaid.Core.Scanning;
 
@@ -162,23 +163,31 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
 
     internal Task<CleanupBatchResult> RunAsync(CleanupPreparedRun prepared, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token)
-        => RunCoreAsync(prepared, owner, progress, token, null, null);
+        => RunCoreAsync(prepared, owner, progress, token, null, null, null);
 
     internal Task<CleanupBatchResult> RunInteractiveAsync(CleanupPreparedRun prepared, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token,
         Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry)
-        => RunCoreAsync(prepared, owner, progress, token, confirmAdministratorRetry, null);
+        => RunCoreAsync(prepared, owner, progress, token, confirmAdministratorRetry, null, null);
 
     internal Task<CleanupBatchResult> RunWithRecoveryAsync(CleanupPreparedRun prepared, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token,
         Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry,
         Func<FolderDeletionTarget, CancellationToken, Task<bool>> resolveLocks)
-        => RunCoreAsync(prepared, owner, progress, token, confirmAdministratorRetry, resolveLocks);
+        => RunCoreAsync(prepared, owner, progress, token, confirmAdministratorRetry, resolveLocks, null);
+
+    internal Task<CleanupBatchResult> RunWithPermissionRecoveryAsync(CleanupPreparedRun prepared, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>> resolveLocks,
+        Func<FolderDeletionTarget, RecyclePermissionTarget, CancellationToken, Task<bool>> confirmRepair)
+        => RunCoreAsync(prepared, owner, progress, token, confirmAdministratorRetry, resolveLocks, confirmRepair);
 
     private async Task<CleanupBatchResult> RunCoreAsync(CleanupPreparedRun prepared, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token,
         Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmAdministratorRetry,
-        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks)
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks,
+        Func<FolderDeletionTarget, RecyclePermissionTarget, CancellationToken, Task<bool>>? confirmRepair)
     {
         var record = ApprovalRecord(prepared);
         var existing = store.LoadRun(record.Id);
@@ -256,8 +265,8 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
                         ? item with { IsRegeneratable = false, CleanupBlockReason = "This automatic build rule changed and needs renewed approval · Kept" } : item).ToArray() : discover;
                 result = await (confirmAdministratorRetry is null || automatic
                     ? CleanupBatch.ExecuteJournaledAsync(plan, owner, progress, work.Token, (_, _) => { }, policies, runDiscovery, operations, journal)
-                    : CleanupBatch.ExecuteInteractiveRecoveryAsync(plan, owner, progress, work.Token, (_, _) => { }, policies,
-                        runDiscovery, operations, journal, confirmAdministratorRetry, resolveLocks)).ConfigureAwait(false);
+                    : CleanupBatch.ExecuteInteractivePermissionRecoveryAsync(plan, owner, progress, work.Token, (_, _) => { }, policies,
+                        runDiscovery, operations, journal, confirmAdministratorRetry, resolveLocks, confirmRepair)).ConfigureAwait(false);
                 // Global validation failure and targets excluded before the
                 // execution loop still receive complete per-target receipts.
                 foreach (var item in result.Locations)

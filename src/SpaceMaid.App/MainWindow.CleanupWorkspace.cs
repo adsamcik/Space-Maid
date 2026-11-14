@@ -73,7 +73,8 @@ public partial class MainWindow
             var displayed = _snapshot;
             nint owner = new WindowInteropHelper(this).Handle;
             Task<CleanupBatchResult> Run(CancellationToken current) =>
-                coordinator.RunWithRecoveryAsync(prepared, owner, progress, current, ConfirmCleanupAdministratorRetryAsync, ReviewRecycleLocksAsync);
+                coordinator.RunWithPermissionRecoveryAsync(prepared, owner, progress, current,
+                    ConfirmCleanupAdministratorRetryAsync, ReviewRecycleLocksAsync, ConfirmRecyclePermissionRepairAsync);
             Task<CleanupBatchResult> task;
             if (displayed is not null && string.Equals(displayed.RootPath, prepared.Plan.Snapshot.RootPath, StringComparison.OrdinalIgnoreCase))
                 task = ExecuteCleanupWithRefreshAsync(prepared.Plan, displayed, progress, work.Token, work, log, Run);

@@ -20,16 +20,18 @@ internal sealed record RecycleSelectionReview(FolderDeletionTarget[] Targets, Re
 
 public partial class MainWindow
 {
-    private sealed class RecycleJob(FolderDeletionTarget target, bool administratorRetry = false)
+    private sealed class RecycleJob(FolderDeletionTarget target, bool administratorRetry = false, RecyclePermissionTarget? repair = null)
     {
         public FolderDeletionTarget Target { get; } = target;
         public bool AdministratorRetry { get; } = administratorRetry;
+        public RecyclePermissionTarget? Repair { get; } = repair;
         public string FolderName => Path.GetFileName(Target.Path);
         internal TaskCompletionSource<RecycleResult?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed record RecycleAttempt(RecycleJob Job, RecycleResult? Result, string? Error,
-        bool CancelledBeforeMove = false, bool CanRetryWithAdministrator = false, bool CanCheckOpenApps = false);
+        bool CancelledBeforeMove = false, bool CanRetryWithAdministrator = false, bool CanCheckOpenApps = false,
+        RecyclePermissionTarget? Repair = null);
 
     private readonly ObservableCollection<RecycleJob> _queuedRecycles = [];
     private RecycleJob? _activeRecycle;
@@ -43,6 +45,7 @@ public partial class MainWindow
     private string? _recycleSummary, _recycleDetails;
     private readonly List<FolderDeletionTarget> _administratorRetryTargets = [];
     private readonly List<FolderDeletionTarget> _lockedRecycleTargets = [];
+    private readonly List<(FolderDeletionTarget Folder, RecyclePermissionTarget Item)> _recycleRepairTargets = [];
     private FolderDeletionTarget? AdministratorRetryTarget => SelectedRecoveryTarget(_administratorRetryTargets);
     private FolderDeletionTarget? LockedRecycleTarget => SelectedRecoveryTarget(_lockedRecycleTargets);
 
@@ -168,6 +171,7 @@ public partial class MainWindow
     {
         _administratorRetryTargets.RemoveAll(target => jobs.Any(job => RecyclePathsOverlap(target.Path, job.Target.Path)));
         _lockedRecycleTargets.RemoveAll(target => jobs.Any(job => RecyclePathsOverlap(target.Path, job.Target.Path)));
+        _recycleRepairTargets.RemoveAll(target => jobs.Any(job => RecyclePathsOverlap(target.Folder.Path, job.Target.Path)));
         foreach (var job in jobs) _queuedRecycles.Add(job);
         _recycleRefreshWork?.Cancel();
         SignalRecycleStateChange();
@@ -182,6 +186,53 @@ public partial class MainWindow
     private bool CanReviewRecycleRecovery => _recycleTask is null
         && _recycleCheck is null && ExploreTab.IsChecked == true && _snapshot is { } scan && CanUseFolderMenu(scan);
     private bool CanRetryRecycleWithAdministrator => AdministratorRetryTarget is not null && CanReviewRecycleRecovery;
+
+    private (FolderDeletionTarget Folder, RecyclePermissionTarget Item)? SelectedRecycleRepair
+    {
+        get
+        {
+            if (_recycleRepairTargets.Count == 0) return null;
+            var selected = SelectedTreeRows();
+            if (selected.Length == 1 && !_selectionIsGroup)
+                foreach (var candidate in _recycleRepairTargets)
+                    if (string.Equals(candidate.Folder.Path, selected[0].Path, StringComparison.OrdinalIgnoreCase)) return candidate;
+            return _recycleRepairTargets[0];
+        }
+    }
+
+    private async void RepairRecycle_Click(object sender, RoutedEventArgs e) => await RepairRecyclePermissionsAsync();
+
+    internal async Task<RecycleResult?> RepairRecyclePermissionsAsync()
+    {
+        if (!CanReviewRecycleRecovery || SelectedRecycleRepair is not { } repair) return null;
+        _recycleCheck = ("Reviewing permission repair…", repair.Item.Path);
+        UpdateRecycleActivity();
+        try
+        {
+            if (!await ConfirmRecyclePermissionRepairAsync(repair.Folder, repair.Item, _extensionLifetime.Token) || _closing) return null;
+        }
+        catch (OperationCanceledException) when (_closing) { return null; }
+        finally
+        {
+            _recycleCheck = null;
+            if (!_closing) UpdateRecycleActivity();
+        }
+        var job = new RecycleJob(repair.Folder, repair: repair.Item);
+        QueueRecycleJobs([job]);
+        return await job.Completion.Task;
+    }
+
+    private Task<bool> ConfirmRecyclePermissionRepairAsync(FolderDeletionTarget folder, RecyclePermissionTarget item, CancellationToken token)
+        => Dispatcher.InvokeAsync(() =>
+        {
+            if (_closing || token.IsCancellationRequested) return false;
+            var dialog = new RecycleFolderWindow(folder, item) { Owner = this };
+            using var registration = token.Register(() => Dispatcher.InvokeAsync(() =>
+            {
+                if (dialog.IsVisible) dialog.Close();
+            }));
+            return dialog.ShowDialog() == true && !token.IsCancellationRequested;
+        }, DispatcherPriority.Normal, token).Task;
 
     private async void CheckOpenApps_Click(object sender, RoutedEventArgs e) => await CheckRecycleOpenAppsAsync();
 
@@ -381,8 +432,10 @@ public partial class MainWindow
         {
             _administratorRetryTargets.RemoveAll(target => RecyclePathsOverlap(target.Path, attempt.Job.Target.Path));
             _lockedRecycleTargets.RemoveAll(target => RecyclePathsOverlap(target.Path, attempt.Job.Target.Path));
+            _recycleRepairTargets.RemoveAll(target => RecyclePathsOverlap(target.Folder.Path, attempt.Job.Target.Path));
             if (attempt.CanRetryWithAdministrator) _administratorRetryTargets.Add(attempt.Job.Target);
             if (attempt.CanCheckOpenApps) _lockedRecycleTargets.Add(attempt.Job.Target);
+            if (attempt.Repair is { } repair) _recycleRepairTargets.Add((attempt.Job.Target, repair));
         }
         var retryTarget = AdministratorRetryTarget;
         var retry = attempts.FirstOrDefault(attempt => ReferenceEquals(attempt.Job.Target, retryTarget));
@@ -393,6 +446,8 @@ public partial class MainWindow
         }
         if (_administratorRetryTargets.Count > 1 || retryTarget is not null && retry is null)
             summary.Add($"{FolderCount(_administratorRetryTargets.Count)} eligible for retry");
+        if (attempts.Any(attempt => attempt.Job.Repair is not null && attempt.Result is { Cancelled: true }))
+            summary.Add("Permission repair or recycling was cancelled");
         _recycleSummary = string.Join(" · ", summary);
         RecycleDiagnosticMessage.Text = _recycleDetails ?? "";
         RecycleDiagnosticMessage.Visibility = _recycleDetails is null ? Visibility.Collapsed : Visibility.Visible;
@@ -405,9 +460,10 @@ public partial class MainWindow
         {
             await Task.Run(() => log.Record("file-action-start", new { Action = "recycle", target.Path, job.AdministratorRetry }));
             nint owner = new WindowInteropHelper(this).Handle;
-            var result = await (job.AdministratorRetry
-                ? Operations.RetryRecycleWithAdministratorAsync(target, owner, token, log.Record)
-                : Operations.RecycleAsync(target, owner, token, log.Record));
+            var result = await (job.Repair is { } repair
+                ? Operations.RepairAndRecycleAsync(target, repair, owner, token, log.Record)
+                : job.AdministratorRetry ? Operations.RetryRecycleWithAdministratorAsync(target, owner, token, log.Record)
+                    : Operations.RecycleAsync(target, owner, token, log.Record));
             await Task.Run(() => log.Record("recycle-result", result));
             return new(job, result, null);
         }
@@ -415,7 +471,17 @@ public partial class MainWindow
         catch (Exception ex) when (IsRecycleError(ex))
         {
             await Task.Run(() => log.Record("recycle-failed", new { target.Path, Error = ex.ToString() }));
-            if (ex is FolderRecycler.PermissionException && !job.AdministratorRetry && !token.IsCancellationRequested)
+            if (ex is FolderRecycler.RepairablePermissionException denied && !token.IsCancellationRequested)
+            {
+                try
+                {
+                    var repair = await Task.Run(() => Operations.Files.CaptureRecyclePermissionTarget(target.ExportCapturedIdentity(), denied.ItemPath), token);
+                    return new(job, null, ex.Message, Repair: repair);
+                }
+                catch (Exception validation) when (IsRecycleError(validation) || validation is OperationCanceledException)
+                { return new(job, null, $"{ex.Message} {validation.Message}"); }
+            }
+            if (ex is FolderRecycler.PermissionException && !job.AdministratorRetry && job.Repair is null && !token.IsCancellationRequested)
             {
                 try
                 {
