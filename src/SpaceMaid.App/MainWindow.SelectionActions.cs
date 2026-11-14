@@ -17,6 +17,12 @@ public partial class MainWindow
             retry.Visibility = CanRetryRecycleWithAdministrator ? Visibility.Visible : Visibility.Collapsed;
             retry.ToolTip = AdministratorRetryTarget?.Path;
         }
+        if (CheckOpenAppsButton is { } openApps)
+        {
+            var target = LockedRecycleTarget;
+            openApps.Visibility = target is not null && CanReviewRecycleRecovery ? Visibility.Visible : Visibility.Collapsed;
+            openApps.ToolTip = target?.Path;
+        }
         var selected = SelectedTreeRows();
         bool single = selected.Length == 1 && !_selectionIsGroup;
         var row = single ? selected[0] : null;

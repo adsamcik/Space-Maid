@@ -74,19 +74,39 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
         CancellationToken token, Action<string, object>? diagnostic = null)
         => FolderRecycler.RetryWithAdministratorAsync(target, owner, token, diagnostic);
 
-    internal async Task<RecycleResult> RecycleWithOptionalAdministratorRetryAsync(FolderDeletionTarget target, nint owner,
+    internal async Task<RecycleResult> RecycleWithRecoveryAsync(FolderDeletionTarget target, nint owner,
         CancellationToken token, Action<string, object> diagnostic, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmRetry,
-        Func<Task> recheck, Action? validateScope)
+        Func<Task> recheck, Action? validateScope, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks)
     {
-        try { return await RecycleAsync(target, owner, token, diagnostic).ConfigureAwait(false); }
-        catch (FolderRecycler.PermissionException) when (confirmRetry is not null)
+        bool administrator = false, retriedLocks = false;
+        Action? scopeCheck = null;
+        while (true)
         {
-            token.ThrowIfCancellationRequested();
-            await Task.Run(target.ValidateCurrent, token).ConfigureAwait(false);
-            if (!await confirmRetry(target, token).ConfigureAwait(false)) throw;
+            try
+            {
+                return await (administrator
+                    ? FolderRecycler.RetryWithAdministratorAsync(target, owner, token, diagnostic, scopeCheck)
+                    : FolderRecycler.RecycleAsync(target, owner, token, diagnostic, scopeCheck)).ConfigureAwait(false);
+            }
+            catch (FolderRecycler.PermissionException) when (!administrator && confirmRetry is not null)
+            {
+                token.ThrowIfCancellationRequested();
+                await Task.Run(target.ValidateCurrent, token).ConfigureAwait(false);
+                if (!await confirmRetry(target, token).ConfigureAwait(false)) throw;
+                administrator = true;
+            }
+            catch (FolderRecycler.SharingException) when (!retriedLocks && resolveLocks is not null)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!await resolveLocks(target, token).ConfigureAwait(false)) throw;
+                // App closure authorizes a normal retry. If that retry also
+                // needs elevation, ask again for the new Shell attempt.
+                administrator = false;
+                retriedLocks = true;
+            }
             token.ThrowIfCancellationRequested();
             await recheck().ConfigureAwait(false);
-            return await FolderRecycler.RetryWithAdministratorAsync(target, owner, token, diagnostic, validateScope).ConfigureAwait(false);
+            scopeCheck = validateScope;
         }
     }
 

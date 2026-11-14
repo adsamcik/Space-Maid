@@ -40,26 +40,35 @@ internal static class CleanupBatch
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null,
         FileOperations? operations = null)
-        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, null, null);
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, null, null, null);
 
     internal static Task<CleanupBatchResult> ExecuteJournaledAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees, OpportunityDiscovery discover,
         FileOperations operations, CleanupExecutionJournal journal)
-        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, null);
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, null, null);
 
     internal static Task<CleanupBatchResult> ExecuteInteractiveJournaledAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy> checkedWorktrees, OpportunityDiscovery discover,
         FileOperations operations, CleanupExecutionJournal journal,
         Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry)
-        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, confirmAdministratorRetry);
+        => ExecuteInteractiveRecoveryAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, confirmAdministratorRetry, null);
+
+    internal static Task<CleanupBatchResult> ExecuteInteractiveRecoveryAsync(CleanupPlan plan, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy> checkedWorktrees, OpportunityDiscovery discover,
+        FileOperations operations, CleanupExecutionJournal journal,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks)
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, confirmAdministratorRetry, resolveLocks);
 
     private static async Task<CleanupBatchResult> ExecuteCoreAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees, OpportunityDiscovery? discover,
         FileOperations? operations, CleanupExecutionJournal? journal,
-        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmAdministratorRetry)
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmAdministratorRetry,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? resolveLocks)
     {
         ArgumentNullException.ThrowIfNull(discover);
         operations ??= new();
@@ -245,12 +254,12 @@ internal static class CleanupBatch
                         journal?.ValidateTarget?.Invoke(location);
                         RecordStarting(location);
                         attempted = true;
-                        var recycled = await operations.RecycleWithOptionalAdministratorRetryAsync(target, owner, token, diagnostic,
+                        var recycled = await operations.RecycleWithRecoveryAsync(target, owner, token, diagnostic,
                             confirmAdministratorRetry, RecheckRetryAsync, () =>
                             {
                                 if (journal?.ShouldStop() == true) throw new OperationCanceledException(token);
                                 journal?.ValidateTarget?.Invoke(location);
-                            });
+                            }, resolveLocks);
                         cancelRest = recycled.Cancelled;
                         result = new(location, recycled.Cancelled ? CleanupOutcome.Cancelled : CleanupOutcome.Recycled,
                             recycled.Cancelled ? "Cancelled; some contents may already have moved." : "Moved to Recycle Bin.", true, recycled);

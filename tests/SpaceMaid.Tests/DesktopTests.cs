@@ -165,6 +165,12 @@ public sealed partial class DesktopTests
                     CheckCleanupAdministratorRetry(window, app, FindRepository());
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "recycle-locks")
+                {
+                    BeginWorkflow("Find and close apps blocking recycling");
+                    CheckRecycleLockRecovery(window, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "cleanup-workspace")
                 {
                     BeginWorkflow("Unified cleanup workspace");
@@ -1091,6 +1097,8 @@ public sealed partial class DesktopTests
                 SetStage("reviewing an administrator retry for an access-denied folder");
                 CheckAdministratorRecycle(window, app, artifactRoot);
                 CheckCleanupAdministratorRetry(window, app, artifactRoot);
+                SetStage("finding and closing an app blocking recycling");
+                CheckRecycleLockRecovery(window, artifactRoot);
                 SetStage("confirming selected-drive Recycle Bin cleanup without deleting real bin contents");
                 CheckRecycleBinCleanup(window, app, artifactRoot);
                 SetStage("retaining one helper across app scans and closing it with the window");

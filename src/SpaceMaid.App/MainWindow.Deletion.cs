@@ -29,7 +29,7 @@ public partial class MainWindow
     }
 
     private sealed record RecycleAttempt(RecycleJob Job, RecycleResult? Result, string? Error,
-        bool CancelledBeforeMove = false, bool CanRetryWithAdministrator = false);
+        bool CancelledBeforeMove = false, bool CanRetryWithAdministrator = false, bool CanCheckOpenApps = false);
 
     private readonly ObservableCollection<RecycleJob> _queuedRecycles = [];
     private RecycleJob? _activeRecycle;
@@ -42,17 +42,17 @@ public partial class MainWindow
     private (string Status, string? Path)? _recycleCheck;
     private string? _recycleSummary, _recycleDetails;
     private readonly List<FolderDeletionTarget> _administratorRetryTargets = [];
-    private FolderDeletionTarget? AdministratorRetryTarget
+    private readonly List<FolderDeletionTarget> _lockedRecycleTargets = [];
+    private FolderDeletionTarget? AdministratorRetryTarget => SelectedRecoveryTarget(_administratorRetryTargets);
+    private FolderDeletionTarget? LockedRecycleTarget => SelectedRecoveryTarget(_lockedRecycleTargets);
+
+    private FolderDeletionTarget? SelectedRecoveryTarget(List<FolderDeletionTarget> targets)
     {
-        get
-        {
-            if (_administratorRetryTargets.Count == 0) return null;
-            var selected = SelectedTreeRows();
-            return selected.Length == 1 && !_selectionIsGroup
-                ? _administratorRetryTargets.Find(target => string.Equals(target.Path, selected[0].Path, StringComparison.OrdinalIgnoreCase))
-                    ?? _administratorRetryTargets[0]
-                : _administratorRetryTargets[0];
-        }
+        if (targets.Count == 0) return null;
+        var selected = SelectedTreeRows();
+        return selected.Length == 1 && !_selectionIsGroup
+            ? targets.Find(target => string.Equals(target.Path, selected[0].Path, StringComparison.OrdinalIgnoreCase)) ?? targets[0]
+            : targets[0];
     }
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
@@ -167,6 +167,7 @@ public partial class MainWindow
     private void QueueRecycleJobs(RecycleJob[] jobs)
     {
         _administratorRetryTargets.RemoveAll(target => jobs.Any(job => RecyclePathsOverlap(target.Path, job.Target.Path)));
+        _lockedRecycleTargets.RemoveAll(target => jobs.Any(job => RecyclePathsOverlap(target.Path, job.Target.Path)));
         foreach (var job in jobs) _queuedRecycles.Add(job);
         _recycleRefreshWork?.Cancel();
         SignalRecycleStateChange();
@@ -178,8 +179,42 @@ public partial class MainWindow
         UpdateRecycleActivity();
     }
 
-    private bool CanRetryRecycleWithAdministrator => AdministratorRetryTarget is not null && _recycleTask is null
+    private bool CanReviewRecycleRecovery => _recycleTask is null
         && _recycleCheck is null && ExploreTab.IsChecked == true && _snapshot is { } scan && CanUseFolderMenu(scan);
+    private bool CanRetryRecycleWithAdministrator => AdministratorRetryTarget is not null && CanReviewRecycleRecovery;
+
+    private async void CheckOpenApps_Click(object sender, RoutedEventArgs e) => await CheckRecycleOpenAppsAsync();
+
+    private Task<bool> ReviewRecycleLocksAsync(FolderDeletionTarget target, CancellationToken token)
+        => Dispatcher.InvokeAsync(() =>
+        {
+            if (_closing || token.IsCancellationRequested) return false;
+            var dialog = new RecycleLocksWindow(target, new(Operations.Files), token) { Owner = this };
+            using var registration = token.Register(() => Dispatcher.InvokeAsync(() =>
+            {
+                if (dialog.IsVisible) dialog.Close();
+            }));
+            return dialog.ShowDialog() == true && !token.IsCancellationRequested;
+        }, DispatcherPriority.Normal, token).Task;
+
+    internal async Task<RecycleResult?> CheckRecycleOpenAppsAsync()
+    {
+        if (!CanReviewRecycleRecovery || LockedRecycleTarget is not { } target) return null;
+        _recycleCheck = ("Checking which apps have files open…", target.Path);
+        UpdateRecycleActivity();
+        bool retry;
+        try { retry = await ReviewRecycleLocksAsync(target, _extensionLifetime.Token); }
+        catch (OperationCanceledException) when (_closing) { return null; }
+        finally
+        {
+            _recycleCheck = null;
+            if (!_closing) UpdateRecycleActivity();
+        }
+        if (!retry || _closing) return null;
+        var job = new RecycleJob(target);
+        QueueRecycleJobs([job]);
+        return await job.Completion.Task;
+    }
 
     private async void RetryRecycle_Click(object sender, RoutedEventArgs e) => await RetryRecycleWithAdministratorAsync();
 
@@ -345,7 +380,9 @@ public partial class MainWindow
         foreach (var attempt in attempts)
         {
             _administratorRetryTargets.RemoveAll(target => RecyclePathsOverlap(target.Path, attempt.Job.Target.Path));
+            _lockedRecycleTargets.RemoveAll(target => RecyclePathsOverlap(target.Path, attempt.Job.Target.Path));
             if (attempt.CanRetryWithAdministrator) _administratorRetryTargets.Add(attempt.Job.Target);
+            if (attempt.CanCheckOpenApps) _lockedRecycleTargets.Add(attempt.Job.Target);
         }
         var retryTarget = AdministratorRetryTarget;
         var retry = attempts.FirstOrDefault(attempt => ReferenceEquals(attempt.Job.Target, retryTarget));
@@ -391,7 +428,7 @@ public partial class MainWindow
                     return new(job, null, validation.Message);
                 }
             }
-            return new(job, null, ex.Message);
+            return new(job, null, ex.Message, CanCheckOpenApps: ex is FolderRecycler.SharingException && !token.IsCancellationRequested);
         }
     }
 

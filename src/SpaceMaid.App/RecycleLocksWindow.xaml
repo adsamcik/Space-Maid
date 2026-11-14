@@ -1,0 +1,43 @@
+<Window x:Class="SpaceMaid.App.RecycleLocksWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Apps using files" Width="540" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14"
+        Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}">
+    <StackPanel Margin="20">
+        <TextBlock Text="Apps using files" FontSize="20" FontWeight="SemiBold" />
+        <TextBox x:Name="FolderPath" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="72" VerticalScrollBarVisibility="Auto"
+                 BorderThickness="0" Background="Transparent" Padding="0" Margin="0,8,0,14" AutomationProperties.Name="Folder to recycle" />
+        <ListBox x:Name="Owners" SelectionMode="Multiple" MaxHeight="245" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 SelectionChanged="Owners_SelectionChanged" AutomationProperties.Name="Apps using locked files">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Style.Triggers><DataTrigger Binding="{Binding CanClose}" Value="False">
+                        <Setter Property="IsEnabled" Value="False" />
+                    </DataTrigger></Style.Triggers>
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Margin="0,4">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding CloseHint}" FontSize="12" Opacity="0.75">
+                            <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding CanClose}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="ResultText" TextWrapping="Wrap" Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite" />
+        <WrapPanel HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True" Margin="0,0,8,0" />
+            <Button x:Name="RecheckButton" Content="Check again" Click="Recheck_Click" Margin="0,0,8,0" Visibility="Collapsed" />
+            <Button x:Name="RetryButton" Content="Retry recycling" Click="Retry_Click" Visibility="Collapsed" />
+            <Button x:Name="CloseAppsButton" Content="Close selected apps and retry" Click="CloseApps_Click" Visibility="Collapsed" IsEnabled="False"
+                    Style="{DynamicResource AccentButtonStyle}" />
+        </WrapPanel>
+    </StackPanel>
+</Window>

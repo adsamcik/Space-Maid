@@ -24,6 +24,7 @@ internal static class FolderRecycler
     private const uint ShowElevationPrompt = 0x00040000; // FOFX_SHOWELEVATIONPROMPT
 
     internal sealed class PermissionException(string message, int result) : IOException(message, result);
+    internal sealed class SharingException(int result) : IOException("A file is in use. Check which apps have it open, then try again.", result);
 
     public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null, Action? validateContents = null)
@@ -101,6 +102,10 @@ internal static class FolderRecycler
             {
                 throw new PermissionException("Windows denied access. Check folder permissions, then try again.", failure);
             }
+            // The Shell may label its Recycle Bin transfer as a destination
+            // sharing error. Recovery still inspects only files under the source.
+            if (!sink.ItemMayHaveMoved && unchecked((uint)failure) is 0x80070020 or 0x80070021 or 0x80270027 or 0x80270028)
+                throw new SharingException(failure);
             ThrowIfFailed(failure);
             if (aborted) throw new IOException("Windows stopped recycling before completion. Some contents may already have moved.");
             // A successful HRESULT alone is insufficient: a non-null new item
