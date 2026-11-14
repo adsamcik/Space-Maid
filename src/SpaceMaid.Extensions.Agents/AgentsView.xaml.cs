@@ -33,11 +33,24 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     {
         Inspector = (homes, days, token) => AgentHistoryCleanup.InspectAsync(files, homes, days, token);
         Preparer = (items, days, token) => Task.Run(() => AgentHistoryCleanup.Prepare(files, items, days, token), token);
-        Executor = (plan, owner, token) => AgentHistoryCleanup.ExecuteAsync(files, plan, owner, token);
+        Executor = (plan, owner, token) => AgentHistoryCleanup.ExecuteInteractiveAsync(files, plan, owner, token, ConfirmAdministratorRetryAsync);
         _lifetime = lifetime; InitializeComponent(); OpenCodeView.Initialize(lifetime);
         Loaded += (_, _) => AttachOwner();
         Unloaded += (_, _) => { if (!_recycling) { _work?.Cancel(); DetachOwner(); } };
     }
+
+    private Task<bool> ConfirmAdministratorRetryAsync(AgentHistoryItem item, CancellationToken token)
+        => Dispatcher.InvokeAsync(() =>
+        {
+            if (!IsLoaded || token.IsCancellationRequested) return false;
+            var review = new AgentHistoryPreview(new AgentHistoryPlan([item], _observedAge), administratorRetry: true)
+                { Owner = Window.GetWindow(this) };
+            using var registration = token.Register(() => Dispatcher.InvokeAsync(() =>
+            {
+                if (review.IsVisible) review.Close();
+            }));
+            return review.ShowDialog() == true && !token.IsCancellationRequested;
+        }, System.Windows.Threading.DispatcherPriority.Normal, token).Task;
     private void AttachOwner()
     {
         Window? owner = Window.GetWindow(this);

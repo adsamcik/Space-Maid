@@ -29,11 +29,13 @@ internal static class FolderRecycler
         Action<string, object>? diagnostic = null, Action? validateContents = null)
         => StartAsync(target, owner, token, diagnostic, validateContents, administratorRetry: false);
 
-#if !SPACEMAID_AGENT_RECYCLER
     internal static Task<RecycleResult> RetryWithAdministratorAsync(FolderDeletionTarget target, nint owner,
         CancellationToken token, Action<string, object>? diagnostic = null)
-        => StartAsync(target, owner, token, diagnostic, null, administratorRetry: true);
-#endif
+        => RetryWithAdministratorAsync(target, owner, token, diagnostic, null);
+
+    internal static Task<RecycleResult> RetryWithAdministratorAsync(FolderDeletionTarget target, nint owner,
+        CancellationToken token, Action<string, object>? diagnostic, Action? validateContents)
+        => StartAsync(target, owner, token, diagnostic, validateContents, administratorRetry: true);
 
     private static Task<RecycleResult> StartAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic, Action? validateContents, bool administratorRetry)
@@ -68,7 +70,7 @@ internal static class FolderRecycler
             var type = Type.GetTypeFromCLSID(new("3AD05575-8857-4850-9277-11B85BDB8E09"), throwOnError: true)!;
             operation = (IFileOperation)Activator.CreateInstance(type)!;
             operation.SetOwnerWindow(owner);
-            // Only a user-confirmed Explore retry allows the Shell to show UAC.
+            // Only a user-confirmed retry allows the Shell to show UAC.
             // Both modes retain the live guard against permanent deletion.
             uint flags = OperationFlags | (administratorRetry ? ShowElevationPrompt : 0);
             operation.SetOperationFlags(flags);

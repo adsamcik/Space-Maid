@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO;
+using SpaceMaid.Core.IO;
 using SpaceMaid.Extensions.Agents;
 using Xunit;
 
@@ -83,6 +84,34 @@ public sealed class CursorChatCleanupTests
         junction.WaitForExit(); Assert.Equal(0, junction.ExitCode);
         Assert.Throws<IOException>(() => CursorChatCleanup.Capture(secondHome, secondPath, default));
         Directory.Delete(link);
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public async Task CursorPermissionRetryKeepsFolderWhenMembershipChangesDuringConfirmation()
+    {
+        using var fixture = new TestDirectory();
+        var (home, path) = Create(fixture.Path);
+        var files = new DiskAccess();
+        using var permissions = new RecyclePermissionFixture(path);
+        var item = Item(home, CursorChatCleanup.Capture(files, home, path, default));
+        var events = new List<string>();
+        int offered = 0;
+        string added = Path.Join(path, "new-history.txt");
+        var failure = await Assert.ThrowsAsync<IOException>(() => CursorChatCleanup.RecycleFolderAsync(files, item, 0, default,
+            30, (name, _) => events.Add(name), (target, _) =>
+            {
+                Assert.Equal(path, target.Path);
+                offered++;
+                permissions.Dispose();
+                File.WriteAllText(added, "Keep new history");
+                return Task.FromResult(true);
+            }));
+        Assert.Contains("changed after confirmation", failure.Message);
+        Assert.Equal(1, offered);
+        Assert.Single(events, name => name == "recycle-native-start");
+        Assert.True(File.Exists(Path.Join(path, "store.db")));
+        Assert.Equal("Keep new history", File.ReadAllText(added));
     }
 
     [Fact]

@@ -91,18 +91,34 @@ internal static class CursorChatCleanup
 
     internal static async Task<bool> RecycleAsync(DiskAccess files, AgentHistoryItem item, nint owner, CancellationToken token,
         int olderThanDays = 1, Action<string, object>? diagnostic = null)
+        => await RecycleFolderAsync(files, item, owner, token, olderThanDays, diagnostic, null).ConfigureAwait(false);
+
+    internal static async Task<bool> RecycleFolderAsync(DiskAccess files, AgentHistoryItem item, nint owner, CancellationToken token,
+        int olderThanDays, Action<string, object>? diagnostic, Func<AgentHistoryItem, CancellationToken, Task<bool>>? confirmAdministratorRetry)
     {
         var snapshot = item.Folder ?? throw new InvalidOperationException("The Cursor chat has no captured folder preview.");
         // Windows cannot recycle the whole folder while its members' data
         // leases are held. Recheck under leases at the native root callback,
         // release them, then use the host's exact-root Shell safeguards.
         // A separately restarted process/new name remains a live-system race.
-        var result = await FolderRecycler.RecycleAsync(snapshot.Target, owner, token, diagnostic, () =>
+        void ValidateContents()
         {
             AgentOwnerProtection.RequireStopped(AgentTool.Cursor);
             using var lease = Lease(files, item, token);
             Validate(files, item, olderThanDays, token);
-        }).ConfigureAwait(false);
+        }
+        RecycleResult result;
+        try
+        {
+            result = await FolderRecycler.RecycleAsync(snapshot.Target, owner, token, diagnostic, ValidateContents).ConfigureAwait(false);
+        }
+        catch (FolderRecycler.PermissionException) when (confirmAdministratorRetry is not null)
+        {
+            token.ThrowIfCancellationRequested();
+            await Task.Run(ValidateContents, token).ConfigureAwait(false);
+            if (!await confirmAdministratorRetry(item, token).ConfigureAwait(false)) throw;
+            result = await FolderRecycler.RetryWithAdministratorAsync(snapshot.Target, owner, token, diagnostic, ValidateContents).ConfigureAwait(false);
+        }
         return !result.Cancelled;
     }
 

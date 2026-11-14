@@ -213,10 +213,16 @@ internal static partial class AgentHistoryCleanup
 
     internal static Task<AgentHistoryResult> ExecuteAsync(DiskAccess files, AgentHistoryPlan plan, nint owner, CancellationToken token,
         Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle = null, Func<AgentTool, string?>? runningOwner = null)
-        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(files, plan, owner, token, recycle, runningOwner), token);
+        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(() => ExecuteCapturedAsync(files, plan, owner, token, recycle, runningOwner, null), token);
+
+    internal static Task<AgentHistoryResult> ExecuteInteractiveAsync(DiskAccess files, AgentHistoryPlan plan, nint owner,
+        CancellationToken token, Func<AgentHistoryItem, CancellationToken, Task<bool>> confirmAdministratorRetry)
+        => SpaceMaid.Core.Analysis.CleanupMutationLease.RunAsync(
+            () => ExecuteCapturedAsync(files, plan, owner, token, null, null, confirmAdministratorRetry), token);
 
     private static async Task<AgentHistoryResult> ExecuteCapturedAsync(DiskAccess files, AgentHistoryPlan plan, nint owner, CancellationToken token,
-        Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle, Func<AgentTool, string?>? runningOwner)
+        Func<AgentHistoryItem, nint, CancellationToken, Task<bool>>? recycle, Func<AgentTool, string?>? runningOwner,
+        Func<AgentHistoryItem, CancellationToken, Task<bool>>? confirmAdministratorRetry)
     {
         // Validate the complete set before starting; each file is checked once
         // more under its native write-denying lease at the Shell callback.
@@ -234,7 +240,8 @@ internal static partial class AgentHistoryCleanup
                 var item = original.SessionEvidence is { } evidence
                     ? original with { SessionEvidence = evidence.AfterOwnRemovals(files, original, removed, token) } : original;
                 token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(files, item, plan.OlderThanDays, DateTime.UtcNow);
-                bool moved = recycle is null ? item.Folder is not null ? await CursorChatCleanup.RecycleAsync(files, item, owner, token, plan.OlderThanDays)
+                bool moved = recycle is null ? item.Folder is not null
+                    ? await CursorChatCleanup.RecycleFolderAsync(files, item, owner, token, plan.OlderThanDays, null, confirmAdministratorRetry)
                     : await AgentFileRecycler.RecycleAsync(files, item, owner, token)
                     : await recycle(item, owner, token);
                 if (!moved) return new(completed, $"Stopped after {completed:N0} confirmed files. The last file may have moved; inspect again before retrying.");

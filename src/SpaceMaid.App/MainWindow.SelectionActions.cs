@@ -15,7 +15,7 @@ public partial class MainWindow
         if (RetryRecycleButton is { } retry)
         {
             retry.Visibility = CanRetryRecycleWithAdministrator ? Visibility.Visible : Visibility.Collapsed;
-            retry.ToolTip = _administratorRetryTarget?.Path;
+            retry.ToolTip = AdministratorRetryTarget?.Path;
         }
         var selected = SelectedTreeRows();
         bool single = selected.Length == 1 && !_selectionIsGroup;

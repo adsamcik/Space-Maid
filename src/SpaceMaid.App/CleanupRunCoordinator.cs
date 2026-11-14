@@ -160,8 +160,18 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
         return new(record.Definition, plan, record);
     }
 
-    internal async Task<CleanupBatchResult> RunAsync(CleanupPreparedRun prepared, nint owner,
+    internal Task<CleanupBatchResult> RunAsync(CleanupPreparedRun prepared, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token)
+        => RunCoreAsync(prepared, owner, progress, token, null);
+
+    internal Task<CleanupBatchResult> RunInteractiveAsync(CleanupPreparedRun prepared, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry)
+        => RunCoreAsync(prepared, owner, progress, token, confirmAdministratorRetry);
+
+    private async Task<CleanupBatchResult> RunCoreAsync(CleanupPreparedRun prepared, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmAdministratorRetry)
     {
         var record = ApprovalRecord(prepared);
         var existing = store.LoadRun(record.Id);
@@ -237,7 +247,10 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
                 OpportunityDiscovery runDiscovery = automatic ? (current, cancellation) => discover(current, cancellation).Select(item =>
                     item.IsBuildOutput && !record.Definition.AutomaticRuleConsents.Contains(BuildConsentKey(item), StringComparer.Ordinal)
                         ? item with { IsRegeneratable = false, CleanupBlockReason = "This automatic build rule changed and needs renewed approval · Kept" } : item).ToArray() : discover;
-                result = await CleanupBatch.ExecuteJournaledAsync(plan, owner, progress, work.Token, (_, _) => { }, policies, runDiscovery, operations, journal).ConfigureAwait(false);
+                result = await (confirmAdministratorRetry is null || automatic
+                    ? CleanupBatch.ExecuteJournaledAsync(plan, owner, progress, work.Token, (_, _) => { }, policies, runDiscovery, operations, journal)
+                    : CleanupBatch.ExecuteInteractiveJournaledAsync(plan, owner, progress, work.Token, (_, _) => { }, policies,
+                        runDiscovery, operations, journal, confirmAdministratorRetry)).ConfigureAwait(false);
                 // Global validation failure and targets excluded before the
                 // execution loop still receive complete per-target receipts.
                 foreach (var item in result.Locations)

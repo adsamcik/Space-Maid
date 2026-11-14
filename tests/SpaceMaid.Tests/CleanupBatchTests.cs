@@ -10,6 +10,52 @@ public sealed class CleanupBatchTests
 {
     private readonly FileOperations _operations = new();
 
+    [Theory]
+    [Trait("Stage", "System")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApprovedAdministratorRetryRechecksBuildActivityBeforeCallingWindowsAgain(bool becameActive)
+    {
+        using var fixture = new TestDirectory();
+        var project = CreateProject(fixture.Path, "retry", 'r', 4096);
+        using var permissions = new RecyclePermissionFixture(project.Output);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var plan = await _operations.PrepareCleanupAsync(scan, DeveloperOpportunityFixture.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        Assert.True(plan.CanExecute);
+        var journal = new CleanupExecutionJournal(_ => { }, _ => { }, () => false);
+        var events = new List<string>();
+        int offers = 0;
+        string? recycledPath = null;
+        try
+        {
+            var result = await CleanupBatch.ExecuteInteractiveJournaledAsync(plan, 0, new InlineProgress(_ => { }), default,
+                (name, _) => events.Add(name), new Dictionary<string, WorktreeCleanupPolicy>(), DeveloperOpportunityFixture.Find,
+                _operations, journal, (target, _) =>
+                {
+                    Assert.Equal(project.Output, target.Path);
+                    Assert.Equal(project.Content, File.ReadAllText(project.File));
+                    offers++;
+                    // Restore permissions so the second real Shell call can finish
+                    // on the test desktop without showing a UAC prompt.
+                    permissions.Dispose();
+                    if (becameActive) File.SetLastWriteTimeUtc(project.File, DateTime.UtcNow);
+                    return Task.FromResult(true);
+                });
+            recycledPath = Assert.Single(result.Locations).Recycle?.RecycledPath;
+            Assert.Equal(1, offers);
+            Assert.Equal(becameActive ? 1 : 2, events.Count(name => name == "recycle-native-start"));
+            Assert.Equal(becameActive ? 0 : 1, result.RecycledCount);
+            if (!becameActive)
+            {
+                Assert.NotNull(recycledPath);
+                Assert.Equal(project.Content, File.ReadAllText(Path.Join(recycledPath, Path.GetFileName(project.File))));
+            }
+        }
+        finally { if (recycledPath is not null) DeletionTests.RestoreFixture(recycledPath, project.Output); }
+        Assert.Equal(project.Content, File.ReadAllText(project.File));
+        Assert.Equal(project.SourceContent, File.ReadAllText(project.Source));
+    }
+
     [Fact]
     [Trait("Stage", "System")]
     public async Task JunctionAddedAfterConfirmationSkipsOnlyItsFolderAndRecyclesTheIndependentFixture()

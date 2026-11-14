@@ -40,18 +40,26 @@ internal static class CleanupBatch
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null,
         FileOperations? operations = null)
-        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, null);
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, null, null);
 
     internal static Task<CleanupBatchResult> ExecuteJournaledAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees, OpportunityDiscovery discover,
         FileOperations operations, CleanupExecutionJournal journal)
-        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal);
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, null);
+
+    internal static Task<CleanupBatchResult> ExecuteInteractiveJournaledAsync(CleanupPlan plan, nint owner,
+        IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
+        IReadOnlyDictionary<string, WorktreeCleanupPolicy> checkedWorktrees, OpportunityDiscovery discover,
+        FileOperations operations, CleanupExecutionJournal journal,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>> confirmAdministratorRetry)
+        => ExecuteCoreAsync(plan, owner, progress, token, diagnostic, checkedWorktrees, discover, operations, journal, confirmAdministratorRetry);
 
     private static async Task<CleanupBatchResult> ExecuteCoreAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees, OpportunityDiscovery? discover,
-        FileOperations? operations, CleanupExecutionJournal? journal)
+        FileOperations? operations, CleanupExecutionJournal? journal,
+        Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmAdministratorRetry)
     {
         ArgumentNullException.ThrowIfNull(discover);
         operations ??= new();
@@ -63,6 +71,12 @@ internal static class CleanupBatch
         IReadOnlyDictionary<int, BuildCleanupAssessment> currentAssessments;
         var buildsByTarget = new Dictionary<string, List<Opportunity>>(StringComparer.Ordinal);
         var knownBuildBlocks = new Dictionary<string, string>(StringComparer.Ordinal);
+        const string UnverifiedBuild = "A previously detected build could not be verified under its original rule · Kept";
+        bool IsUnverifiedBuild(Opportunity known, Opportunity? match, ScanSnapshot snapshot,
+            IReadOnlyDictionary<int, BuildCleanupAssessment> assessments)
+            => !(match is { IsBuildOutput: true, IsRegeneratable: true }
+                 && assessments[match.DirectoryIndex].State == CleanupReadiness.Ready)
+               && snapshot.FindEntry(known.Path) is not null;
         try
         {
             progress.Report(new(0, plan.Targets.Count, "", "Checking confirmed folders again…"));
@@ -86,10 +100,8 @@ internal static class CleanupBatch
                         if (selectedPaths.Contains(path)) covered.Add(path);
                     if (covered.Count == 0) continue;
                     var match = matches[(known.ProviderId, known.RuleId, known.Title, known.Category, known.Path)].FirstOrDefault();
-                    if (match is not null && match.IsBuildOutput && match.IsRegeneratable
-                        && currentAssessments[match.DirectoryIndex].State == CleanupReadiness.Ready) continue;
-                    if (validation.Snapshot.FindEntry(known.Path) is null) continue;
-                    foreach (string path in covered) knownBuildBlocks[path] = "A previously detected build could not be verified under its original rule · Kept";
+                    if (!IsUnverifiedBuild(known, match, validation.Snapshot, currentAssessments)) continue;
+                    foreach (string path in covered) knownBuildBlocks[path] = UnverifiedBuild;
                 }
             }
             IOpportunityInventory inventory = validation.Snapshot;
@@ -155,27 +167,57 @@ internal static class CleanupBatch
                         || freshAssessment.State == CleanupReadiness.NeedsReview
                         && plan.BuildAssessments[location.DirectoryIndex].State == CleanupReadiness.Ready)
                         throw new InvalidOperationException(freshAssessment.Reason);
-                    if (checkedWorktrees?.Keys.Any(path => GitWorktreeGuard.Covers(target.Path, path)) == true)
-                        progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking worktree Git state again…"));
-                    var gitBlocks = await operations.CheckWorktreesAsync(validation.Snapshot, [location],
-                        checkedWorktrees ?? new Dictionary<string, WorktreeCleanupPolicy>(), token, diagnostic);
-                    if (gitBlocks.TryGetValue(location.Path, out string? reason)) throw new InvalidOperationException(reason);
-                    if (buildsByTarget.TryGetValue(location.Path, out var builds))
+                    async Task CheckActivityAsync(ScanSnapshot snapshot, Opportunity checkedLocation, IReadOnlyList<Opportunity> nestedBuilds,
+                        IReadOnlyDictionary<int, BuildCleanupAssessment> assessments)
                     {
-                        progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking build activity…"));
-                        foreach (var build in builds)
+                        if (checkedWorktrees?.Keys.Any(path => GitWorktreeGuard.Covers(target.Path, path)) == true)
+                            progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking worktree Git state again…"));
+                        var gitBlocks = await operations.CheckWorktreesAsync(snapshot, [checkedLocation],
+                            checkedWorktrees ?? new Dictionary<string, WorktreeCleanupPolicy>(), token, diagnostic);
+                        if (gitBlocks.TryGetValue(location.Path, out string? reason)) throw new InvalidOperationException(reason);
+                        if (nestedBuilds.Count > 0)
                         {
-                            var assessment = currentAssessments[build.DirectoryIndex];
-                            if (assessment.State == CleanupReadiness.Protected) throw new InvalidOperationException(assessment.Reason);
-                            if (plan.RequiresVerifiedBuilds && build.IsBuildOutput
-                                && (!build.IsRegeneratable || assessment.State != CleanupReadiness.Ready))
-                                throw new InvalidOperationException("Contains build output whose rebuildability could not be verified · Kept");
-                            if (!build.IsBuildOutput) continue;
-                            var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token, validation.Snapshot);
-                            if (live.State == CleanupReadiness.Protected
-                                || live.State == CleanupReadiness.NeedsReview && assessment.State == CleanupReadiness.Ready)
-                                throw new InvalidOperationException(live.Reason);
+                            progress.Report(new(completed, plan.Targets.Count, target.Path, "Checking build activity…"));
+                            foreach (var build in nestedBuilds)
+                            {
+                                var assessment = assessments[build.DirectoryIndex];
+                                if (assessment.State == CleanupReadiness.Protected) throw new InvalidOperationException(assessment.Reason);
+                                if (plan.RequiresVerifiedBuilds && build.IsBuildOutput
+                                    && (!build.IsRegeneratable || assessment.State != CleanupReadiness.Ready))
+                                    throw new InvalidOperationException("Contains build output whose rebuildability could not be verified · Kept");
+                                if (!build.IsBuildOutput) continue;
+                                var live = await operations.CheckBuildActivityAsync(build, plan.BuildPolicy, token, snapshot);
+                                if (live.State == CleanupReadiness.Protected
+                                    || live.State == CleanupReadiness.NeedsReview && assessment.State == CleanupReadiness.Ready)
+                                    throw new InvalidOperationException(live.Reason);
+                            }
                         }
+                    }
+                    await CheckActivityAsync(validation.Snapshot, location, buildsByTarget.GetValueOrDefault(location.Path) ?? [], currentAssessments);
+
+                    async Task RecheckRetryAsync()
+                    {
+                        var retry = await operations.ReviewCleanupAsync(validation.Snapshot, [freshLocation], token, diagnostic, discover);
+                        if (retry.ValidatedLocations.Count != 1)
+                            throw new InvalidOperationException("The folder no longer meets the original cleanup rules. Review it again.");
+                        var assessments = await operations.AssessBuildCleanupAsync(retry.Snapshot, retry.Findings, plan.BuildPolicy, token);
+                        var retryAssessment = assessments[retry.ValidatedLocations[0].DirectoryIndex];
+                        if (retryAssessment.State == CleanupReadiness.Protected ||
+                            retryAssessment.State == CleanupReadiness.NeedsReview && freshAssessment.State == CleanupReadiness.Ready)
+                            throw new InvalidOperationException(retryAssessment.Reason);
+                        var currentBuilds = retry.Findings.Where(item =>
+                            GitWorktreeGuard.Covers(target.Path, item.Path) && (item.IsBuildOutput || item.CleanupBlockReason.Length > 0)).ToArray();
+                        if (plan.RequiresVerifiedBuilds)
+                        {
+                            var matches = currentBuilds.ToLookup(item => (item.ProviderId, item.RuleId, item.Title, item.Category, item.Path));
+                            foreach (var known in plan.CapturedBuilds.Where(item => GitWorktreeGuard.Covers(target.Path, item.Path)))
+                            {
+                                token.ThrowIfCancellationRequested();
+                                var match = matches[(known.ProviderId, known.RuleId, known.Title, known.Category, known.Path)].FirstOrDefault();
+                                if (IsUnverifiedBuild(known, match, retry.Snapshot, assessments)) throw new InvalidOperationException(UnverifiedBuild);
+                            }
+                        }
+                        await CheckActivityAsync(retry.Snapshot, retry.ValidatedLocations[0], currentBuilds, assessments);
                     }
                     await Task.Run(target.ValidateCurrent, token);
                     token.ThrowIfCancellationRequested();
@@ -203,7 +245,12 @@ internal static class CleanupBatch
                         journal?.ValidateTarget?.Invoke(location);
                         RecordStarting(location);
                         attempted = true;
-                        var recycled = await operations.RecycleAsync(target, owner, token, diagnostic);
+                        var recycled = await operations.RecycleWithOptionalAdministratorRetryAsync(target, owner, token, diagnostic,
+                            confirmAdministratorRetry, RecheckRetryAsync, () =>
+                            {
+                                if (journal?.ShouldStop() == true) throw new OperationCanceledException(token);
+                                journal?.ValidateTarget?.Invoke(location);
+                            });
                         cancelRest = recycled.Cancelled;
                         result = new(location, recycled.Cancelled ? CleanupOutcome.Cancelled : CleanupOutcome.Recycled,
                             recycled.Cancelled ? "Cancelled; some contents may already have moved." : "Moved to Recycle Bin.", true, recycled);

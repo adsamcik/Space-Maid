@@ -12,6 +12,52 @@ namespace SpaceMaid.Tests;
 
 public sealed partial class DesktopTests
 {
+    private static void CheckCleanupAdministratorRetry(MainWindow window, Application app, string artifactRoot)
+    {
+        using var fixture = new TestDirectory();
+        var project = CleanupRulePlanTests.Project(fixture.Path, "permission-retry", 60);
+        using var permissions = new RecyclePermissionFixture(project.Output);
+        var scan = Finish(new VolumeScanner().ScanAsync(fixture.Path, preferFast: false));
+        var findings = DeveloperOpportunityFixture.Find(scan);
+        FinishTask(window.InitializeExplorerAsync(scan, findings, default));
+        typeof(MainWindow).GetMethod("PublishOpportunities", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [scan, findings, OpportunityGrouping.Build(scan, findings), null, null, false]);
+        ((RadioButton)window.FindName("OpportunitiesTab")).IsChecked = true;
+        var workspace = OpenWorkspaceReview(window, 3);
+        Assert.Single(workspace.Prepared!.Plan.Preview.Locations);
+
+        bool reviewed = false;
+        Exception? failure = null;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(25) };
+        timer.Tick += (_, _) =>
+        {
+            var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+            if (dialog is null) return;
+            timer.Stop();
+            try
+            {
+                Assert.Equal(project.Output, ((TextBox)dialog.FindName("TargetPath")).Text);
+                Assert.Equal("Retry with administrator permission", ((Button)dialog.FindName("RecycleButton")).Content);
+                Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-administrator-retry.png"), 520, 310);
+                reviewed = true;
+            }
+            catch (Exception error) { failure = error; }
+            finally { dialog.Close(); }
+        };
+        timer.Start();
+        try
+        {
+            ((Button)workspace.FindName("CleanupButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => workspace.Result is not null && workspace.RunTask is null, TimeSpan.FromSeconds(25));
+        }
+        finally { timer.Stop(); }
+        if (failure is not null) throw failure;
+        Assert.True(reviewed);
+        Assert.Equal(0, workspace.Result!.RecycledCount);
+        Assert.True(Directory.Exists(project.Output));
+        Assert.Equal("authored source", File.ReadAllText(project.Source));
+    }
+
     private static void CheckRuleCleanupRun(MainWindow window, Application app, string artifactRoot)
     {
         using var fixture = new TestDirectory();

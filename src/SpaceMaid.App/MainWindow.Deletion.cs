@@ -41,7 +41,19 @@ public partial class MainWindow
     private int _queuedRecyclesCancelled, _queuedRecyclesRemoved, _foregroundWorkVersion;
     private (string Status, string? Path)? _recycleCheck;
     private string? _recycleSummary, _recycleDetails;
-    private FolderDeletionTarget? _administratorRetryTarget;
+    private readonly List<FolderDeletionTarget> _administratorRetryTargets = [];
+    private FolderDeletionTarget? AdministratorRetryTarget
+    {
+        get
+        {
+            if (_administratorRetryTargets.Count == 0) return null;
+            var selected = SelectedTreeRows();
+            return selected.Length == 1 && !_selectionIsGroup
+                ? _administratorRetryTargets.Find(target => string.Equals(target.Path, selected[0].Path, StringComparison.OrdinalIgnoreCase))
+                    ?? _administratorRetryTargets[0]
+                : _administratorRetryTargets[0];
+        }
+    }
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
     {
@@ -154,7 +166,7 @@ public partial class MainWindow
 
     private void QueueRecycleJobs(RecycleJob[] jobs)
     {
-        _administratorRetryTarget = null;
+        _administratorRetryTargets.RemoveAll(target => jobs.Any(job => RecyclePathsOverlap(target.Path, job.Target.Path)));
         foreach (var job in jobs) _queuedRecycles.Add(job);
         _recycleRefreshWork?.Cancel();
         SignalRecycleStateChange();
@@ -166,14 +178,14 @@ public partial class MainWindow
         UpdateRecycleActivity();
     }
 
-    private bool CanRetryRecycleWithAdministrator => _administratorRetryTarget is not null && _recycleTask is null
+    private bool CanRetryRecycleWithAdministrator => AdministratorRetryTarget is not null && _recycleTask is null
         && _recycleCheck is null && ExploreTab.IsChecked == true && _snapshot is { } scan && CanUseFolderMenu(scan);
 
     private async void RetryRecycle_Click(object sender, RoutedEventArgs e) => await RetryRecycleWithAdministratorAsync();
 
     internal async Task<RecycleResult?> RetryRecycleWithAdministratorAsync()
     {
-        if (!CanRetryRecycleWithAdministrator || _administratorRetryTarget is not { } target) return null;
+        if (!CanRetryRecycleWithAdministrator || AdministratorRetryTarget is not { } target) return null;
         _recycleCheck = ("Reviewing administrator retry…", target.Path);
         UpdateRecycleActivity();
         try
@@ -330,13 +342,20 @@ public partial class MainWindow
         if (skipped > 0) summary.Add($"{FolderCount(skipped)} cancelled before moving");
         if (_queuedRecyclesRemoved > 0) summary.Add($"{FolderCount(_queuedRecyclesRemoved)} removed from the queue");
         int failed = attempts.Count(attempt => attempt.Error is not null);
-        var retry = attempts.FirstOrDefault(attempt => attempt.CanRetryWithAdministrator);
-        _administratorRetryTarget = retry?.Job.Target;
+        foreach (var attempt in attempts)
+        {
+            _administratorRetryTargets.RemoveAll(target => RecyclePathsOverlap(target.Path, attempt.Job.Target.Path));
+            if (attempt.CanRetryWithAdministrator) _administratorRetryTargets.Add(attempt.Job.Target);
+        }
+        var retryTarget = AdministratorRetryTarget;
+        var retry = attempts.FirstOrDefault(attempt => ReferenceEquals(attempt.Job.Target, retryTarget));
         if ((retry ?? attempts.FirstOrDefault(attempt => attempt.Error is not null)) is { } failure)
         {
             summary.Add(failed == 1 ? $"Could not recycle {Path.GetFileName(failure.Job.Target.Path)}" : $"{FolderCount(failed)} failed");
             _recycleDetails = $"{failure.Job.Target.Path}\n{failure.Error}";
         }
+        if (_administratorRetryTargets.Count > 1 || retryTarget is not null && retry is null)
+            summary.Add($"{FolderCount(_administratorRetryTargets.Count)} eligible for retry");
         _recycleSummary = string.Join(" · ", summary);
         RecycleDiagnosticMessage.Text = _recycleDetails ?? "";
         RecycleDiagnosticMessage.Visibility = _recycleDetails is null ? Visibility.Collapsed : Visibility.Visible;

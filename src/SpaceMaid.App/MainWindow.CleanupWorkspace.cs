@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Interop;
+using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
@@ -70,11 +71,13 @@ public partial class MainWindow
         {
             var coordinator = new CleanupRunCoordinator(Operations, _cleanupWorkspace!.Store, DiscoverOpportunities);
             var displayed = _snapshot;
+            nint owner = new WindowInteropHelper(this).Handle;
+            Task<CleanupBatchResult> Run(CancellationToken current) =>
+                coordinator.RunInteractiveAsync(prepared, owner, progress, current, ConfirmCleanupAdministratorRetryAsync);
             Task<CleanupBatchResult> task;
             if (displayed is not null && string.Equals(displayed.RootPath, prepared.Plan.Snapshot.RootPath, StringComparison.OrdinalIgnoreCase))
-                task = ExecuteCleanupWithRefreshAsync(prepared.Plan, displayed, progress, work.Token, work, log,
-                    current => coordinator.RunAsync(prepared, new WindowInteropHelper(this).Handle, progress, current));
-            else task = coordinator.RunAsync(prepared, new WindowInteropHelper(this).Handle, progress, work.Token);
+                task = ExecuteCleanupWithRefreshAsync(prepared.Plan, displayed, progress, work.Token, work, log, Run);
+            else task = Run(work.Token);
             _cleanupTask = task;
             var result = await task;
             foreach (var item in result.Locations) log.Record("cleanup-location-result", item);
@@ -88,4 +91,16 @@ public partial class MainWindow
         }
         finally { _cleanupTask = null; _work = null; if (!_closing) SetBusy(false); }
     }
+
+    private Task<bool> ConfirmCleanupAdministratorRetryAsync(FolderDeletionTarget target, CancellationToken token)
+        => Dispatcher.InvokeAsync(() =>
+        {
+            if (_closing || token.IsCancellationRequested) return false;
+            var confirmation = new RecycleFolderWindow(target, administratorRetry: true) { Owner = this };
+            using var registration = token.Register(() => Dispatcher.InvokeAsync(() =>
+            {
+                if (confirmation.IsVisible) confirmation.Close();
+            }));
+            return confirmation.ShowDialog() == true && !token.IsCancellationRequested;
+        }, System.Windows.Threading.DispatcherPriority.Normal, token).Task;
 }

@@ -1,7 +1,5 @@
 using System.IO;
 using System.Reflection;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -23,20 +21,14 @@ public sealed partial class DesktopTests
         using var fixture = new TestDirectory();
         var parent = new DirectoryInfo(fixture.Path);
         var folder = parent.CreateSubdirectory("permissions-fixture");
+        var second = parent.CreateSubdirectory("second-permissions-fixture");
         string payload = Path.Join(folder.FullName, "payload.txt");
         const string contents = "Owned permission retry fixture";
         File.WriteAllText(payload, contents);
-        using var identity = WindowsIdentity.GetCurrent();
-        var user = identity.User!;
-        var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-        var parentAcl = parent.GetAccessControl(AccessControlSections.Access);
-        var folderAcl = folder.GetAccessControl(AccessControlSections.Access);
-        try
+        File.WriteAllText(Path.Join(second.FullName, "payload.txt"), contents);
+        using (var firstPermissions = new RecyclePermissionFixture(folder.FullName))
+        using (var secondPermissions = new RecyclePermissionFixture(second.FullName))
         {
-            // DELETE_CHILD on the parent would otherwise allow the move even
-            // when the current user's grant on the selected folder lacks DELETE.
-            parent.SetAccessControl(Restricted(FileSystemRights.Modify));
-            folder.SetAccessControl(Restricted(FileSystemRights.ReadAndExecute));
             window.SetScanTarget(fixture.Path);
             ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
             Assert.True(Finish(window.ScanCurrentPathAsync()));
@@ -74,8 +66,8 @@ public sealed partial class DesktopTests
             Assert.True(retry.IsVisible, status.ToolTip as string);
             // A new directory at the original path must never be handed to the
             // elevated Shell retry, even though the user approved that path.
-            RestoreAcl(parent, parentAcl);
-            RestoreAcl(folder, folderAcl);
+            secondPermissions.Dispose();
+            firstPermissions.Dispose();
             string original = Path.Join(parent.FullName, "original");
             Directory.Move(folder.FullName, original);
             Directory.CreateDirectory(folder.FullName);
@@ -85,30 +77,32 @@ public sealed partial class DesktopTests
             Assert.Contains("replaced since confirmation", status.ToolTip as string);
             Assert.Equal("Replacement", File.ReadAllText(payload));
             Assert.Equal(contents, File.ReadAllText(Path.Join(original, "payload.txt")));
-        }
-        finally
-        {
-            RestoreAcl(parent, parentAcl);
-            if (Directory.Exists(folder.FullName)) RestoreAcl(new DirectoryInfo(folder.FullName), folderAcl);
+
+            using var replacedPermissions = new RecyclePermissionFixture(folder.FullName);
+            using var otherPermissions = new RecyclePermissionFixture(second.FullName);
+            var tree = (ListBox)window.FindName("SpaceTree");
+            rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+            FinishTask(window.NavigateToEntryAsync(rows.Scan.FindEntry(folder.FullName)!.Value));
+            rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+            tree.SelectedItems.Add(rows.Row(rows.Find(rows.Scan.FindEntry(second.FullName)!.Value)));
+            Assert.Null(Review(window.DeleteSelectedFolderAsync, approve: true, administrator: false,
+                expectedPaths: [folder.FullName, second.FullName]));
+            rows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+            FinishTask(window.NavigateToEntryAsync(rows.Scan.FindEntry(second.FullName)!.Value));
+            string firstRetryPath = Assert.IsType<string>(retry.ToolTip);
+            Assert.Equal(second.FullName, firstRetryPath);
+            otherPermissions.Dispose();
+            replacedPermissions.Dispose();
+            Directory.Move(firstRetryPath, firstRetryPath + "-original");
+            Directory.CreateDirectory(firstRetryPath);
+            Assert.Null(Review(window.RetryRecycleWithAdministratorAsync, approve: true, administrator: true, expectedPaths: [firstRetryPath]));
+            Assert.True(retry.IsVisible);
+            Assert.Equal(folder.FullName, retry.ToolTip);
+            Assert.True(File.Exists(Path.Join(firstRetryPath + "-original", "payload.txt")));
+            Assert.Equal(contents, File.ReadAllText(Path.Join(second.FullName + "-original", "payload.txt")));
         }
 
-        static void RestoreAcl(DirectoryInfo directory, DirectorySecurity acl)
-        {
-            acl.SetSecurityDescriptorBinaryForm(acl.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
-            directory.SetAccessControl(acl);
-        }
-
-        DirectorySecurity Restricted(FileSystemRights rights)
-        {
-            var acl = new DirectorySecurity();
-            acl.SetAccessRuleProtection(true, false);
-            const InheritanceFlags children = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-            acl.AddAccessRule(new FileSystemAccessRule(user, rights, children, PropagationFlags.None, AccessControlType.Allow));
-            acl.AddAccessRule(new FileSystemAccessRule(administrators, FileSystemRights.FullControl, children, PropagationFlags.None, AccessControlType.Allow));
-            return acl;
-        }
-
-        RecycleResult? Review(Func<Task<RecycleResult?>> request, bool approve, bool administrator, bool cancelQueued = false)
+        RecycleResult? Review(Func<Task<RecycleResult?>> request, bool approve, bool administrator, bool cancelQueued = false, string[]? expectedPaths = null)
         {
             bool reviewed = false;
             Exception? failure = null;
@@ -120,7 +114,8 @@ public sealed partial class DesktopTests
                 timer.Stop();
                 try
                 {
-                    Assert.Equal(folder.FullName, ((TextBox)dialog.FindName("TargetPath")).Text);
+                    Assert.Equal((expectedPaths ?? [folder.FullName]).Order(),
+                        ((TextBox)dialog.FindName("TargetPath")).Text.Split(Environment.NewLine).Order());
                     var confirm = (Button)dialog.FindName("RecycleButton");
                     if (administrator)
                         Assert.Equal("Retry with administrator permission", confirm.Content);

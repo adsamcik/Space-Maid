@@ -74,6 +74,22 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
         CancellationToken token, Action<string, object>? diagnostic = null)
         => FolderRecycler.RetryWithAdministratorAsync(target, owner, token, diagnostic);
 
+    internal async Task<RecycleResult> RecycleWithOptionalAdministratorRetryAsync(FolderDeletionTarget target, nint owner,
+        CancellationToken token, Action<string, object> diagnostic, Func<FolderDeletionTarget, CancellationToken, Task<bool>>? confirmRetry,
+        Func<Task> recheck, Action? validateScope)
+    {
+        try { return await RecycleAsync(target, owner, token, diagnostic).ConfigureAwait(false); }
+        catch (FolderRecycler.PermissionException) when (confirmRetry is not null)
+        {
+            token.ThrowIfCancellationRequested();
+            await Task.Run(target.ValidateCurrent, token).ConfigureAwait(false);
+            if (!await confirmRetry(target, token).ConfigureAwait(false)) throw;
+            token.ThrowIfCancellationRequested();
+            await recheck().ConfigureAwait(false);
+            return await FolderRecycler.RetryWithAdministratorAsync(target, owner, token, diagnostic, validateScope).ConfigureAwait(false);
+        }
+    }
+
     public Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, nint owner,
         IProgress<CleanupProgress> progress, CancellationToken token, Action<string, object> diagnostic,
         IReadOnlyDictionary<string, WorktreeCleanupPolicy>? checkedWorktrees = null, OpportunityDiscovery? discover = null)

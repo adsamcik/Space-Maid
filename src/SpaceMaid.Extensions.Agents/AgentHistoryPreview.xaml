@@ -6,7 +6,7 @@
     <Grid Margin="20">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <StackPanel>
-            <TextBlock Text="Move these history items to the Recycle Bin?" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock x:Name="Heading" Text="Move these history items to the Recycle Bin?" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
             <TextBlock Text="{Binding Summary}" Margin="0,8" />
             <TextBlock Text="Removing transcripts loses session resumption and conversation context. Each listed file moves individually; a Cursor CLI folder includes all its files. Separate indexes, task artifacts and cloud copies remain, so history entries may still appear. Interrupted-write leftovers may be recovery copies. Restore from the Recycle Bin if needed; app recovery is not guaranteed." TextWrapping="Wrap" />
             <TextBlock Text="Files continue occupying disk space until the Recycle Bin is emptied. Age is based on the last file change and does not establish that a session is finished." TextWrapping="Wrap" Margin="0,8,0,10" />
