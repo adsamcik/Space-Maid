@@ -309,8 +309,11 @@ internal sealed class ToolCacheFixture : IDisposable
         if (args.Contains("verify") || args.Contains("prune"))
         {
             OnMutation?.Invoke();
-            MutationStarted.TrySetResult();
-            if (StallMutation) await Task.Delay(Timeout.Infinite, token);
+            if (StallMutation)
+            {
+                MutationStarted.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+            }
             return new(FailMutation ? 1 : 0, "Native fixture report", FailMutation ? "Owner declined maintenance" : "");
         }
         throw new InvalidOperationException("Unexpected native command in fixture: " + command.Preview);
