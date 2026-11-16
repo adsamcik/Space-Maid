@@ -10,20 +10,20 @@ namespace SpaceMaid.Tests;
 public sealed class DeletionTests
 {
     [Fact]
-    public async Task RecyclePreparationChecksCurrentContentsAndRetainsIdentityGuards()
+    public async Task RecyclePreparationUsesScanEstimateWithoutEnumeratingContentsAndRetainsIdentityGuards()
     {
         using var fixture = new TestDirectory();
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "folder")).FullName;
         string file = Path.Join(folder, "data.bin");
         File.WriteAllBytes(file, new byte[4096]);
-        var operations = new FileOperations();
-        var scan = await operations.MeasureFolderAsync(fixture.Path);
+        var scan = await new FileOperations().MeasureFolderAsync(fixture.Path);
+        var operations = new FileOperations(() => throw new InvalidOperationException("Recycle confirmation should not request metadata scans."));
         int link = scan.FindEntry(folder)!.Value;
         File.WriteAllBytes(file, new byte[8192]);
         File.WriteAllBytes(file + ":extra", new byte[4096]);
         var target = await operations.PrepareRecycleAsync(scan, link, default);
         Assert.Equal(4096, scan.Entry(link).LogicalBytes);
-        Assert.Equal(12288, target.LogicalBytes);
+        Assert.Equal(4096, target.LogicalBytes);
         Assert.Equal(folder, target.Path);
         target.ValidateCurrent();
         Directory.Move(folder, folder + "-original");

@@ -211,7 +211,7 @@ public sealed class IncrementalNtfsTests
     }
 
     [Fact]
-    public async Task RecyclingCleanupReviewAndBuildActivityShareFreshIncrementalMetadata()
+    public async Task CleanupReviewAndBuildActivityShareFreshIncrementalMetadata()
     {
         using var fixture = new TestDirectory();
         string project = Directory.CreateDirectory(Path.Join(fixture.Path, "project")).FullName;
@@ -225,10 +225,6 @@ public sealed class IncrementalNtfsTests
         File.WriteAllBytes(file, new byte[8192]); File.WriteAllBytes(file + ":extra", new byte[4096]);
         var source = new JournalMetadataSource(await Measure(fixture.Path));
         var operations = new FileOperations(() => source, inventory: () => previous);
-        var events = new Events();
-        var recycled = await operations.PrepareRecycleAsync(previous, previous.FindEntry(output)!.Value, default, events.Record);
-        Assert.Equal(output, recycled.Path); Assert.Equal(12288, recycled.LogicalBytes); recycled.ValidateCurrent();
-        Assert.Equal(0, events.CompletedDirectories());
         var reviewEvents = new Events();
         var review = await operations.ReviewCleanupAsync(previous, [selected], diagnostic: reviewEvents.Record,
             discover: DeveloperOpportunityFixture.Find);

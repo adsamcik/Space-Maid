@@ -197,6 +197,7 @@ public partial class MainWindow
             if (_closing) return false;
             EndPathEdit(); ExploreTab.IsChecked = true;
             if (!forceScan && ReferenceEquals(_snapshot, scan) && scan is not null && link is { } destination
+                && _explorer?.IsInRecycledBranch(destination) != true
                 && scan.Entry(destination) is { IsDirectory: true, IsPrimaryName: true } entry && !scan.IsUnmeasuredDirectory(entry.FileIndex))
                 await NavigateToEntryAsync(destination);
             else

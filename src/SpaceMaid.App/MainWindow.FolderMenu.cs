@@ -26,7 +26,7 @@ public partial class MainWindow
 
     private bool PrepareFolderMenu(ContextMenu menu, ScanSnapshot scan, int link)
     {
-        if (!CanUseFolderMenu(scan)) return false;
+        if (!CanUseFolderEntry(scan, link)) return false;
         var entry = scan.Entry(link);
         string? path = scan.EntryPath(link);
         if (path is null || link < -1) return false;
@@ -38,7 +38,7 @@ public partial class MainWindow
             var open = new MenuItem { Header = "Open in File Explorer" };
             open.Click += (_, _) =>
             {
-                if (CanUseFolderMenu(scan)) OpenFolderInExplorer(path);
+                if (CanUseFolderEntry(scan, link)) OpenFolderInExplorer(path);
             };
             string? recycleRoot = RecycleBinService.RootForFolder(path);
             string? blocked = recycleRoot is not null ? null : FolderDeletionTarget.SelectionBlockReason(scan, link);
@@ -50,13 +50,13 @@ public partial class MainWindow
             ToolTipService.SetShowOnDisabled(recycle, true);
             recycle.Click += async (_, _) =>
             {
-                if (!CanUseFolderMenu(scan)) return;
+                if (!CanUseFolderEntry(scan, link)) return;
                 if (recycleRoot is not null) await EmptyRecycleBinAsync(recycleRoot);
                 else await DeleteFolderAsync(scan, link);
             };
             menu.Items.Add(open); menu.Items.Add(recycle);
             var recheck = new MenuItem { Header = "Recheck this folder" };
-            recheck.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await RecheckFolderAsync(path); };
+            recheck.Click += async (_, _) => { if (CanUseFolderEntry(scan, link)) await RecheckFolderAsync(path); };
             menu.Items.Add(recheck);
         }
         var checking = new MenuItem { Header = "Checking cloud availability…", IsEnabled = false };
@@ -69,7 +69,7 @@ public partial class MainWindow
     private async Task AddCloudMenuAsync(ContextMenu menu, MenuItem checking, object marker, ScanSnapshot scan, int link, string path)
     {
         var state = await Operations.InspectCloudAsync(path);
-        if (!CanUseFolderMenu(scan) || !ReferenceEquals(menu.Tag, marker)) return;
+        if (!CanUseFolderEntry(scan, link) || !ReferenceEquals(menu.Tag, marker)) return;
         menu.Items.Remove(checking);
         if (state is not null)
         {
@@ -78,21 +78,24 @@ public partial class MainWindow
                 ToolTip = enabled ? $"Managed by {state.Provider}"
                     : state.LocalBytes == 0 ? "This file is already online-only." : "This file is unsynced or excluded by the provider." };
             ToolTipService.SetShowOnDisabled(online, true);
-            online.Click += async (_, _) => { if (CanUseFolderMenu(scan)) await MakeOnlineOnlyAsync(scan, link); };
+            online.Click += async (_, _) => { if (CanUseFolderEntry(scan, link)) await MakeOnlineOnlyAsync(scan, link); };
             menu.Items.Add(online);
         }
         if (menu.Items.Count == 0) menu.IsOpen = false;
     }
 
-    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing && !_deleting
+    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing
         && ReferenceEquals(_snapshot, scan);
+
+    private bool CanUseFolderEntry(ScanSnapshot scan, int link) => link >= -1 && CanUseFolderMenu(scan)
+        && _explorer?.IsInRecycledBranch(link) != true;
 
     private bool SelectContextEntry(ScanSnapshot scan, int link)
     {
         // Context selection does not drill into the folder or replace the
         // map button while its menu is opening. Details and Delete still
         // reflect the clicked entry; menu actions capture their own target.
-        if (_explorer is null) return false;
+        if (_explorer is null || _explorer.IsInRecycledBranch(link)) return false;
         if (_explorer.Find(link) < 0)
         {
             // A displayed map folder can have collapsed tree ancestors. Their

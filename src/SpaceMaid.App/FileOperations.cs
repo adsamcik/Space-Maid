@@ -43,26 +43,15 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
 
     public Task<ScanSnapshot> RecheckAsync(ScanSnapshot scan, IEnumerable<ScanRecheckRequest> requests,
         CancellationToken token = default, Action<string, object>? diagnostic = null)
-        => _disk.RecheckAsync(scan, requests, token, diagnostic);
+        => Task.Run(() => _disk.RecheckAsync(scan, requests, token, diagnostic), token);
 
     public Task<OpportunityReviewValidation> ReviewCleanupAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> selected,
         CancellationToken token = default, Action<string, object>? diagnostic = null, OpportunityDiscovery? discover = null,
         IProgress<OpportunityValidationProgress>? progress = null)
         => _disk.ReviewCleanupAsync(scan, selected, token, diagnostic, discover, progress);
 
-    public async Task<FolderDeletionTarget> PrepareRecycleAsync(ScanSnapshot scan, int link, CancellationToken token,
-        Action<string, object>? diagnostic = null)
-    {
-        // Keep the selected identity, but obtain confirmation sizes from just
-        // this folder. Unrelated stale inventory does not prevent recycling.
-        var selected = await Task.Run(() => FolderDeletionTarget.FromScan(scan, link), token);
-        var current = await MeasureFolderAsync(selected.Path, token, diagnostic, scan);
-        return await Task.Run(() =>
-        {
-            selected.ValidateCurrent();
-            return FolderDeletionTarget.FromScan(current, -1);
-        }, token);
-    }
+    public Task<FolderDeletionTarget> PrepareRecycleAsync(ScanSnapshot scan, int link, CancellationToken token)
+        => Task.Run(() => FolderDeletionTarget.FromScan(scan, link, Files), token);
 
     public Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null) => FolderRecycler.RecycleAsync(target, owner, token, diagnostic);

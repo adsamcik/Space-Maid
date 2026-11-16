@@ -55,7 +55,7 @@ public partial class MainWindow
     {
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
         string? detailPath = OpportunityBrowser?.Detail?.Path;
-        StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
+        if (!_recycling) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();
         var timer = Stopwatch.StartNew();
@@ -69,17 +69,28 @@ public partial class MainWindow
         log.Record("opportunity-extensions", new { Status = OpportunityExtensions.Status(updated), ExtensionLog = _extensions?.LogPath });
         token.ThrowIfCancellationRequested();
         if (_closing || !ReferenceEquals(_snapshot, scan)) return;
-        string[] expanded = _explorer?.ExpandedPaths() ?? [];
-        string selected = scan.EntryPath(_selectedLink) ?? scan.RootPath;
-        bool grouped = _selectionIsGroup;
-        var column = _treeSortColumn; bool descending = _treeDescending;
-        // Publish a coherent inventory; finish the bounded UI restore even if
-        // cancellation arrives after the metadata/analysis has completed.
-        var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
-            expanded, selected, column, descending, CancellationToken.None);
-        if (_closing || !ReferenceEquals(_snapshot, scan)) return;
-        var viewport = CaptureTreeViewport();
-        PublishExplorerRefresh(explorer, column, descending, grouped);
+        var retainedRecycled = RetainRecycledRows(updated, requests);
+        TreeViewport? viewport;
+        while (true)
+        {
+            await WaitForExplorerBrowseAsync(token);
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+            int browseVersion = _browseVersion;
+            int selectedLink = _selectedLink;
+            string[] expanded = _explorer?.ExpandedPaths() ?? [];
+            string selected = scan.EntryPath(selectedLink) ?? scan.RootPath;
+            var column = _treeSortColumn;
+            bool descending = _treeDescending;
+            var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
+                expanded, selected, column, descending, retainedRecycled, _recycling ? token : CancellationToken.None);
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+            // A browse completed against the earlier inventory while the tree
+            // was prepared. Build its presentation from the user's latest view.
+            if (browseVersion != _browseVersion || selectedLink != _selectedLink) continue;
+            viewport = CaptureTreeViewport();
+            PublishExplorerRefresh(explorer, column, descending, _selectionIsGroup);
+            break;
+        }
         _staleScopes.UnionWith(dirty);
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
@@ -111,6 +122,30 @@ public partial class MainWindow
         else if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
         UpdateSelection();
         RestoreTreeViewport(viewport);
+    }
+
+    private List<int> RetainRecycledRows(ScanSnapshot updated, IReadOnlyList<ScanRecheckRequest> requests)
+    {
+        var retained = new List<int>();
+        if (_explorer is not { } rows) return retained;
+        foreach (int oldLink in rows.RecycledLinks)
+        {
+            string path = rows.Scan.EntryPath(oldLink)!;
+            if (updated.FindEntry(path) is not { } link || updated.EntryPath(link) != path) continue;
+            var previous = rows.Scan.GetMetadata(oldLink);
+            var current = updated.GetMetadata(link);
+            if (previous.NativeIdLow is null || previous.NativeIdLow != current.NativeIdLow || previous.NativeIdHigh != current.NativeIdHigh) continue;
+            // Partial refreshes can keep an earlier name when its parent was
+            // skipped or unreadable. A successful re-read can show a restore.
+            string? parent = Path.GetDirectoryName(path);
+            if (!requests.Any(CoversName) || updated.IncompleteRecheckScopes.Any(CoversName)) retained.Add(link);
+
+            bool CoversName(ScanRecheckRequest scope) => scope.Path.Equals(path, StringComparison.Ordinal)
+                || scope.Path.Equals(parent, StringComparison.Ordinal)
+                || scope.Recursive && path.StartsWith(Path.EndsInDirectorySeparator(scope.Path)
+                    ? scope.Path : scope.Path + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        }
+        return retained;
     }
 
     private void Window_Activated(object? sender, EventArgs e)

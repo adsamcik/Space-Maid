@@ -1,4 +1,3 @@
-using SpaceMaid.Core.IO;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -7,6 +6,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
 
@@ -14,7 +14,8 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
-    private bool _deleting, _scanStale;
+    private bool _recycling, _scanStale;
+    private Task<RecycleResult>? _folderRecycleTask;
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
     {
@@ -41,18 +42,18 @@ public partial class MainWindow
 
     private async Task<RecycleResult?> DeleteFolderAsync(ScanSnapshot scan, int link)
     {
-        if (!CanUseFolderMenu(scan)) return null;
-        _deleting = true; // Guard modal reentrancy as well as repeated key presses.
+        if (!CanUseFolderEntry(scan, link)) return null;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("recycle", scan.EntryPath(link) ?? scan.RootPath);
         _work = work;
         bool started = false;
         RecycleResult? outcome = null;
+        var requests = new List<ScanRecheckRequest>();
         try
         {
             SetBusy(true);
             StatusText.Text = "Checking selected folder…";
-            var target = await Operations.PrepareRecycleAsync(scan, link, work.Token, log.Record);
+            var target = await Operations.PrepareRecycleAsync(scan, link, work.Token);
             if (_closing || work.IsCancellationRequested || !ReferenceEquals(_snapshot, scan)) return null;
             var confirmation = new RecycleFolderWindow(target) { Owner = this };
             if (confirmation.ShowDialog() != true || _closing || work.IsCancellationRequested)
@@ -61,29 +62,56 @@ public partial class MainWindow
                 if (!_closing) StatusText.Text = "Folder unchanged.";
                 return null;
             }
-            StatusText.Text = $"Moving to Recycle Bin: {target.Path} · Windows shows progress and cancellation.";
+            string name = scan.Entry(link).Name;
+            StatusText.Text = $"Moving {name} to the Recycle Bin…";
+            _recycling = true;
+            ExplorePanel.IsEnabled = true;
             started = true;
-            var result = await Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
+            string parent = Path.GetDirectoryName(target.Path)!;
+            string volume = Path.GetPathRoot(target.Path)!;
+            string recycleRoot = Path.Combine(volume, "$Recycle.Bin");
+            requests.Add(new(link == -1 ? scan.RootPath : parent, link == -1));
+            bool recycleBinInScan = scan.FindEntry(recycleRoot) is not null || scan.FindEntry(volume) is not null;
+            var binScope = new ScanRecheckRequest(recycleRoot);
+            if (recycleBinInScan) requests.Add(binScope);
+            _folderRecycleTask = Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
+            var result = await _folderRecycleTask;
             outcome = result;
             if (!_closing)
             {
                 log.Record("recycle-result", result);
-                var requests = new List<ScanRecheckRequest> { new(Path.GetDirectoryName(target.Path)!, false) };
-                if (DiskAccess.Default.DirectoryExists(target.Path)) requests.Add(new(target.Path));
-                string recycleRoot = Path.Combine(Path.GetPathRoot(target.Path)!, "$Recycle.Bin");
-                if (scan.FindEntry(recycleRoot) is not null || scan.FindEntry(Path.GetPathRoot(target.Path)!) is not null)
+                if (recycleBinInScan && result.RecycledPath is { } destination)
                 {
-                    if (result.RecycledPath is { } destination)
-                    {
-                        requests.Add(new(recycleRoot, false));
-                        requests.Add(new(Path.GetDirectoryName(destination)!, false));
-                        requests.Add(new(destination));
-                    }
-                    else requests.Add(new(recycleRoot));
+                    requests.Remove(binScope);
+                    requests.Add(new(recycleRoot, false));
+                    requests.Add(new(Path.GetDirectoryName(destination)!, false));
+                    requests.Add(new(destination));
                 }
-                await RefreshAffectedAsync(scan, requests, result.Cancelled
-                    ? "Recycling cancelled; some contents may have moved."
-                    : "Folder moved to the Recycle Bin; space stays occupied until the bin is emptied.", work.Token, log);
+                string note = $"Moved {name} to the Recycle Bin. Empty the bin to free space.";
+                if (!result.Cancelled)
+                {
+                    StatusText.Text = $"Moved {name} to the Recycle Bin. Updating scan results…";
+                    // A confirmed move survives cancellation of the refresh.
+                    await WaitForExplorerBrowseAsync(CancellationToken.None);
+                    if (_closing || !ReferenceEquals(_snapshot, scan)) return result;
+                    MarkExplorerFolderRecycled(link);
+                    await Dispatcher.Yield(DispatcherPriority.Background);
+                    if (_closing || !ReferenceEquals(_snapshot, scan)) return result;
+                    if (link == -1 || !scan.HasAllocationData)
+                    {
+                        MarkScanStale(note + (link == -1 ? " Scan another folder to update results."
+                            : " Rescan to update results."), requests);
+                        return result;
+                    }
+                }
+                else
+                {
+                    note = "Recycling cancelled. Some contents may already have moved.";
+                    StatusText.Text = "Recycling cancelled. Updating scan results…";
+                    if (link != -1 && await Task.Run(() => Operations.Files.DirectoryExists(target.Path), work.Token))
+                        requests.Add(new(target.Path));
+                }
+                await RefreshAffectedAsync(scan, requests, note, work.Token, log);
             }
             return result;
         }
@@ -93,7 +121,7 @@ public partial class MainWindow
             {
                 if (started) MarkScanStale(outcome is { Cancelled: false }
                     ? "Folder moved. Refresh cancelled; recheck to update results."
-                    : "Recycling cancelled. Some contents may already have moved. Recheck or rescan to refresh the results.");
+                    : "Recycling cancelled. Some contents may already have moved. Recheck or rescan to refresh the results.", requests);
                 else StatusText.Text = "Folder check cancelled. Nothing was moved.";
             }
             return outcome;
@@ -105,7 +133,7 @@ public partial class MainWindow
             {
                 string message = outcome is { Cancelled: false } ? "Folder moved. Refresh failed; recheck to update results."
                     : $"Could not recycle the folder: {ex.Message}";
-                if (started) MarkScanStale(message + " Results may be out of date. Rescan to check current contents.");
+                if (started) MarkScanStale(message + " Results may be out of date. Rescan to check current contents.", requests);
                 else StatusText.Text = message;
                 log.Record(outcome is { Cancelled: false } ? "recycle-refresh-failed" : "recycle-or-recheck-failed", new { Error = ex.ToString(), started });
             }
@@ -113,9 +141,33 @@ public partial class MainWindow
         }
         finally
         {
-            _work = null; _deleting = false;
+            _folderRecycleTask = null;
+            _work = null; _recycling = false;
             if (!_closing) { ShowActionLogError(log); SetBusy(false); }
         }
+    }
+
+    private void MarkExplorerFolderRecycled(int link)
+    {
+        if (_explorer is not { } explorer) return;
+        bool expanded = explorer.IsExpanded(link);
+        var viewport = expanded ? CaptureTreeViewport() : null;
+        bool selectionRemoved = _selectedLink == link || expanded && AncestorLinks(explorer.Scan, _selectedLink).Contains(link);
+        _syncTree = true;
+        try
+        {
+            explorer.MarkRecycled(link);
+            if (selectionRemoved)
+            {
+                _selectedLink = link;
+                _selectionIsGroup = false;
+                EntryDetail.DataContext = new ExplorerRow(explorer.Scan, explorer.Scan.Entry(link), 0, false) { IsRecycled = true };
+                EntryDetail.Visibility = SelectedEntryPath.Visibility = Visibility.Visible;
+            }
+            SpaceTree.SelectedIndex = explorer.Find(_selectedLink);
+            if (expanded) RestoreTreeViewport(viewport);
+        }
+        finally { _syncTree = false; }
     }
 
     internal void MarkScanStale(string message, IEnumerable<ScanRecheckRequest>? scopes = null)

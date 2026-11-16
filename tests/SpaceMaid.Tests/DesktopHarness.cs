@@ -68,15 +68,18 @@ public sealed partial class DesktopTests
         }
     }
 
-    private static void RenderMenu(FrameworkElement menu, string path)
+    private static void RenderMenu(FrameworkElement menu, string path, Brush? background = null)
     {
         menu.UpdateLayout();
         Assert.True(menu.ActualWidth > 0 && menu.ActualHeight > 0);
         var bitmap = new RenderTargetBitmap((int)Math.Ceiling(menu.ActualWidth), (int)Math.Ceiling(menu.ActualHeight), 96, 96, PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
         using (var drawing = visual.RenderOpen())
-            drawing.DrawRectangle(new VisualBrush(menu) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top },
-                null, new Rect(0, 0, menu.ActualWidth, menu.ActualHeight));
+        {
+            var bounds = new Rect(0, 0, menu.ActualWidth, menu.ActualHeight);
+            if (background is not null) drawing.DrawRectangle(background, null, bounds);
+            drawing.DrawRectangle(new VisualBrush(menu) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top }, null, bounds);
+        }
         bitmap.Render(visual);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));

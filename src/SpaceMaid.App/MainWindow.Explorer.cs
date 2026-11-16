@@ -15,8 +15,11 @@ public partial class MainWindow
     private readonly Dictionary<int, int[]> _mapOrders = [];
     private IReadOnlyDictionary<int, SpaceKind> _kinds = new Dictionary<int, SpaceKind>();
     private CancellationTokenSource? _browseWork;
+    private TaskCompletionSource? _browseCompleted;
+    private int _browseVersion;
     private bool _browsing, _syncTree, _selectionIsGroup;
     private int _selectedLink = -1;
+    private bool CanBrowseExplorer => !_closing && (_work is null || _recycling);
 
     private void ClearExplorer()
     {
@@ -86,12 +89,13 @@ public partial class MainWindow
 
     private async Task<PreparedExplorer> PrepareExplorerRefreshAsync(ScanSnapshot scan,
         IReadOnlyList<Opportunity> opportunities, string[] expanded, string selected,
-        ScanSortColumn column, bool descending, CancellationToken token)
+        ScanSortColumn column, bool descending, IReadOnlyList<int> recycled, CancellationToken token)
     {
         await _classificationReady.WaitAsync(token);
         return await Task.Run(() =>
         {
             var rows = new ExplorerRows(scan);
+            foreach (int link in recycled) rows.MarkRecycled(link);
             var kinds = OpportunityKinds(opportunities);
             var childOrders = new Dictionary<int, int[]>();
             var mapOrders = new Dictionary<int, int[]>();
@@ -206,13 +210,16 @@ public partial class MainWindow
 
     private async Task BrowseAsync(Func<CancellationToken, Task> action)
     {
-        if (_snapshot is null || _work is not null || _browsing) return;
+        if (_snapshot is null || !CanBrowseExplorer || _browsing) return;
         _browsing = true;
+        _browseVersion++;
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _browseCompleted = completed;
         using var work = new CancellationTokenSource();
         _browseWork = work;
         ExplorePanel.IsEnabled = false;
         UpdatePathAvailability(_work is not null);
-        StatusText.Text = "Opening folder…";
+        if (_work is null) StatusText.Text = "Opening folder…";
         bool failed = false;
         try { await action(work.Token); }
         catch (OperationCanceledException) { }
@@ -220,14 +227,21 @@ public partial class MainWindow
         finally
         {
             _browseWork = null; _browsing = false;
+            _browseCompleted = null;
+            completed.SetResult();
             UpdatePathAvailability(_work is not null);
             if (!_closing)
             {
-                ExplorePanel.IsEnabled = _work is null;
+                ExplorePanel.IsEnabled = CanBrowseExplorer;
                 if (!failed && _work is null && _snapshot is not null) StatusText.Text = _scanStatus;
                 DrainExplorerRecheck();
             }
         }
+    }
+
+    private async Task WaitForExplorerBrowseAsync(CancellationToken token)
+    {
+        while (_browseCompleted is { } browsing) await browsing.Task.WaitAsync(token);
     }
 
     private void SelectTree(int link)
@@ -246,6 +260,7 @@ public partial class MainWindow
 
     internal Task NavigateToEntryAsync(int link) => BrowseAsync(async token =>
     {
+        if (_explorer!.IsInRecycledBranch(link)) return;
         var scan = _snapshot!;
         var ancestors = AncestorLinks(scan, link);
         while (ancestors.TryPop(out int ancestor))
@@ -290,9 +305,16 @@ public partial class MainWindow
     }
     private async void Tree_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_syncTree || _work is not null || SpaceTree.SelectedItem is not ExplorerRow row) return;
+        if (_syncTree || !CanBrowseExplorer || SpaceTree.SelectedItem is not ExplorerRow row) return;
         _selectedLink = row.Entry.LinkIndex;
         _selectionIsGroup = false;
+        if (row.IsRecycled)
+        {
+            EntryDetail.DataContext = row;
+            EntryDetail.Visibility = Visibility.Visible;
+            SelectedEntryPath.Visibility = Visibility.Visible;
+            return;
+        }
         await BrowseAsync(token => DisplayEntryAsync(_selectedLink, token));
     }
     private void Tree_MouseDown(object sender, MouseButtonEventArgs e)

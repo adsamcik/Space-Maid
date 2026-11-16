@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Reflection;
@@ -527,7 +528,7 @@ public sealed partial class DesktopTests
                 Assert.Equal("No skipped-path warnings", ((TextBlock)details.FindName("CoverageText")).Text);
                 Assert.Contains(Descendants(startup.Content as DependencyObject).OfType<Button>(), b => Equals(b.Content, "Continue without admin"));
 
-                SetStage("checking current folder contents on demand after invalidation");
+                SetStage("confirming a folder from its scan estimate after invalidation");
                 var returnToFolder = window.NavigateToEntryAsync(explorer.Scan.PrimaryLink(row.Item.DirectoryIndex));
                 PumpUntil(() => returnToFolder.IsCompleted, TimeSpan.FromSeconds(10));
                 returnToFolder.GetAwaiter().GetResult();
@@ -553,8 +554,8 @@ public sealed partial class DesktopTests
                         Assert.Equal("bin", ((TextBlock)dialog.FindName("TargetName")).Text);
                         Assert.False(((Expander)dialog.FindName("DeletionDetails")).IsExpanded);
                         Assert.Equal(Visibility.Collapsed, ((TextBlock)dialog.FindName("PartialScanNote")).Visibility);
-                        Assert.Contains("16 KiB", ((TextBlock)dialog.FindName("TargetSize")).Text);
-                        Render(dialog, Path.Join(FindRepository(), "artifacts", "ui", "recycle-rechecked.png"), 520, 300);
+                        Assert.Contains("8 KiB · Estimated", ((TextBlock)dialog.FindName("TargetSize")).Text);
+                        Render(dialog, Path.Join(FindRepository(), "artifacts", "ui", "recycle-estimate.png"), 520, 300);
                         confirmed = true;
                     }
                     catch (Exception ex) { confirmationFailure = ex; }
@@ -570,6 +571,7 @@ public sealed partial class DesktopTests
                 Assert.True(confirmed);
                 Assert.True(Directory.Exists(bin));
                 Assert.Equal(16384, new FileInfo(Path.Join(bin, "sample.dll")).Length);
+                Assert.False(Assert.IsType<ExplorerRow>(tree.SelectedItem).IsRecycled);
                 Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
                 File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[8192]);
                 BuildActivityFixture.AgeProject(project);
@@ -583,6 +585,33 @@ public sealed partial class DesktopTests
                 Assert.False(fieldKey.Handled);
 
                 SetStage("recycling a fixture through the actual UI after invalidation");
+                var originalRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
+                Exception? recycledRowFailure = null;
+                Task? backgroundBrowse = null;
+                NotifyCollectionChangedEventHandler observeRecycle = (_, change) =>
+                {
+                    if (change.NewItems is not { Count: 1 } || change.NewItems[0] is not ExplorerRow { IsRecycled: true } removed) return;
+                    _ = window.Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            Assert.False(Directory.Exists(bin));
+                            Assert.Equal(bin, removed.Path);
+                            Assert.Equal("—", removed.Allocated);
+                            Assert.True(tree.IsEnabled);
+                            Assert.False(scanButton.IsEnabled);
+                            Assert.Same(originalRows, tree.ItemsSource);
+                            window.UpdateLayout();
+                            var row = Assert.IsType<ListViewItem>(tree.ItemContainerGenerator.ContainerFromItem(removed));
+                            var name = Descendants(row).OfType<TextBlock>().Single(block => block.Text == removed.Name);
+                            Assert.Contains(name.TextDecorations, decoration => decoration.Location == TextDecorationLocation.Strikethrough);
+                            RenderMenu(tree, Path.Join(FindRepository(), "artifacts", "ui", "explorer-folder-recycled.png"), window.Background);
+                            backgroundBrowse = window.NavigateToEntryAsync(-1);
+                        }
+                        catch (Exception ex) { recycledRowFailure = ex; }
+                    }, DispatcherPriority.Loaded);
+                };
+                originalRows.CollectionChanged += observeRecycle;
                 var approveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
                     var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
@@ -591,9 +620,13 @@ public sealed partial class DesktopTests
                 var recycleTask = window.DeleteSelectedFolderAsync();
                 PumpUntil(() => recycleTask.IsCompleted, TimeSpan.FromSeconds(10));
                 approveTimer.Stop();
+                originalRows.CollectionChanged -= observeRecycle;
                 var recycled = Assert.IsType<RecycleResult>(recycleTask.GetAwaiter().GetResult());
                 try
                 {
+                    if (recycledRowFailure is not null) throw recycledRowFailure;
+                    Assert.NotNull(backgroundBrowse);
+                    Assert.True(backgroundBrowse.IsCompletedSuccessfully);
                     Assert.False(Directory.Exists(bin));
                     Assert.Contains("Updated", ((TextBlock)window.FindName("StatusText")).Text);
                     Assert.Contains("Partial refresh", ((TextBlock)window.FindName("TreeNote")).Text);
@@ -601,13 +634,17 @@ public sealed partial class DesktopTests
                     Assert.False(((Button)OpportunityControl(window, "ReviewButton")).IsEnabled);
                     var updatedRows = Assert.IsType<ExplorerRows>(tree.ItemsSource);
                     Assert.Null(updatedRows.Scan.FindEntry(bin));
-                    Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                    Assert.Equal(fixture.Path, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                     Assert.True(updatedRows.IsExpanded(updatedRows.Scan.FindEntry(project)!.Value));
                     Assert.Equal("Allocated ↓", ((GridViewColumnHeader)window.FindName("AllocationHeader")).Content);
                     capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                     Assert.True(scanButton.IsEnabled); // Captured old-scan actions cannot operate on the refreshed inventory.
                 }
                 finally { DeletionTests.RestoreFixture(Assert.IsType<string>(recycled.RecycledPath), bin); }
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "folder-recycling") return;
+                var returnToProject = window.NavigateToEntryAsync(Assert.IsType<ExplorerRows>(tree.ItemsSource).Scan.FindEntry(project)!.Value);
+                PumpUntil(() => returnToProject.IsCompleted, TimeSpan.FromSeconds(10));
+                returnToProject.GetAwaiter().GetResult();
                 // A small viewport exercises scrolling with the existing owned
                 // rows, without expanding every later native recheck fixture.
                 tree.Height = 40; window.UpdateLayout();
