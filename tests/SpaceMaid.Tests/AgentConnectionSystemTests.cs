@@ -60,8 +60,10 @@ public sealed class AgentConnectionSystemTests
         using (var bad = new NamedPipeClientStream(".", connection.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
         {
             await bad.ConnectAsync(5000);
-            using var writer = AgentConnection.Writer(bad); using var reader = AgentConnection.Reader(bad);
-            await writer.WriteLineAsync("incorrect");
+            // A rejected connection closes the pipe. A StreamWriter would
+            // try to flush it again during disposal after the expected EOF.
+            await bad.WriteAsync("incorrect\n"u8.ToArray());
+            using var reader = AgentConnection.Reader(bad);
             Assert.Null(await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)));
         }
         using var good = new NamedPipeClientStream(".", connection.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
