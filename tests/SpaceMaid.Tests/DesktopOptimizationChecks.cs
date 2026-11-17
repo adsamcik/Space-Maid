@@ -219,6 +219,7 @@ public sealed partial class DesktopTests
             var finding = Assert.Single(DeveloperOpportunityFixture.Find(snapshot));
             var policy = new OptimizationPolicy { Enabled = true, ScopePath = source.Path, MaxFilesPerRun = 1,
                 EnabledRules = [finding.AutomaticCleanup!.ConsentKey(finding.ProviderId)] };
+            CheckOptimizationPreparationFailures(host, snapshot, policy, source.Path, state.Path);
             new OptimizationSettings(policy).Save(host.OptimizationSettingsPath); host.InitializeOptimization();
             var automatic = host.TryAutomaticOptimizationAsync(); PumpUntil(() => automatic.IsCompleted, TimeSpan.FromSeconds(15)); automatic.GetAwaiter().GetResult();
             Assert.Single(Directory.GetFiles(Path.Join(source.Path, "__pycache__")));
@@ -281,6 +282,55 @@ public sealed partial class DesktopTests
         finally
         {
             host.Close(); PumpUntil(() => !app.Windows.Cast<Window>().Contains(host), TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private static void CheckOptimizationPreparationFailures(MainWindow host, ScanSnapshot snapshot,
+        OptimizationPolicy policy, string source, string state)
+    {
+        string settings = host.OptimizationSettingsPath, logs = host.LogDirectory;
+        var snapshotField = typeof(MainWindow).GetField("_snapshot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var staleField = typeof(MainWindow).GetField("_scanStale", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var settingsField = typeof(MainWindow).GetField("_optimizationSettings", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var tree = (ListBox)host.FindName("SpaceTree");
+        var rows = tree.ItemsSource; var selected = tree.SelectedItem;
+        string[] files = Directory.GetFiles(Path.Join(source, "__pycache__"));
+        void CheckUnchanged()
+        {
+            Assert.Same(snapshot, snapshotField.GetValue(host));
+            Assert.False((bool)staleField.GetValue(host)!);
+            Assert.Same(rows, tree.ItemsSource); Assert.Same(selected, tree.SelectedItem);
+            Assert.Equal(files, Directory.GetFiles(Path.Join(source, "__pycache__")));
+            Assert.NotNull(((OptimizationSettings)settingsField.GetValue(host)!).LastRunUtc);
+        }
+        void Attempt()
+        {
+            var operation = host.TryAutomaticOptimizationAsync();
+            PumpUntil(() => operation.IsCompleted, TimeSpan.FromSeconds(10)); operation.GetAwaiter().GetResult();
+        }
+        try
+        {
+            new OptimizationSettings(policy).Save(settings); host.InitializeOptimization();
+            string blockedLogs = Path.Join(state, "blocked-optimization-log");
+            File.WriteAllText(blockedLogs, "Owned fixture file blocks a directory.");
+            host.LogDirectory = blockedLogs;
+            Attempt(); CheckUnchanged();
+            Assert.Contains("writable activity log", ((TextBlock)host.FindName("StatusText")).Text);
+            var lastAttempt = ((OptimizationSettings)settingsField.GetValue(host)!).LastRunUtc;
+            host.LogDirectory = logs;
+            Attempt(); CheckUnchanged();
+            Assert.Equal(lastAttempt, ((OptimizationSettings)settingsField.GetValue(host)!).LastRunUtc);
+
+            new OptimizationSettings(policy).Save(settings); host.InitializeOptimization();
+            host.LogDirectory = Path.Join(state, "preparation-logs");
+            host.OptimizationSettingsPath = Directory.CreateDirectory(Path.Join(state, "settings-destination-is-a-folder")).FullName;
+            Attempt(); CheckUnchanged();
+            Assert.Equal("Scan", ((Button)host.FindName("ScanButton")).Content);
+        }
+        finally
+        {
+            host.LogDirectory = logs; host.OptimizationSettingsPath = settings;
+            new OptimizationSettings(policy).Save(settings); host.InitializeOptimization();
         }
     }
 }

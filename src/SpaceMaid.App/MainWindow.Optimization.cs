@@ -144,12 +144,16 @@ public partial class MainWindow
         using var log = new ScanLog(Path.Join(LogDirectory, "Optimization"));
         _work = work; SetBusy(true);
         OptimizationResult? completed = null;
+        bool executionStarted = false;
         // Persist the attempt before mutation: failures cannot create a tight
         // retry loop, and settings must be writable before unattended deletion.
         try
         {
+            // Retain the hourly backoff in memory even when the log itself is
+            // unavailable. Durable settings and logging still gate execution.
+            _optimizationSettings = _optimizationSettings with { LastRunUtc = DateTime.UtcNow };
             if (log.FilePath is null || log.Error is not null) throw new IOException("Optimization needs a writable activity log.");
-            _optimizationSettings = _optimizationSettings with { LastRunUtc = DateTime.UtcNow, LastLog = log.FilePath };
+            _optimizationSettings = _optimizationSettings with { LastLog = log.FilePath };
             _optimizationSettings.Save(OptimizationSettingsPath);
             preview ??= await Operations.PreviewOptimizationAsync(scan, findings, policy, work.Token,
                 _optimizationSettings.Cursor, _optimizationSettings.Cooldowns);
@@ -159,7 +163,16 @@ public partial class MainWindow
             if (log.Error is not null) throw new IOException("Optimization could not write its activity log.");
             var progress = new Progress<OptimizationFileResult>(result =>
             { if (!_closing) StatusText.Text = "Optimizing · " + result.Path; });
-            var result = await Operations.OptimizeAsync(scan, findings, preview, policy, DiscoverOpportunities, work.Token, log.Record, progress);
+            var result = await Operations.OptimizeAsync(scan, findings, preview, policy, DiscoverOpportunities, work.Token,
+                (name, data) =>
+                {
+                    log.Record(name, data);
+                    if (name == FileOperations.OptimizationExecutionStarting)
+                    {
+                        if (log.Error is not null) throw new IOException("Optimization could not write its activity log; no execution started.");
+                        executionStarted = true;
+                    }
+                }, progress);
             completed = result;
             foreach (var file in result.Files) log.Record("optimization-file", file);
             string summary = $"Optimization · {result.DeletedCount:N0} files deleted · {SizeText.Format(result.RemovedLogicalBytes)} in file contents removed"
@@ -187,12 +200,36 @@ public partial class MainWindow
         }
         catch (Exception error) when (CleanupBatch.IsExpected(error))
         {
-            log.Record("optimization-stopped", new { Error = error.ToString() });
-            if (!_closing) MarkScanStale("Optimization stopped. Scan again to check affected locations.", [new(scan.RootPath)]);
+            log.Record("optimization-stopped", new { Error = error.ToString(), executionStarted });
+            if (!_closing)
+            {
+                var affected = OptimizationRecoveryScopes(preview, completed, executionStarted);
+                if (affected.Length > 0)
+                {
+                    MarkScanStale("Optimization stopped. Recheck the affected folders to update results. " + error.Message, affected);
+                    if (ScanRechecker.RequiresFullRescan(error)) OfferFullInventoryRescan(scan);
+                }
+                else StatusText.Text = (completed is null ? "Optimization did not start. No generated files were changed. "
+                    : "No generated files were removed. Results could not finish updating. ") + error.Message;
+            }
             if (completed is not null) return completed with { Cancelled = completed.Cancelled || work.IsCancellationRequested,
                 Note = "Files listed as deleted remain deleted. Results could not finish updating: " + error.Message };
             throw;
         }
         finally { _work = null; if (!_closing) SetBusy(false); }
+    }
+
+    internal static ScanRecheckRequest[] OptimizationRecoveryScopes(OptimizationPreview? preview,
+        OptimizationResult? completed, bool executionStarted)
+    {
+        if (!executionStarted || preview is null) return [];
+        // Without a complete receipt, any approved file may have been reached.
+        // A completed receipt narrows the scope to changed or uncertain items.
+        var uncertain = completed is null || completed.Cancelled ? null : completed.Files
+            .Where(file => file.Outcome is OptimizationOutcome.Deleted or OptimizationOutcome.Failed)
+            .Select(file => file.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return preview.Files.Where(file => uncertain is null || uncertain.Contains(file.Path))
+            .Select(file => new ScanRecheckRequest(file.ContainerPath))
+            .DistinctBy(request => request.Path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 }

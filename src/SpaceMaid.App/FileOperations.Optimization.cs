@@ -6,6 +6,8 @@ namespace SpaceMaid.App;
 
 internal sealed partial class FileOperations
 {
+    internal const string OptimizationExecutionStarting = "optimization-execution-starting";
+
     public Task<OptimizationPreview> PreviewOptimizationAsync(ScanSnapshot scan, IReadOnlyList<Opportunity> findings,
         OptimizationPolicy policy, CancellationToken token = default, int cursor = 0, IReadOnlyList<OptimizationCooldown>? cooldowns = null) => Task.Run(() =>
             OptimizationExecutor.Capture(OptimizationPlanner.Create(scan, findings, policy, token, cursor: cursor, cooldowns: cooldowns), token, policy), token);
@@ -38,6 +40,9 @@ internal sealed partial class FileOperations
         }
         diagnostic("optimization-proof-validation", new { Files = safe.Count, Skipped = skipped.Count,
             preview.ExaminedEntries, preview.CoverageComplete, preview.NextCursor });
+        // Preparation and rule discovery cannot change generated files. Notify
+        // the host only when the validated executor may begin changing them.
+        if (safe.Count > 0) diagnostic(OptimizationExecutionStarting, new { Files = safe.Count });
         var result = await Task.Run(() => OptimizationExecutor.Execute(preview with { Files = safe.AsReadOnly() }, policy, token, progress));
         return result with { Files = Array.AsReadOnly(skipped.Concat(result.Files).ToArray()) };
     }
