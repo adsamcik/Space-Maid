@@ -15,57 +15,86 @@ internal sealed class DriveHistoryStore(string filePath)
     private readonly SemaphoreSlim _io = new(1, 1);
     private readonly object _sync = new();
     private Dictionary<string, DriveHistoryEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
+    // A selection does not replace scan hints read after a temporary outage.
+    private readonly Dictionary<string, bool> _pending = new(StringComparer.OrdinalIgnoreCase);
     internal string? Error { get; private set; }
     internal string? LastVolumeId { get; private set; }
 
     internal async Task LoadAsync()
     {
         await _io.WaitAsync();
-        try
-        {
-            var entries = new Dictionary<string, DriveHistoryEntry>(StringComparer.OrdinalIgnoreCase);
-            string? lastVolume = null;
-            if (DiskAccess.Default.FileExists(filePath))
-            {
-                await using var stream = DiskAccess.Default.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                var buffer = new byte[MaxJsonBytes + 1];
-                int count = 0, read;
-                while (count < buffer.Length && (read = await stream.ReadAsync(buffer.AsMemory(count))) != 0) count += read;
-                if (count > MaxJsonBytes) throw new InvalidDataException("Drive history exceeds its size limit.");
-                var document = JsonSerializer.Deserialize<HistoryDocument>(buffer.AsSpan(0, count), Json);
-                if (document is not { Version: 1, Entries: not null })
-                    throw new InvalidDataException("Drive history has an unsupported format.");
-                foreach (var entry in document.Entries)
-                {
-                    if (entry is null || !ValidId(entry.VolumeId) || !TryRoot(entry.RootPath, out string root)
-                        || !TryScopedPath(entry.LastPath, root, out string lastPath) || entry.LastUsedUtc == default
-                        || entry.LastUsedUtc.Kind != DateTimeKind.Utc || entry.Recommendations is null
-                        || entry.Recommendations.Any(value => value is null || !ValidName(value.Name) || !ValidGroupKey(value.GroupKey)))
-                        throw new InvalidDataException("Drive history contains invalid metadata.");
-                    string? scanPath = null;
-                    if (entry.ScannedAtUtc.HasValue != (entry.ScanPath is not null)
-                        || (entry.ScannedAtUtc is DateTime scanned && (scanned == default || scanned.Kind != DateTimeKind.Utc))
-                        || (entry.ScanPath is not null && !TryScopedPath(entry.ScanPath, root, out scanPath))
-                        || (entry.ScannedAtUtc is null && (entry.HasAllocationData || entry.PartialScan || entry.Recommendations.Length != 0)))
-                        throw new InvalidDataException("Drive history contains an invalid scan path.");
-                    if (!entries.TryAdd(entry.VolumeId, entry with
-                        { RootPath = root, LastPath = lastPath, ScanPath = scanPath, Recommendations = TopRecommendations(entry.Recommendations) }))
-                        throw new InvalidDataException("Drive history contains duplicate volumes.");
-                }
-                lastVolume = document.LastVolumeId;
-                if (lastVolume is not null && (!ValidId(lastVolume) || !entries.ContainsKey(lastVolume)))
-                    throw new InvalidDataException("Drive history contains an invalid last volume.");
-                entries = MostRecent(entries.Values);
-                if (lastVolume is not null && !entries.ContainsKey(lastVolume)) lastVolume = null;
-            }
-            lock (_sync) { _entries = entries; LastVolumeId = lastVolume; Error = null; }
-        }
+        try { await LoadCoreAsync(); }
         catch (Exception ex) when (IsHistoryError(ex))
         {
-            lock (_sync) { _entries.Clear(); LastVolumeId = null; Error = "Drive history could not be loaded: " + ex.Message; }
+            lock (_sync) Error = "Drive history could not be loaded. Existing hints are kept; reopen the drive picker to retry. " + ex.Message;
         }
         finally { _io.Release(); }
+    }
+
+    // Caller holds _io. Publish only a completely read and validated document.
+    private async Task LoadCoreAsync()
+    {
+        var entries = new Dictionary<string, DriveHistoryEntry>(StringComparer.OrdinalIgnoreCase);
+        string? lastVolume = null;
+        Stream? input;
+        try
+        {
+            input = DiskAccess.Default.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        catch (FileNotFoundException) { input = null; }
+        catch (DirectoryNotFoundException) { input = null; }
+        if (input is not null)
+        {
+            await using var stream = input;
+            var buffer = new byte[MaxJsonBytes + 1];
+            int count = 0, read;
+            while (count < buffer.Length && (read = await stream.ReadAsync(buffer.AsMemory(count))) != 0) count += read;
+            if (count > MaxJsonBytes) throw new InvalidDataException("Drive history exceeds its size limit.");
+            var document = JsonSerializer.Deserialize<HistoryDocument>(buffer.AsSpan(0, count), Json);
+            if (document is not { Version: 1, Entries: not null })
+                throw new InvalidDataException("Drive history has an unsupported format.");
+            foreach (var entry in document.Entries)
+            {
+                if (entry is null || !ValidId(entry.VolumeId) || !TryRoot(entry.RootPath, out string root)
+                    || !TryScopedPath(entry.LastPath, root, out string lastPath) || entry.LastUsedUtc == default
+                    || entry.LastUsedUtc.Kind != DateTimeKind.Utc || entry.Recommendations is null
+                    || entry.Recommendations.Any(value => value is null || !ValidName(value.Name) || !ValidGroupKey(value.GroupKey)))
+                    throw new InvalidDataException("Drive history contains invalid metadata.");
+                string? scanPath = null;
+                if (entry.ScannedAtUtc.HasValue != (entry.ScanPath is not null)
+                    || (entry.ScannedAtUtc is DateTime scanned && (scanned == default || scanned.Kind != DateTimeKind.Utc))
+                    || (entry.ScanPath is not null && !TryScopedPath(entry.ScanPath, root, out scanPath))
+                    || (entry.ScannedAtUtc is null && (entry.HasAllocationData || entry.PartialScan || entry.Recommendations.Length != 0)))
+                    throw new InvalidDataException("Drive history contains an invalid scan path.");
+                if (!entries.TryAdd(entry.VolumeId, entry with
+                    { RootPath = root, LastPath = lastPath, ScanPath = scanPath, Recommendations = TopRecommendations(entry.Recommendations) }))
+                    throw new InvalidDataException("Drive history contains duplicate volumes.");
+            }
+            lastVolume = document.LastVolumeId;
+            if (lastVolume is not null && (!ValidId(lastVolume) || !entries.ContainsKey(lastVolume)))
+                throw new InvalidDataException("Drive history contains an invalid last volume.");
+            entries = MostRecent(entries.Values);
+            if (lastVolume is not null && !entries.ContainsKey(lastVolume)) lastVolume = null;
+        }
+        lock (_sync)
+        {
+            foreach (var (id, includesScan) in _pending)
+            {
+                if (!_entries.TryGetValue(id, out var pending)) continue;
+                if (!includesScan && entries.TryGetValue(id, out var saved))
+                    pending = pending with { ScannedAtUtc = saved.ScannedAtUtc,
+                        ScanPath = saved.ScanPath is null ? null : Rebase(saved.ScanPath, saved.RootPath, pending.RootPath),
+                        HasAllocationData = saved.HasAllocationData, PartialScan = saved.PartialScan,
+                        Recommendations = saved.Recommendations };
+                entries[id] = pending;
+            }
+            _entries = MostRecent(entries.Values);
+            if (_pending.Count > 0 && LastVolumeId is { } selected && _entries.ContainsKey(selected)) lastVolume = selected;
+            LastVolumeId = lastVolume;
+            PrunePending();
+            Error = null;
+        }
     }
 
     internal DriveHistoryEntry? Find(string volumeId, string currentRoot)
@@ -92,6 +121,8 @@ internal sealed class DriveHistoryStore(string filePath)
                 ? new(volumeId, normalizedRoot, normalizedPath, DateTime.UtcNow, null, null, false, false, [])
                 : prior with { LastPath = normalizedPath, LastUsedUtc = DateTime.UtcNow };
             _entries = MostRecent(_entries.Values);
+            _pending.TryAdd(volumeId, false);
+            PrunePending();
             LastVolumeId = volumeId;
         }
     }
@@ -110,6 +141,8 @@ internal sealed class DriveHistoryStore(string filePath)
             _entries[volumeId] = new(volumeId, normalizedRoot, prior?.LastPath ?? normalizedPath, DateTime.UtcNow,
                 timestamp, normalizedPath, hasAllocationData, partialScan, top);
             _entries = MostRecent(_entries.Values);
+            _pending[volumeId] = true;
+            PrunePending();
             LastVolumeId = volumeId;
         }
     }
@@ -120,11 +153,16 @@ internal sealed class DriveHistoryStore(string filePath)
         string? temporary = null;
         try
         {
+            // Never replace unread saved history with an empty/default snapshot.
+            // This also merges selections made before loading or during an outage.
+            await LoadCoreAsync();
             DriveHistoryEntry[] entries;
+            DriveHistoryEntry[] pending;
             string? lastVolume;
             lock (_sync)
             {
                 entries = _entries.Values.OrderByDescending(value => value.LastUsedUtc).Take(MaxVolumes).ToArray();
+                pending = _pending.Keys.Select(id => _entries[id]).ToArray();
                 lastVolume = LastVolumeId;
             }
             byte[] bytes;
@@ -141,15 +179,25 @@ internal sealed class DriveHistoryStore(string filePath)
             temporary = Path.Join(directory, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
             await DiskAccess.Default.WriteAllBytesAsync(temporary, bytes);
             DiskAccess.Default.MoveFile(temporary, destination, overwrite: true);
-            lock (_sync) Error = null;
+            lock (_sync)
+            {
+                foreach (var saved in pending)
+                    if (_entries.TryGetValue(saved.VolumeId, out var current) && ReferenceEquals(current, saved)) _pending.Remove(saved.VolumeId);
+                Error = null;
+            }
         }
         catch (Exception ex) when (IsHistoryError(ex))
-        { lock (_sync) Error = "Drive history could not be saved: " + ex.Message; }
+        { lock (_sync) Error = "Drive history was not replaced. Existing hints are kept; reopen the drive picker to retry. " + ex.Message; }
         finally
         {
             if (temporary is not null) { try { DiskAccess.Default.DeleteFile(temporary); } catch (Exception ex) when (IsHistoryError(ex)) { } }
             _io.Release();
         }
+    }
+
+    private void PrunePending()
+    {
+        foreach (string id in _pending.Keys.Where(id => !_entries.ContainsKey(id)).ToArray()) _pending.Remove(id);
     }
 
     private static Dictionary<string, DriveHistoryEntry> MostRecent(IEnumerable<DriveHistoryEntry> entries)

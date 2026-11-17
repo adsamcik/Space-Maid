@@ -34,6 +34,7 @@ public partial class MainWindow
     private async Task LoadDriveChoicesAsync()
     {
         await InitializeDriveHistoryAsync();
+        if (_driveHistory?.Error is not null) await _driveHistory.LoadAsync();
         if (_closing) return;
         DrivePickerNote.Text = _availableDrives.Count == 0 ? "Loading drives…" : "";
         try

@@ -91,7 +91,7 @@ public sealed class DriveHistoryTests
     [InlineData("not json")]
     [InlineData("{\"Version\":2,\"Entries\":[]}")]
     [InlineData("{\"Version\":1,\"Entries\":null}")]
-    public async Task CorruptOrUnsupportedHistoryGivesAnEmptyStateAndAnError(string contents)
+    public async Task CorruptOrUnsupportedHistoryPreservesHintsAndCannotBeOverwrittenBeforeRepair(string contents)
     {
         using var directory = new TestDirectory();
         string file = Path.Join(directory.Path, "history.json");
@@ -100,12 +100,86 @@ public sealed class DriveHistoryTests
         history.RememberSelection("volume-one", @"G:\", @"G:\Projects");
         await history.LoadAsync();
         Assert.NotNull(history.Error);
-        Assert.Null(history.LastVolumeId);
-        Assert.Null(history.Find("volume-one", @"G:\"));
+        Assert.Equal("volume-one", history.LastVolumeId);
+        Assert.NotNull(history.Find("volume-one", @"G:\"));
         history.RememberSelection("volume-two", @"H:\", @"H:\");
         await history.SaveAsync();
-        Assert.Null(history.Error);
+        Assert.NotNull(history.Error);
+        Assert.Equal(contents, await File.ReadAllTextAsync(file));
         Assert.NotNull(history.Find("volume-two", @"H:\"));
+
+        await File.WriteAllTextAsync(file, "{\"Version\":1,\"LastVolumeId\":null,\"Entries\":[]}");
+        await history.SaveAsync();
+        Assert.Null(history.Error);
+        var restored = new DriveHistoryStore(file);
+        await restored.LoadAsync();
+        Assert.NotNull(restored.Find("volume-one", @"G:\"));
+        Assert.NotNull(restored.Find("volume-two", @"H:\"));
+        Assert.Equal("volume-two", restored.LastVolumeId);
+    }
+
+    [Fact]
+    public async Task TemporaryReadLockPreservesDiskHistoryAndMergesPendingSelectionsOnRecovery()
+    {
+        using var directory = new TestDirectory();
+        string file = Path.Join(directory.Path, "history.json");
+        var original = new DriveHistoryStore(file);
+        original.RecordScan("volume-one", @"G:\", @"G:\Projects", DateTime.UtcNow, true, true, [new("Build files", 100)]);
+        original.RememberSelection("volume-two", @"H:\", @"H:\Photos");
+        await original.SaveAsync();
+        byte[] saved = await File.ReadAllBytesAsync(file);
+        var history = new DriveHistoryStore(file);
+        using (File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            await history.LoadAsync();
+            Assert.NotNull(history.Error);
+            history.RememberSelection("volume-one", @"J:\", @"J:\New selection");
+            history.RememberSelection("volume-three", @"K:\", @"K:\New volume");
+            await history.SaveAsync();
+            Assert.NotNull(history.Error);
+        }
+        Assert.Equal(saved, await File.ReadAllBytesAsync(file));
+        await history.SaveAsync();
+        Assert.Null(history.Error);
+        var restored = new DriveHistoryStore(file);
+        await restored.LoadAsync();
+        var merged = Assert.IsType<DriveHistoryEntry>(restored.Find("volume-one", @"J:\"));
+        Assert.Equal(@"J:\New selection", merged.LastPath);
+        Assert.Equal(@"J:\Projects", merged.ScanPath);
+        Assert.True(merged.HasAllocationData);
+        Assert.True(merged.PartialScan);
+        Assert.Equal("Build files", Assert.Single(merged.Recommendations).Name);
+        Assert.NotNull(restored.Find("volume-two", @"H:\"));
+        Assert.NotNull(restored.Find("volume-three", @"K:\"));
+        Assert.Equal("volume-three", restored.LastVolumeId);
+    }
+
+    [Fact]
+    public async Task FailedReloadKeepsPreviouslyLoadedHintsAndPendingScanUntilReadableAgain()
+    {
+        using var directory = new TestDirectory();
+        string file = Path.Join(directory.Path, "history.json");
+        var history = new DriveHistoryStore(file);
+        history.RememberSelection("volume-one", @"G:\", @"G:\Photos");
+        await history.SaveAsync();
+        using (File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            await history.LoadAsync();
+            Assert.NotNull(history.Error);
+            Assert.Equal("volume-one", history.LastVolumeId);
+            Assert.Equal(@"G:\Photos", history.Find("volume-one", @"G:\")!.LastPath);
+            history.RecordScan("volume-one", @"G:\", @"G:\Projects", DateTime.UtcNow, true, false, [new("Packages", 200)]);
+            await history.SaveAsync();
+            Assert.NotNull(history.Error);
+        }
+        await history.LoadAsync();
+        Assert.Null(history.Error);
+        Assert.Equal(@"G:\Projects", history.Find("volume-one", @"G:\")!.ScanPath);
+        await history.SaveAsync();
+        var restored = new DriveHistoryStore(file);
+        await restored.LoadAsync();
+        Assert.Equal(@"G:\Photos", restored.Find("volume-one", @"G:\")!.LastPath);
+        Assert.Equal("Packages", Assert.Single(restored.Find("volume-one", @"G:\")!.Recommendations).Name);
     }
 
     [Fact]
