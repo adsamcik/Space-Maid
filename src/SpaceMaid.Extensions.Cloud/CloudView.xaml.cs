@@ -50,14 +50,14 @@ public partial class CloudView : UserControl, IExtensionContextView
         await RunAsync(async token =>
         {
             var result = await Task.Run(() => CloudDiscovery.Find(token, _host.Files), token);
-            await LoadSavedAsync(token);
+            await ReloadSavedAsync(token);
             _discovered = result.Roots;
             UpdateRoots();
             StatusText.Text = RootList.Items.Count == 0 ? "No connected folders found. Add a folder from your provider’s desktop app." : $"{RootList.Items.Count:N0} cloud folders · Select one to browse.";
+            DetailsText.Text = string.Join("\n", result.Warnings.Append(_settingsError).Where(w => w is not null));
             if (result.Warnings.Count > 0 || _settingsError is not null)
             {
                 StatusText.Text += " Some folder locations could not be read; see Details or use Add folder.";
-                DetailsText.Text = string.Join("\n", result.Warnings.Append(_settingsError).Where(w => w is not null));
             }
         });
     }
@@ -68,6 +68,11 @@ public partial class CloudView : UserControl, IExtensionContextView
     private Task ReadPageAsync(string path, bool append) => RunAsync(async token =>
     {
         if (_storage is null) throw new InvalidOperationException("Update Space Maid to browse cloud folders.");
+        if (!append && _settingsError is not null)
+        {
+            await LoadSavedAsync(token);
+            if (_settingsError is null) UpdateRoots();
+        }
         if (Root is not { } root || !Within(path, root.Path)) throw new IOException("Choose a folder within the selected cloud drive.");
         SavePosition();
         var cursor = append ? _continuation : null;
@@ -109,9 +114,10 @@ public partial class CloudView : UserControl, IExtensionContextView
             FindScrollViewer(FileList)?.ScrollToVerticalOffset(position.Offset);
         }
         StatusText.Text = $"{_entries.Count:N0} items loaded" + (_continuation is null ? "" : " · More items available; load more to search them")
-            + (_coverageIncomplete ? " · Some metadata unavailable; see Details" : "");
+            + (_coverageIncomplete ? " · Some metadata unavailable; see Details" : "")
+            + (_settingsError is null ? "" : " · Saved folders unavailable; see Details");
         DetailsText.Text = "Local data is reported by Windows for each file; folder totals and provider caches are excluded. File size is not cloud quota usage.\n"
-            + string.Join("\n", _listingWarnings);
+            + string.Join("\n", _listingWarnings.Append(_settingsError).Where(w => w is not null));
         UpdateActions();
     });
 
@@ -134,21 +140,33 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (added && Root is { } root) await BrowseAsync(root.Path);
     }
 
-    private async Task LoadSavedAsync(CancellationToken token)
+    private Task LoadSavedAsync(CancellationToken token)
+        => _settingsLoaded ? Task.CompletedTask : ReloadSavedAsync(token);
+
+    private async Task ReloadSavedAsync(CancellationToken token)
     {
-        if (_settingsLoaded) return;
         try
         {
-            var roots = await Task.Run(() => _host.Files.FileExists(SettingsPath)
-                ? JsonSerializer.Deserialize<CloudRoot[]>(CloudDiscovery.ReadSmallFile(SettingsPath, _host.Files)) ?? throw new JsonException("Invalid saved folders.") : [], token);
+            var roots = await Task.Run(() =>
+            {
+                try { return JsonSerializer.Deserialize<CloudRoot[]>(CloudDiscovery.ReadSmallFile(SettingsPath, _host.Files)) ?? throw new JsonException("Invalid saved folders."); }
+                catch (FileNotFoundException) { return Array.Empty<CloudRoot>(); }
+            }, token);
             if (roots.Length > 64 || roots.Any(root => root is null || root.Path is null || !CloudDiscovery.Providers.Contains(root.Provider)))
                 throw new JsonException("Invalid saved folders.");
             foreach (var root in roots) _ = CloudDiscovery.Normalize(root.Path);
-            _saved.AddRange(CloudDiscovery.Merge(roots));
+            var saved = CloudDiscovery.Merge(roots);
+            token.ThrowIfCancellationRequested();
+            // Publish only a completely validated document. A failed explicit
+            // reload must preserve previously useful shortcuts and listing.
+            _saved.Clear(); _saved.AddRange(saved);
+            _settingsLoaded = true; _settingsError = null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
-        { _settingsError = "Saved folders could not be read. Restore folders.json in the extension’s data folder before changing saved folders."; }
-        _settingsLoaded = true;
+        {
+            _settingsLoaded = false;
+            _settingsError = "Saved folders could not be read; earlier shortcuts are retained. Restore access or repair folders.json, then choose Find drives or Refresh to retry. Saved folders have not been changed.";
+        }
     }
 
     private Task SaveAsync(IReadOnlyList<CloudRoot> roots, CancellationToken token) => Task.Run(() =>
@@ -239,7 +257,7 @@ public partial class CloudView : UserControl, IExtensionContextView
             ? "Use the provider’s controls in Explorer for this item. Deleting synced files can also delete their cloud copies."
             : "Free local space keeps cloud copies. Downloading again needs internet.";
         RemoveButton.Visibility = Root is { } selectedRoot && _saved.Any(r => r.Path.Equals(selectedRoot.Path, StringComparison.OrdinalIgnoreCase)) ? Visibility.Visible : Visibility.Collapsed;
-        RemoveButton.IsEnabled = idle;
+        RemoveButton.IsEnabled = idle && _settingsError is null;
     }
 
     private void ApplyFilter()
@@ -284,7 +302,9 @@ public partial class CloudView : UserControl, IExtensionContextView
     }
     private async void Remove_Click(object sender, RoutedEventArgs e) => await (_pending = RunAsync(async token =>
     {
-        if (Root is not { } root || _settingsError is not null) return;
+        await LoadSavedAsync(token);
+        if (_settingsError is not null) throw new IOException(_settingsError);
+        if (Root is not { } root) return;
         var kept = _saved.Where(r => !r.Path.Equals(root.Path, StringComparison.OrdinalIgnoreCase)).ToArray();
         await SaveAsync(kept, token); _saved.Clear(); _saved.AddRange(kept); UpdateRoots();
         StatusText.Text = "Saved shortcut removed. Files and sync settings stay.";

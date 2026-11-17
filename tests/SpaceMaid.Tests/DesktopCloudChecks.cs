@@ -129,6 +129,46 @@ public sealed partial class DesktopTests
         Finish(Invoke("BrowseAsync", pagedRoot));
         Assert.True(more.IsVisible); Finish(Invoke("LoadMoreAsync"));
         Assert.Equal(5002, list.Items.Count);
+
+        // Explicit discovery retries saved-folder reads, retaining useful
+        // listing/pages and blocking writes while the durable file is unreadable.
+        string settings = Path.Join(window.ExtensionDataRoot!, entry.Id, "folders.json");
+        Assert.True(settings.StartsWith(Path.GetFullPath(window.ExtensionDataRoot!) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        byte[] savedFolders = File.ReadAllBytes(settings);
+        Finish(Invoke("BrowseAsync", pagedRoot));
+        search.Text = "file-"; list.SelectedIndex = 23;
+        selected = list.SelectedItem;
+        var loadedRows = list.ItemsSource;
+        using (File.Open(settings, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Finish(Invoke("FindAsync"));
+            Assert.Same(loadedRows, list.ItemsSource); Assert.Same(selected, list.SelectedItem);
+            Assert.Equal("file-", search.Text); Assert.True(more.IsVisible);
+            Assert.Contains("Saved folders could not be read", ((TextBlock)view.FindName("DetailsText")).Text);
+            Assert.False(((Button)view.FindName("RemoveButton")).IsEnabled);
+            Finish(Invoke("AddRootAsync", "OneDrive", pagedRoot));
+        }
+        Assert.Equal(savedFolders, File.ReadAllBytes(settings));
+        string damagedFolders = "{ damaged saved folders";
+        File.WriteAllText(settings, damagedFolders);
+        Finish(Invoke("BrowseAsync", pagedRoot));
+        Assert.Equal("file-", search.Text);
+        Assert.Contains("Saved folders could not be read", ((TextBlock)view.FindName("DetailsText")).Text);
+        Finish(Invoke("AddRootAsync", "OneDrive", pagedRoot));
+        Assert.Equal(damagedFolders, File.ReadAllText(settings));
+        File.WriteAllBytes(settings, savedFolders);
+        Finish(Invoke("BrowseAsync", pagedRoot));
+        Assert.Equal("file-", search.Text); Assert.Equal(pagedRoot, ((TextBox)view.FindName("FolderPath")).Text);
+        Assert.NotNull(list.SelectedItem); Assert.True(more.IsVisible);
+        Assert.DoesNotContain("Saved folders could not be read", ((TextBlock)view.FindName("DetailsText")).Text);
+        Assert.True(((Button)view.FindName("RemoveButton")).IsEnabled);
+        Finish(Invoke("FindAsync")); Finish(Invoke("FindAsync"));
+        var roots = ((ListBox)view.FindName("RootList")).Items.Cast<object>().ToArray();
+        Assert.Single(roots, item => (string)item.GetType().GetProperty("Path")!.GetValue(item)! == pagedRoot);
+        Assert.Equal(savedFolders, File.ReadAllBytes(settings));
+        Finish(Invoke("AddRootAsync", "OneDrive", pagedRoot));
+        using (var document = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settings)))
+            Assert.Single(document.RootElement.EnumerateArray(), item => item.GetProperty("Path").GetString() == pagedRoot);
         Assert.True(window.OpenExtension("space-maid.apps"));
     }
 }
