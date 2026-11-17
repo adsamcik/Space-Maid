@@ -46,7 +46,7 @@ internal sealed class AppUpdates : IDisposable
         : _lastCheck?.AddDays(1);
     internal bool AutomaticCheckDue => Supported && AutomaticChecks
         && (NextAutomaticCheckUtc is not { } next || _time.GetUtcNow() >= next);
-    internal string CheckHistory => (_lastCheck is { } success ? $"Last successful check: {success.ToLocalTime():g}." : "No successful check yet.")
+    internal string CheckHistory => (_lastCheck is { } success ? $"Last successful check: {success.ToLocalTime():g}." : "No successful check recorded.")
         + (_checkFailed && _lastAttempt is { } attempt ? $" Last attempt: {attempt.ToLocalTime():g}." : "")
         + (_checkFailed && AutomaticChecks && NextAutomaticCheckUtc is { } next ? $" Automatic retry after {next.ToLocalTime():g}." : "");
 
@@ -69,6 +69,15 @@ internal sealed class AppUpdates : IDisposable
                 _lastCheck = settings.LastCheckUtc;
                 _lastAttempt = settings.LastAttemptUtc;
                 _failedChecks = Math.Clamp(settings.FailedChecks, 0, 4);
+                if (_lastCheck is { } legacyAttempt && _lastAttempt is null)
+                {
+                    // Older builds wrote LastCheckUtc before contacting the
+                    // feed. Its outcome is unknown, so it cannot prove success
+                    // or defer recovery for a full successful-check interval.
+                    _lastCheck = null;
+                    _lastAttempt = legacyAttempt;
+                    _failedChecks = 1;
+                }
                 // A clock change must not disable checking indefinitely.
                 if (_lastCheck > _time.GetUtcNow()) _lastCheck = null;
                 if (_lastAttempt > _time.GetUtcNow()) _lastAttempt = null;
@@ -76,7 +85,7 @@ internal sealed class AppUpdates : IDisposable
                 if (_failedChecks > 0)
                 {
                     _checkFailed = true;
-                    if (Supported) Status = "The last update check did not finish · Retry check";
+                    if (Supported) Status = "Update check needs retry · Earlier outcome unverified";
                 }
             }
         }

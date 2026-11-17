@@ -151,6 +151,61 @@ public sealed class UpdateTests
         Assert.True(rewound.AutomaticCheckDue);
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(15, true)]
+    [InlineData(60, true)]
+    [InlineData(-60, true)]
+    public void LegacyCheckTimestampIsAnUnknownAttemptWithBoundedRetry(int ageMinutes, bool due)
+    {
+        using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
+        string settings = Path.Join(fixture.Path, "settings.json");
+        var legacyAttempt = clock.Now.AddMinutes(-ageMinutes);
+        File.WriteAllText(settings, System.Text.Json.JsonSerializer.Serialize(new
+        { AutomaticChecks = true, AutomaticDownloads = false, LastCheckUtc = legacyAttempt }));
+        using (var updates = new AppUpdates(new StubUpdateManager(fixture.Path), settings, Path.Join(fixture.Path, "Logs"), clock))
+        {
+            Assert.Equal(due, updates.AutomaticCheckDue);
+            Assert.Contains("No successful check recorded", updates.CheckHistory);
+            Assert.DoesNotContain("Last successful check:", updates.CheckHistory);
+            Assert.False(updates.AutomaticDownloads); Assert.False(updates.Ready);
+            if (ageMinutes >= 0)
+            {
+                Assert.Equal(legacyAttempt.AddMinutes(15), updates.NextAutomaticCheckUtc);
+                Assert.True(updates.CheckRetryAvailable);
+                Assert.Contains("outcome unverified", updates.Status);
+            }
+            Assert.True(updates.SetAutomaticChecks(true)); // Persist the migrated representation.
+        }
+        using var reopened = new AppUpdates(new StubUpdateManager(fixture.Path), settings, Path.Join(fixture.Path, "ReopenedLogs"), clock);
+        Assert.Equal(due, reopened.AutomaticCheckDue);
+        Assert.DoesNotContain("Last successful check:", reopened.CheckHistory);
+        Assert.False(reopened.AutomaticDownloads);
+    }
+
+    [Fact]
+    public async Task RecheckedLegacyAttemptPersistsGenuineSuccessfulDailyFreshness()
+    {
+        using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
+        string settings = Path.Join(fixture.Path, "settings.json");
+        File.WriteAllText(settings, System.Text.Json.JsonSerializer.Serialize(new
+        { AutomaticChecks = true, LastCheckUtc = clock.Now }));
+        using (var updates = new AppUpdates(new StubUpdateManager(fixture.Path), settings, Path.Join(fixture.Path, "Logs"), clock))
+        {
+            Assert.False(updates.AutomaticCheckDue);
+            await updates.CheckAsync(); // A deliberate retry can resolve the unknown outcome immediately.
+            Assert.True(updates.AvailableVerified); Assert.False(updates.CheckRetryAvailable);
+            Assert.Contains("Last successful check:", updates.CheckHistory);
+            Assert.Equal(clock.Now.AddDays(1), updates.NextAutomaticCheckUtc);
+        }
+        using var reopened = new AppUpdates(new StubUpdateManager(fixture.Path), settings, Path.Join(fixture.Path, "ReopenedLogs"), clock);
+        Assert.False(reopened.AutomaticCheckDue); Assert.False(reopened.CheckRetryAvailable);
+        Assert.Contains("Last successful check:", reopened.CheckHistory);
+        Assert.Equal(clock.Now.AddDays(1), reopened.NextAutomaticCheckUtc);
+    }
+
     [Fact]
     public async Task AutomaticDownloadsRequireSavedOptInAndRespectDailyChecks()
     {
