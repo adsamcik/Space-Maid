@@ -43,7 +43,7 @@ internal static class CleanupScheduledEntrypoint
             if (definition is not { Enabled: true, Schedule: { } schedule } || definition.RegisteredRevision != revision) return 0;
             if (schedule.TimeZoneId != TimeZoneInfo.Local.Id)
             {
-                store.SaveDefinition(definition with { Enabled = false, RegisteredRevision = null,
+                store.SaveDefinition(definition with { Enabled = false, RegisteredRevision = null, ScheduleVerificationPending = false,
                     ScheduleError = "The PC time zone changed. Review this schedule before enabling it again." });
                 return 0;
             }
@@ -67,7 +67,9 @@ internal static class CleanupScheduledEntrypoint
             }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
             // Reserve the actual arrival before native verification or other
             // work can queue. Reconciliation sees that occurrence as admitted.
-            await new CleanupScheduleService(store, scheduler, launcher, clock).ReconcileAsync(work.Token);
+            if (!await new CleanupScheduleService(store, scheduler, launcher, clock)
+                .VerifyForInvocationAsync(definition.Id, definition.Revision, work.Token))
+                throw new InvalidOperationException("This scheduled invocation could not verify its Windows task. No cleanup started; the saved schedule can be checked again.");
             if (definition.RootIdentity is null) throw new InvalidOperationException("The saved scope has no captured identity. Review it again.");
             await Task.Run(() => FolderDeletionTarget.ValidateScopeIdentity(definition.RootIdentity, operations.Files), work.Token);
             ScanSnapshot? scan = null;

@@ -132,7 +132,8 @@ internal sealed class CleanupRunStore
         string? reason = current is null || current.Revision != reserved.Definition.Revision
             ? "The saved cleanup changed or was removed during preparation. No review or cleanup was started."
             : IsStopRequested(reserved.Id) ? "Scheduled preparation was stopped."
-            : prepared.Definition.Schedule?.Automatic == true && !current.Enabled ? "Automatic cleanup was paused before execution." : null;
+            : prepared.Definition.Schedule?.Automatic == true && (!current.Enabled || current.RegisteredRevision != current.Revision
+                || current.ScheduleVerificationPending) ? "Automatic cleanup was paused or its schedule could not be verified before execution." : null;
         if (reason is not null)
         {
             SaveRunCore(reserved with { State = CleanupRunState.Stopped, UpdatedUtc = DateTimeOffset.UtcNow, Message = reason });

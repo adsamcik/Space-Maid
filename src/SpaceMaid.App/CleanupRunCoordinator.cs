@@ -22,8 +22,9 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
             throw new ArgumentException("The scheduled occurrence belongs to another cleanup revision.");
         if (store.IsStopRequested(reserved.Id)) throw new OperationCanceledException("This scheduled cleanup was stopped.", token);
         var current = store.LoadDefinitions().SingleOrDefault(item => item.Id == definition.Id);
-        if (current is null || current.Revision != definition.Revision || !current.Enabled)
-            throw new InvalidOperationException("The scheduled cleanup was changed or paused before preparation.");
+        if (current is null || current.Revision != definition.Revision || !current.Enabled
+            || current.RegisteredRevision != current.Revision || current.ScheduleVerificationPending)
+            throw new InvalidOperationException("The scheduled cleanup was changed, paused, or could not be verified before preparation.");
         var prepared = await PrepareCoreAsync(definition, scan, candidates, reserved, token).ConfigureAwait(false);
         var persisted = store.LoadRun(reserved.Id);
         if (persisted?.State is CleanupRunState.Stopped or CleanupRunState.Superseded || store.IsStopRequested(reserved.Id))
@@ -337,7 +338,8 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
         if (!record.Source.StartsWith("Scheduled", StringComparison.Ordinal)) return null;
         var current = store.LoadDefinitions().SingleOrDefault(item => item.Id == record.Definition.Id);
         if (current is null || current.Revision != record.Definition.Revision) return "The saved cleanup changed before this run started.";
-        if (record.Definition.Schedule?.Automatic == true && (!current.Enabled || current.RegisteredRevision != current.Revision))
+        if (record.Definition.Schedule?.Automatic == true && (!current.Enabled || current.RegisteredRevision != current.Revision
+            || current.ScheduleVerificationPending))
             return "The automatic cleanup is paused or its schedule is unavailable.";
         return null;
     }

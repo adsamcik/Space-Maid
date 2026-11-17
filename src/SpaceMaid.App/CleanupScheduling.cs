@@ -42,7 +42,7 @@ internal sealed class CleanupScheduleService
         int revision = existing is null ? definition.Revision : preserveRevision ? existing.Revision : Math.Max(definition.Revision, checked(existing.Revision + 1));
         bool enable = definition.Enabled && definition.Schedule is not null;
         var inactive = definition with { Revision = revision, Enabled = false, RegisteredRevision = null,
-            ScheduleError = null, ScheduleActivatedUtc = enable ? _clock.GetUtcNow() : null };
+            ScheduleError = null, ScheduleVerificationPending = false, ScheduleActivatedUtc = enable ? _clock.GetUtcNow() : null };
         _store.SaveDefinition(inactive);
         foreach (var review in _store.LoadRunHeaders().Where(run => !preserveRevision && run.DefinitionId == definition.Id && run.State == CleanupRunState.Review))
             _store.TryTransitionReview(review.Id, CleanupRunState.Superseded,
@@ -104,27 +104,57 @@ internal sealed class CleanupScheduleService
         return true;
     }, token), token);
 
-    internal Task ReconcileAsync(CancellationToken token = default) => Task.Run(() => RegistrationLocked(() =>
+    internal Task ReconcileAsync(CancellationToken token = default) => ReconcileCoreAsync(token);
+
+    // A saved enabled flag is intent, not proof that this invocation verified
+    // its native task. Keep that proof local even if another process recovers
+    // the persisted pending state while this invocation is stopping.
+    internal async Task<bool> VerifyForInvocationAsync(Guid definitionId, int revision, CancellationToken token)
+        => (await ReconcileCoreAsync(token).ConfigureAwait(false)).Contains((definitionId, revision));
+
+    private Task<HashSet<(Guid Id, int Revision)>> ReconcileCoreAsync(CancellationToken token) => Task.Run(() => RegistrationLocked(() =>
     {
+        var verified = new HashSet<(Guid, int)>();
         foreach (var definition in _store.LoadDefinitions().Where(item => item.Enabled && item.Schedule is not null))
         {
             token.ThrowIfCancellationRequested();
+            bool matches;
             try
             {
-                if (definition.RegisteredRevision != definition.Revision || !_scheduler.Matches(definition, _launcher()))
-                    throw new InvalidOperationException("The Windows task no longer matches this cleanup. Review and enable its schedule again.");
-                RecordMissedOccurrences(definition, _clock.GetUtcNow(), token);
+                matches = definition.RegisteredRevision == definition.Revision && _scheduler.Matches(definition, _launcher());
+                token.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception error) when (ScheduleError(error))
             {
                 var current = _store.LoadDefinitions().FirstOrDefault(item => item.Id == definition.Id);
-                if (current?.Revision == definition.Revision)
-                    _store.SaveDefinition(current with { Enabled = false, RegisteredRevision = null, ScheduleError = error.Message });
+                if (SameEnabledSchedule(current, definition))
+                    _store.SaveDefinition(current! with { ScheduleVerificationPending = true,
+                        ScheduleError = "Windows task verification is unavailable. The schedule remains enabled, but unverified runs will not start. Retry verification. " + error.Message });
+                continue;
             }
+            var latest = _store.LoadDefinitions().FirstOrDefault(item => item.Id == definition.Id);
+            if (!SameEnabledSchedule(latest, definition)) continue;
+            if (!matches)
+            {
+                _store.SaveDefinition(latest! with { Enabled = false, RegisteredRevision = null, ScheduleVerificationPending = false,
+                    ScheduleError = "The Windows task no longer matches this cleanup. Review and enable its schedule again." });
+                continue;
+            }
+            if (latest!.ScheduleVerificationPending || latest.ScheduleError is not null)
+                _store.SaveDefinition(latest with { ScheduleVerificationPending = false, ScheduleError = null });
+            // Receipt/persistence errors are not native-task mismatches and
+            // must not permanently disable an otherwise verified schedule.
+            RecordMissedOccurrences(latest, _clock.GetUtcNow(), token);
+            verified.Add((definition.Id, definition.Revision));
         }
-        return true;
+        return verified;
     }, token), token);
+
+    private static bool SameEnabledSchedule(CleanupDefinition? current, CleanupDefinition observed)
+        => current is { Enabled: true } && current.Revision == observed.Revision
+            && current.RegisteredRevision == observed.RegisteredRevision && current.Schedule == observed.Schedule
+            && current.ScheduleActivatedUtc == observed.ScheduleActivatedUtc;
 
     private T RegistrationLocked<T>(Func<T> action, CancellationToken token)
     {

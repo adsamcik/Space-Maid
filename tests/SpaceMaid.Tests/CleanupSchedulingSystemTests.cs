@@ -13,6 +13,42 @@ public sealed class CleanupSchedulingSystemTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task VerificationOutageStopsThisOccurrenceWithoutDisablingTheSavedSchedule(bool automatic)
+    {
+        using var fixture = new TestDirectory(); var operations = new FileOperations();
+        string retained = Path.Join(fixture.Path, "retained.txt"); File.WriteAllText(retained, "owned fixture must stay");
+        var store = new CleanupRunStore(operations.Files, Path.Join(fixture.Path, "profile"));
+        var schedule = new CleanupSchedule(DayOfWeek.Monday, new TimeOnly(9, 0), TimeZoneInfo.Local.Id, automatic);
+        var due = CleanupScheduleClock.OnDate(schedule, new DateOnly(2026, 11, 2));
+        var clock = new FixtureClock(due.ScheduledForUtc.AddHours(-1)); var native = new FixtureScheduler();
+        Func<CleanupTaskLaunch> launcher = () => new(@"C:\Fixture\SpaceMaid.App.exe", "", @"C:\Fixture");
+        var definition = await new CleanupScheduleService(store, native, launcher, clock).SaveAsync(new()
+        {
+            Name = "Owned outage fixture", DiscoveryRootPath = fixture.Path, ScopePaths = [fixture.Path],
+            RootIdentity = FolderDeletionTarget.CaptureScopeIdentity(fixture.Path, operations.Files), Enabled = true, Schedule = schedule
+        });
+        clock.Now = due.ScheduledForUtc.AddSeconds(10);
+        native.Verification = () => throw new IOException("Fixture native verification outage");
+        int result = await CleanupScheduledEntrypoint.RunOwnedProfileAsync(definition.Id, definition.Revision, operations, store,
+            native, launcher, clock, Path.Join(fixture.Path, "extensions"), Path.Join(fixture.Path, "logs"), default);
+        Assert.Equal(1, result);
+        var stopped = Assert.Single(store.LoadRuns());
+        Assert.Equal(CleanupRunState.Stopped, stopped.State); Assert.Empty(stopped.Targets); Assert.Empty(stopped.Receipts);
+        Assert.Contains("could not verify", stopped.Message); Assert.Equal("owned fixture must stay", File.ReadAllText(retained));
+        var pending = Assert.Single(store.LoadDefinitions());
+        Assert.True(pending.Enabled); Assert.True(pending.ScheduleVerificationPending);
+        Assert.Equal(definition.RegisteredRevision, pending.RegisteredRevision);
+        native.Verification = null; await new CleanupScheduleService(store, native, launcher, clock).ReconcileAsync();
+        var recovered = Assert.Single(store.LoadDefinitions()); Assert.True(recovered.Enabled); Assert.False(recovered.ScheduleVerificationPending);
+        // Recovery does not replay the already-stopped occurrence.
+        Assert.Equal(0, await CleanupScheduledEntrypoint.RunOwnedProfileAsync(definition.Id, definition.Revision, operations, store,
+            native, launcher, clock, Path.Join(fixture.Path, "extensions"), Path.Join(fixture.Path, "logs"), default));
+        Assert.Single(store.LoadRuns()); Assert.Equal("owned fixture must stay", File.ReadAllText(retained));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task QuietOwnedProfilePreparesOrExecutesExactlyOneOnTimeOccurrenceDespiteVerificationDelay(bool automatic)
     {
         using var fixture = new TestDirectory();

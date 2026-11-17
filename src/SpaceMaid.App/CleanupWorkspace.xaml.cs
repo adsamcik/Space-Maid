@@ -574,6 +574,13 @@ internal partial class CleanupWorkspace : UserControl
         try
         {
             var data = await Task.Run(() => (Definitions: _store.LoadDefinitions(), Runs: _store.LoadRunHeaders()));
+            // Explicit library entry/retry is a bounded recovery opportunity,
+            // without querying native tasks on the three-second status timer.
+            if (data.Definitions.Any(item => item.Enabled && item.ScheduleVerificationPending))
+            {
+                await _schedules.ReconcileAsync();
+                data = await Task.Run(() => (Definitions: _store.LoadDefinitions(), Runs: _store.LoadRunHeaders()));
+            }
             if (!IsCurrentNavigation(navigation)) return; LibraryPanel.Children.Clear();
             AddLibraryHeading(history ? "History" : "Saved cleanups");
             foreach (var run in data.Runs.Where(run => run.RecoveryError is not null))
@@ -587,8 +594,11 @@ internal partial class CleanupWorkspace : UserControl
                         ("Review", async () => await OpenRecordByIdAsync(run.Id)), ("Dismiss", async () => { _store.TryTransitionReview(run.Id, CleanupRunState.Dismissed); await ShowLibraryAsync(false); }));
                 foreach (var definition in data.Definitions)
                 {
-                    string status = definition.Schedule is null ? "Run manually" : (definition.Enabled ? "Every " : "Paused · ") + definition.Schedule.Day + " " + definition.Schedule.Time.ToString("HH:mm") + (definition.Schedule.Automatic ? " · Automatic" : " · Ask first");
+                    string status = definition.Schedule is null ? "Run manually" : (definition.Enabled
+                        ? definition.ScheduleVerificationPending ? "Verification pending · " : "Every " : "Paused · ")
+                        + definition.Schedule.Day + " " + definition.Schedule.Time.ToString("HH:mm") + (definition.Schedule.Automatic ? " · Automatic" : " · Ask first");
                     var actions = new List<(string, Func<Task>)> { ("Use cleanup", async () => await UseDefinitionAsync(definition)) };
+                    if (definition.Enabled && definition.ScheduleVerificationPending) actions.Add(("Retry verification", async () => await ShowLibraryAsync(false)));
                     if (definition.Schedule is not null) actions.Add((definition.Enabled ? "Pause" : "Resume", async () => { await _schedules.PauseAsync(definition.Id, definition.Enabled, CancellationToken.None); await ShowLibraryAsync(false); }));
                     actions.Add(("Remove", async () => { await _schedules.DeleteAsync(definition.Id, CancellationToken.None); await ShowLibraryAsync(false); }));
                     AddLibraryRow(definition.Name, status + (definition.ScheduleError is { Length: > 0 } error ? " · " + error : "") + Environment.NewLine + Describe(definition), actions.ToArray());

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using SpaceMaid.App;
 using SpaceMaid.App.Extensions;
@@ -10,6 +11,80 @@ namespace SpaceMaid.Tests;
 
 public sealed class CleanupSchedulingTests
 {
+    [Fact]
+    public void VerificationBecomingUnavailableDuringPreparationCannotPublishAutomaticAuthority()
+    {
+        using var fixture = new TestDirectory();
+        var store = new CleanupRunStore(new FileOperations().Files, Path.Join(fixture.Path, "state"));
+        var definition = Definition(fixture.Path) with { RegisteredRevision = 1,
+            Schedule = new(DayOfWeek.Monday, new(9, 0), TimeZoneInfo.Local.Id, true) };
+        store.SaveDefinition(definition);
+        var reserved = new CleanupRunRecord { Definition = definition, ScanRootPath = fixture.Path, Source = "Scheduled",
+            State = CleanupRunState.Queued, OccurrenceId = "owned-verification-race" };
+        Assert.True(store.TrySaveOccurrence(reserved));
+        store.SaveDefinition(definition with { ScheduleVerificationPending = true });
+        Assert.False(store.TryPublishScheduledPreparation(reserved));
+        var stopped = store.LoadRun(reserved.Id)!;
+        Assert.Equal(CleanupRunState.Stopped, stopped.State); Assert.Empty(stopped.Receipts);
+        Assert.Contains("could not be verified", stopped.Message);
+        Assert.True(Assert.Single(store.LoadDefinitions()).Enabled);
+    }
+
+    [Theory]
+    [InlineData("io")]
+    [InlineData("access")]
+    [InlineData("com")]
+    [InlineData("unavailable")]
+    public async Task VerificationOutageRetainsEnabledIntentAndRecoversWithoutRegistration(string failure)
+    {
+        using var fixture = new TestDirectory();
+        var store = new CleanupRunStore(new FileOperations().Files, Path.Join(fixture.Path, "state"));
+        var native = new FakeScheduler(); var service = Service(store, native);
+        var saved = await service.SaveAsync(Definition(fixture.Path));
+        Exception failureError = failure switch
+        {
+            "io" => new IOException("Fixture scheduler connection interrupted"),
+            "access" => new UnauthorizedAccessException("Fixture scheduler access unavailable"),
+            "com" => new COMException("Fixture scheduler unavailable"),
+            _ => new InvalidOperationException("Fixture scheduler unavailable")
+        };
+        native.OnMatch = _ => throw failureError;
+        Assert.False(await service.VerifyForInvocationAsync(saved.Id, saved.Revision, default));
+        var pending = Assert.Single(store.LoadDefinitions());
+        Assert.True(pending.Enabled); Assert.True(pending.ScheduleVerificationPending);
+        Assert.Equal(saved.RegisteredRevision, pending.RegisteredRevision);
+        Assert.Equal(saved.Revision, pending.Revision); Assert.Equal(saved.ScheduleActivatedUtc, pending.ScheduleActivatedUtc);
+        Assert.Contains("unverified runs will not start", pending.ScheduleError);
+        native.OnMatch = _ => true;
+        Assert.True(await service.VerifyForInvocationAsync(saved.Id, saved.Revision, default));
+        var recovered = Assert.Single(store.LoadDefinitions());
+        Assert.True(recovered.Enabled); Assert.False(recovered.ScheduleVerificationPending); Assert.Null(recovered.ScheduleError);
+        Assert.Equal(saved.RegisteredRevision, recovered.RegisteredRevision); Assert.Equal(1, native.Registrations);
+        Assert.Empty(store.LoadRuns());
+    }
+
+    [Fact]
+    public async Task LauncherOutageIsNotProofThatTheNativeTaskChanged()
+    {
+        using var fixture = new TestDirectory();
+        var store = new CleanupRunStore(new FileOperations().Files, Path.Join(fixture.Path, "state"));
+        var native = new FakeScheduler(); bool unavailable = false;
+        var service = new CleanupScheduleService(store, native,
+            () => unavailable ? throw new IOException("Fixture launcher temporarily unreadable")
+                : new(@"C:\Fixture\SpaceMaid.App.exe", "", @"C:\Fixture"), TimeProvider.System);
+        var saved = await service.SaveAsync(Definition(fixture.Path)); unavailable = true;
+        await service.ReconcileAsync();
+        var pending = Assert.Single(store.LoadDefinitions());
+        Assert.True(pending.Enabled); Assert.True(pending.ScheduleVerificationPending);
+        Assert.Equal(saved.RegisteredRevision, pending.RegisteredRevision);
+        unavailable = false; await service.ReconcileAsync();
+        Assert.False(Assert.Single(store.LoadDefinitions()).ScheduleVerificationPending);
+        native.OnMatch = _ => false; await service.ReconcileAsync();
+        var mismatch = Assert.Single(store.LoadDefinitions());
+        Assert.False(mismatch.Enabled); Assert.False(mismatch.ScheduleVerificationPending);
+        Assert.Null(mismatch.RegisteredRevision); Assert.Equal(1, native.Registrations);
+    }
+
     [Fact]
     public async Task CancellingMissedRunReconciliationDoesNotDisableTheVerifiedSchedule()
     {

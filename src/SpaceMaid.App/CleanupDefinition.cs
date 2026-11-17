@@ -54,6 +54,7 @@ internal sealed record CleanupDefinition
     public CleanupSchedule? Schedule { get; init; }
     public bool Enabled { get; init; }
     public string? ScheduleError { get; init; }
+    public bool ScheduleVerificationPending { get; init; }
     public DateTimeOffset? ScheduleActivatedUtc { get; init; }
     public int? RegisteredRevision { get; init; }
     public CleanupRunLimits Limits { get; init; } = new();
