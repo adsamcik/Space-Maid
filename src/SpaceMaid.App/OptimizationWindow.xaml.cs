@@ -25,6 +25,7 @@ public partial class OptimizationWindow : Window
     private readonly List<OptimizationActionRow> _actions;
     private readonly OptimizationIntegration? _integration;
     private OptimizationPreview? _preview;
+    private OptimizationSkipped[] _completedResults = [];
     private OptimizationPolicy? _previewPolicy;
     private CancellationTokenSource? _work;
     private bool _closeAfterCancel, _scanChanged;
@@ -164,7 +165,9 @@ public partial class OptimizationWindow : Window
                 throw new InvalidOperationException("Settings changed. Review files again before deleting.");
             StatusText.Text = "Rechecking generated files…";
             var result = await _run(_preview, _previewPolicy, work.Token);
-            ShowResults(result.Files.Select(f => new OptimizationSkipped(f.Path, f.Outcome + " · " + f.Message)));
+            _completedResults = result.Files.Select(f => new OptimizationSkipped(f.Path,
+                "Last run · " + SelectedAction!.Name + " · " + f.Outcome + " · " + f.Message)).ToArray();
+            ShowResults([]);
             StatusText.Text = $"{result.DeletedCount:N0} files deleted · {SizeText.Format(result.RemovedLogicalBytes)} in file contents removed"
                 + (result.Cancelled ? " · Cancelled; completed deletions remain." : ".") + (result.Note is null ? "" : " " + result.Note);
             _scanChanged |= result.DeletedCount > 0;
@@ -263,7 +266,10 @@ public partial class OptimizationWindow : Window
     private void InvalidatePreview()
     {
         _preview = null; _cursor = 0;
-        FileList.ItemsSource = ResultList.ItemsSource = null;
+        FileList.ItemsSource = null;
+        // Approval and preview observations expire independently of completed
+        // receipts. Settings changes and failed retries must not erase outcomes.
+        ShowResults([]);
         PreviewButton.Content = _scanChanged ? "Scan again…" : "Review files";
         PreviewEmptyText.Text = "Review files to check what can be removed.";
         PreviewEmptyText.Visibility = Visibility.Visible;
@@ -271,8 +277,10 @@ public partial class OptimizationWindow : Window
         UpdatePreviewActions();
     }
     internal sealed record DisplayFile(string Path, string DisplayPath, string Size, string Rule, string Container);
-    private void ShowResults(IEnumerable<OptimizationSkipped> results) => ResultList.ItemsSource = results.Select(r =>
-        new { r.Path, DisplayPath = _scan is null ? r.Path : Path.GetRelativePath(_scan.RootPath, r.Path), r.Reason }).ToArray();
+    internal sealed record DisplayResult(string Path, string DisplayPath, string Reason);
+    private void ShowResults(IEnumerable<OptimizationSkipped> results) => ResultList.ItemsSource = _completedResults
+        .Concat(results.Select(r => r with { Reason = "Preview · " + r.Reason })).Select(r =>
+            new DisplayResult(r.Path, _scan is null ? r.Path : Path.GetRelativePath(_scan.RootPath, r.Path), r.Reason)).ToArray();
     private void Close_Click(object sender, RoutedEventArgs e) { if (_work is { } work) work.Cancel(); else Close(); }
     private void Window_Closing(object? sender, CancelEventArgs e)
     { if (_work is { } work) { e.Cancel = true; _closeAfterCancel = true; work.Cancel(); } }

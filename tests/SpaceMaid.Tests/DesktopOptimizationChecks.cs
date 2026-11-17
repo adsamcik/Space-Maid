@@ -28,6 +28,7 @@ public sealed partial class DesktopTests
         string settingsPath = Path.Join(settingsFixture.Path, "optimization-settings.json");
         var operations = new FileOperations(); int executions = 0;
         CheckProofLimitedPreviewCompletion(scan, findings, operations, policy);
+        CheckOptimizationInterruptedResultRetention(scan, findings, operations, policy);
         var window = new OptimizationWindow(scan, findings, operations, new(policy),
             p => new OptimizationSettings(p).Save(settingsPath), async (preview, chosen, token) =>
             { executions++; return await operations.OptimizeAsync(scan, findings, preview, chosen, DeveloperOpportunityFixture.Find, token, (_, _) => { }); });
@@ -69,12 +70,74 @@ public sealed partial class DesktopTests
             PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
             Assert.Equal(1, executions);
             Assert.Contains("24 files deleted", ((TextBlock)window.FindName("StatusText")).Text);
+            var results = (DataGrid)window.FindName("ResultList");
+            Assert.Equal(24, results.Items.Count);
+            Assert.All(results.Items.Cast<OptimizationWindow.DisplayResult>(), row => Assert.Contains("Deleted", row.Reason));
             Assert.Empty(Directory.GetFiles(Path.Join(fixture.Path, "__pycache__")));
             Assert.Equal(24, Directory.GetFiles(fixture.Path, "*.py").Length);
+            Assert.False(run.IsEnabled);
+            window.AddExclusions([Path.Join(fixture.Path, "retained")]);
+            Assert.Equal(24, results.Items.Count);
             Assert.False(run.IsEnabled);
         }
         finally { window.Close(); }
         CheckAutomaticOptimizationSchedule(app);
+    }
+
+    private static void CheckOptimizationInterruptedResultRetention(ScanSnapshot scan,
+        IReadOnlyList<SpaceMaid.Core.Analysis.Opportunity> findings, FileOperations operations, OptimizationPolicy policy)
+    {
+        int attempts = 0;
+        var window = new OptimizationWindow(scan, findings, operations, new(policy), _ => { },
+            (preview, _, _) =>
+            {
+                attempts++;
+                if (attempts > 1) throw new IOException("Fixture revalidation unavailable.");
+                // Receipt presentation only: this callback never mutates fixture files.
+                return Task.FromResult(new OptimizationResult([
+                    new(preview.Files[0].Path, OptimizationOutcome.Skipped, 0, "Fixture changed file kept."),
+                    new(preview.Files[1].Path, OptimizationOutcome.Failed, 0, "Fixture locked file kept.")], true));
+            });
+        try
+        {
+            window.ShowActivated = false; window.ShowInTaskbar = false;
+            window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -10000; window.Top = -10000; window.Show();
+            var preview = (Button)window.FindName("PreviewButton"); var run = (Button)window.FindName("RunButton");
+            var results = (DataGrid)window.FindName("ResultList");
+            preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+            Assert.True(run.IsEnabled);
+            run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+            var receipts = results.Items.Cast<OptimizationWindow.DisplayResult>().ToArray();
+            Assert.Equal(2, receipts.Length);
+            Assert.Contains(receipts, row => row.Reason.Contains("Fixture changed file kept."));
+            Assert.Contains(receipts, row => row.Reason.Contains("Fixture locked file kept."));
+            Assert.Contains("Cancelled", ((TextBlock)window.FindName("StatusText")).Text);
+            Assert.False(run.IsEnabled);
+
+            // A fresh preview supplies new authority, but does not replace receipts.
+            preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+            Assert.Equal(receipts, results.Items.Cast<OptimizationWindow.DisplayResult>().Take(2).ToArray());
+            ((TabItem)window.FindName("GeneratedFilesTab")).IsSelected = true;
+            run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+            Assert.Equal(2, attempts);
+            Assert.Contains("Fixture revalidation unavailable", ((TextBlock)window.FindName("StatusText")).Text);
+            Assert.Equal(receipts, results.Items.Cast<OptimizationWindow.DisplayResult>().ToArray());
+            Assert.False(run.IsEnabled);
+
+            window.AddExclusions([Path.Join(scan.RootPath, "retained")]);
+            ((Button)window.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(receipts, results.Items.Cast<OptimizationWindow.DisplayResult>().ToArray());
+            ((TabItem)window.FindName("ActionsTab")).IsSelected = true;
+            ((TextBox)window.FindName("ActionSearch")).Text = "no matching fixture action";
+            ((TextBox)window.FindName("ActionSearch")).Text = "";
+            Assert.Equal(receipts, results.Items.Cast<OptimizationWindow.DisplayResult>().ToArray());
+            Assert.False(run.IsEnabled);
+        }
+        finally { window.Close(); }
     }
 
     private static void CheckProofLimitedPreviewCompletion(ScanSnapshot scan,
