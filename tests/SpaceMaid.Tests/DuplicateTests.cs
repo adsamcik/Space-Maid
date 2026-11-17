@@ -43,7 +43,88 @@ public sealed class DuplicateTests
         var next = await session.ContinueAsync();
         Assert.Equal(2, Assert.Single(next.Groups).Files.Count);
         Assert.False(next.Complete); Assert.False(session.CanContinue);
+        Assert.True(session.CanRetry);
+        var recovered = await session.RetryUnavailableAsync(1024 * 1024 * 1024);
+        Assert.Equal(2, recovered.Groups.Count); Assert.True(recovered.Complete);
+        Assert.Empty(recovered.Issues); Assert.False(session.CanRetry);
+        Assert.Single(next.Groups); Assert.Single(first.Issues); // Prior observations remain immutable.
         Assert.Equal(4, Directory.GetFiles(fixture.Path).Length);
+    }
+
+    [Fact]
+    public async Task RaisingReadBudgetReusesTheSessionAndResolvesDeferredCandidates()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 3; i++) File.WriteAllBytes(Path.Join(fixture.Path, i + ".bin"), new byte[4096]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1, MaximumReadBytes = 1 });
+        var deferred = await session.ContinueAsync();
+        Assert.Equal(3, deferred.Issues.Count); Assert.True(session.CanRetry); Assert.False(session.CanContinue);
+        var recovered = await session.ContinueWithReadLimitAsync(1024 * 1024);
+        Assert.Equal(3, Assert.Single(recovered.Groups).Files.Count);
+        Assert.True(recovered.Complete); Assert.Empty(recovered.Issues);
+        Assert.Equal(3, session.RetainedFiles); Assert.InRange(recovered.ReadBytes, 1, 1024 * 1024);
+        Assert.Equal(3, deferred.Issues.Count); Assert.Empty(deferred.Groups);
+        await Assert.ThrowsAsync<ArgumentException>(() => session.ContinueWithReadLimitAsync(1));
+    }
+
+    [Fact]
+    public async Task ExplicitRetryRecoversAnUnavailableMetadataEntryWithoutDiscardingGoodPairs()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 3; i++) File.WriteAllBytes(Path.Join(fixture.Path, i + ".bin"), new byte[4096]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        string missing = Path.Join(fixture.Path, "0.bin"), retained = missing + ".retained";
+        File.Move(missing, retained);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1 });
+        var partial = await session.ContinueAsync();
+        Assert.Equal(2, Assert.Single(partial.Groups).Files.Count); Assert.True(session.CanRetry);
+        Assert.Single(partial.Issues);
+        File.Move(retained, missing);
+        var recovered = await session.RetryUnavailableAsync(1024 * 1024 * 1024);
+        Assert.True(recovered.Complete); Assert.Empty(recovered.Issues);
+        Assert.Equal(3, Assert.Single(recovered.Groups).Files.Count);
+        Assert.Equal(2, Assert.Single(partial.Groups).Files.Count);
+    }
+
+    [Fact]
+    public async Task MetadataRetryRejectsAReplacementAtTheFailedPath()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 3; i++) File.WriteAllBytes(Path.Join(fixture.Path, i + ".bin"), new byte[4096]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        string missing = Path.Join(fixture.Path, "0.bin"), retained = missing + ".retained";
+        File.Move(missing, retained);
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1 });
+        await session.ContinueAsync(); File.WriteAllBytes(missing, new byte[4096]);
+        var retried = await session.RetryUnavailableAsync(1024 * 1024 * 1024);
+        Assert.False(retried.Complete); Assert.True(session.CanRetry);
+        Assert.Contains("replaced", Assert.Single(retried.Issues).Reason);
+        Assert.DoesNotContain(Assert.Single(retried.Groups).Files, file => file.Path == missing);
+        Assert.True(File.Exists(retained)); Assert.Equal(4096, new FileInfo(missing).Length);
+    }
+
+    [Fact]
+    public async Task ExplicitRetryRevalidatesALockedContentRevision()
+    {
+        using var fixture = new TestDirectory();
+        for (int i = 0; i < 3; i++) File.WriteAllBytes(Path.Join(fixture.Path, i + ".bin"), new byte[4096]);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        string path = Path.Join(fixture.Path, "0.bin"); FileStream? locked = null;
+        using var session = new DuplicateSearchSession(scan, new() { MinimumBytes = 1 });
+        DuplicateSearchResult partial;
+        try
+        {
+            partial = await session.ContinueAsync(new InlineProgress(progress =>
+            {
+                if (progress.Phase == "Comparing candidates") locked = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None);
+            }));
+        }
+        finally { locked?.Dispose(); }
+        Assert.Equal(2, Assert.Single(partial.Groups).Files.Count); Assert.Single(partial.Issues);
+        var recovered = await session.RetryUnavailableAsync(1024 * 1024 * 1024);
+        Assert.True(recovered.Complete); Assert.Equal(3, Assert.Single(recovered.Groups).Files.Count);
+        Assert.Empty(recovered.Issues); Assert.Equal(2, Assert.Single(partial.Groups).Files.Count);
     }
 
     [Fact]
@@ -189,6 +270,9 @@ public sealed class DuplicateTests
         var next = await session.ContinueAsync(); var current = Assert.Single(next.Groups);
         Assert.Equal(2, current.Files.Count); Assert.DoesNotContain(current.Files, f => f.Path == keeper.Path);
         Assert.False(next.Complete); Assert.NotEmpty(next.Issues);
+        var retried = await session.RetryUnavailableAsync(1024 * 1024 * 1024);
+        Assert.DoesNotContain(Assert.Single(retried.Groups).Files, f => f.Path == keeper.Path);
+        Assert.False(retried.Complete); Assert.Contains(retried.Issues, issue => issue.Path == keeper.Path);
     }
 
     [Fact]

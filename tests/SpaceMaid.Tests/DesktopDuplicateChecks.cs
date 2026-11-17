@@ -17,7 +17,11 @@ public sealed partial class DesktopTests
         string first = Path.Join(fixture.Path, "Debug-library.pdb"), second = Path.Join(fixture.Path, "Release-library.pdb");
         string unique = Path.Join(fixture.Path, "standalone-library.pdb");
         File.WriteAllBytes(first, payload); File.WriteAllBytes(second, payload);
-        File.WriteAllBytes(unique, Enumerable.Repeat((byte)42, payload.Length).ToArray()); OptimizationTests.Age(fixture.Path);
+        File.WriteAllBytes(unique, Enumerable.Repeat((byte)42, payload.Length).ToArray());
+        byte[] large = Enumerable.Repeat((byte)13, 600 * 1024).ToArray();
+        File.WriteAllBytes(Path.Join(fixture.Path, "large-first.bin"), large);
+        File.WriteAllBytes(Path.Join(fixture.Path, "large-second.bin"), large);
+        OptimizationTests.Age(fixture.Path);
         var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
         PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(10)); var scan = scanning.GetAwaiter().GetResult();
         var changed = new List<string>();
@@ -26,11 +30,19 @@ public sealed partial class DesktopTests
         {
             window.ShowActivated = false; window.ShowInTaskbar = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -10000; window.Top = -10000; window.Show();
+            var readLimit = (TextBox)window.FindName("ReadLimitBox"); readLimit.Text = "1";
             var find = (Button)window.FindName("FindButton");
             find.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => find.IsEnabled, TimeSpan.FromSeconds(10));
             var groups = (DataGrid)window.FindName("GroupList"); var files = (DataGrid)window.FindName("FileList");
             Assert.Single(groups.Items.Cast<object>()); Assert.Equal(2, files.Items.Count);
+            string selectedPath = (string)files.SelectedItem.GetType().GetProperty("Path")!.GetValue(files.SelectedItem)!;
+            var retry = (Button)window.FindName("RetryButton"); Assert.True(retry.IsEnabled);
+            readLimit.Text = "4";
+            retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => find.IsEnabled, TimeSpan.FromSeconds(10));
+            Assert.Equal(2, groups.Items.Count); Assert.False(retry.IsEnabled);
+            Assert.Equal(selectedPath, files.SelectedItem.GetType().GetProperty("Path")!.GetValue(files.SelectedItem));
             var compress = (Button)window.FindName("CompressButton");
             if (StoragePreservation.Capabilities(first).Compression) PumpUntil(() => compress.IsEnabled, TimeSpan.FromSeconds(5));
 #pragma warning disable WPF0001

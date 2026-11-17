@@ -62,7 +62,9 @@ public partial class DuplicateWindow : Window
     }
     private async void Find_Click(object sender, RoutedEventArgs e) => await StartSearchAsync(false);
     private async void Continue_Click(object sender, RoutedEventArgs e) => await StartSearchAsync(true);
-    private async Task StartSearchAsync(bool next)
+    private async void Retry_Click(object sender, RoutedEventArgs e) => await StartPageAsync(true, true);
+    private Task StartSearchAsync(bool next) => StartPageAsync(next, false);
+    private async Task StartPageAsync(bool next, bool retryUnavailable)
     {
         if (_work is not null) return;
         try
@@ -73,8 +75,8 @@ public partial class DuplicateWindow : Window
             var policy = new DuplicateSearchPolicy { MinimumBytes = kib * 1024, MaximumReadBytes = mib * 1024 * 1024,
                 ExcludedPaths = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) };
             if (next && (_previousPolicy is null || policy.MinimumBytes != _previousPolicy.MinimumBytes
-                || policy.MaximumReadBytes != _previousPolicy.MaximumReadBytes || !policy.ExcludedPaths.SequenceEqual(_previousPolicy.ExcludedPaths)))
-                throw new ArgumentException("Search options changed. Start a new comparison.");
+                || !policy.ExcludedPaths.SequenceEqual(_previousPolicy.ExcludedPaths)))
+                throw new ArgumentException("The minimum size or excluded locations changed. Start a new comparison.");
             if (!next)
             {
                 _session?.Dispose(); _session = new(_scan, policy); _groups.Clear(); GroupList.ItemsSource = null; FileList.ItemsSource = null;
@@ -82,10 +84,11 @@ public partial class DuplicateWindow : Window
             using var work = CancellationTokenSource.CreateLinkedTokenSource(_lifetime); _work = work; SetWorking(true);
             try
             {
-                var progress = new Progress<DuplicateSearchProgress>(p => { if (_work is not null) StatusText.Text = $"{p.Phase} · {p.ExaminedFiles:N0} files · {SizeText.Format(p.ReadBytes)} read"; });
+                var progress = new Progress<DuplicateSearchProgress>(p => { if (ReferenceEquals(_work, work)) StatusText.Text = $"{p.Phase} · {p.ExaminedFiles:N0} files · {SizeText.Format(p.ReadBytes)} read"; });
                 var selectedGroup = (GroupList.SelectedItem as GroupRow)?.Group;
                 string? selectedPath = (FileList.SelectedItem as FileRow)?.Path;
-                var operation = _operations.ContinueDuplicatesAsync(_session ?? throw new InvalidOperationException("Start a new comparison."), progress, work.Token); _operation = operation;
+                var operation = _operations.ContinueDuplicatesWithReadLimitAsync(_session ?? throw new InvalidOperationException("Start a new comparison."),
+                    policy.MaximumReadBytes, retryUnavailable, progress, work.Token); _operation = operation;
                 var result = await operation; _previousPolicy = policy;
                 _groups.Clear(); _groups.AddRange(result.Groups.Select(g => new GroupRow(g)));
                 GroupList.ItemsSource = _groups.OrderByDescending(g => g.Group.RedundantLogicalBytes).ToArray();
@@ -94,7 +97,7 @@ public partial class DuplicateWindow : Window
                 if (selectedPath is not null && FileList.Items.Cast<FileRow>().FirstOrDefault(f => f.Path == selectedPath) is { } selected)
                 { FileList.SelectedItem = selected; FileList.ScrollIntoView(selected); }
                 SummaryText.Text = $"{_groups.Count:N0} {(_groups.Count == 1 ? "group" : "groups")} · {SizeText.Format(_groups.Sum(g => g.Group.RedundantLogicalBytes))} redundant content · {result.ExistingAliases:N0} existing aliases";
-                StatusText.Text = result.Note + (result.Issues.Count > 0 ? $" · {result.Issues.Count:N0} unavailable files" : "");
+                StatusText.Text = result.Note + (result.Issues.Count > 0 ? $" · {result.Issues.Count:N0} unavailable / deferred files" : "");
                 StatusText.ToolTip = result.Issues.Count > 0 ? string.Join("\n", result.Issues.Take(12).Select(i => i.Path + ": " + i.Reason)) : null;
             }
             finally { _work = null; _operation = null; SetWorking(false); if (_closeAfterWork) Close(); }
@@ -172,6 +175,7 @@ public partial class DuplicateWindow : Window
     {
         FindButton.IsEnabled = InspectButton.IsEnabled = OptionsPanel.IsEnabled = GroupList.IsEnabled = FileList.IsEnabled = !busy;
         ContinueButton.IsEnabled = !busy && _session?.CanContinue == true;
+        RetryButton.IsEnabled = !busy && _session?.CanRetry == true;
         WorkProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         CloseButton.Content = busy ? "Cancel" : "Close"; UpdateActions();
     }

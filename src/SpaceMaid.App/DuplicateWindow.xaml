@@ -28,6 +28,7 @@
         </StackPanel>
         <DockPanel Grid.Row="1" Margin="0,0,0,8">
             <Button x:Name="ContinueButton" Content="Next page" Click="Continue_Click" DockPanel.Dock="Right" IsEnabled="False" Padding="12,4"/>
+            <Button x:Name="RetryButton" Content="Retry unavailable" Click="Retry_Click" DockPanel.Dock="Right" IsEnabled="False" Padding="12,4" Margin="0,0,7,0" ToolTip="Recheck deferred or unreadable files using the current read limit. Completed comparisons stay."/>
             <TextBlock x:Name="SummaryText" Text="Choose Find duplicates to compare this scanned location." TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0"/>
         </DockPanel>
         <Grid Grid.Row="2">

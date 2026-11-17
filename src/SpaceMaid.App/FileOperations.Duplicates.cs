@@ -9,6 +9,10 @@ internal sealed partial class FileOperations
         IProgress<DuplicateSearchProgress>? progress, CancellationToken token) => DuplicateFinder.FindAsync(scan, policy, progress, token);
     public Task<DuplicateSearchResult> ContinueDuplicatesAsync(DuplicateSearchSession session,
         IProgress<DuplicateSearchProgress>? progress, CancellationToken token) => session.ContinueAsync(progress, token);
+    public Task<DuplicateSearchResult> ContinueDuplicatesWithReadLimitAsync(DuplicateSearchSession session, long maximumReadBytes,
+        bool retryUnavailable, IProgress<DuplicateSearchProgress>? progress, CancellationToken token)
+        => retryUnavailable ? session.RetryUnavailableAsync(maximumReadBytes, progress, token)
+            : session.ContinueWithReadLimitAsync(maximumReadBytes, progress, token);
 
     public Task<DuplicateFile> InspectBuildStorageAsync(string path, CancellationToken token) => StoragePreservation.InspectBuildFileAsync(path, token);
 
