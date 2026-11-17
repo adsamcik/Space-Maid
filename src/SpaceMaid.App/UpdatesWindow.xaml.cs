@@ -20,14 +20,17 @@ public partial class UpdatesWindow : Window
     {
         VersionText.Text = _updates.CurrentVersion;
         StatusText.Text = _updates.Status;
+        CheckHistoryText.Text = _updates.CheckHistory;
         AutomaticBox.IsChecked = _updates.AutomaticChecks;
         AutomaticBox.IsEnabled = _updates.Supported;
         DownloadBox.IsChecked = _updates.AutomaticDownloads;
         DownloadBox.IsEnabled = _updates.Supported && _updates.AutomaticChecks;
         CheckButton.IsEnabled = _updates.Supported && !_updates.Busy;
+        CheckButton.Content = _updates.CheckRetryAvailable ? "Retry check" : "Check";
         ActionButton.Visibility = _updates.AvailableVersion is null ? Visibility.Collapsed : Visibility.Visible;
         ActionButton.Content = _updates.Ready ? "Restart and update" : "Download update";
-        ActionButton.IsEnabled = !_updates.Busy && (!_updates.Ready || _canRestart());
+        ActionButton.IsEnabled = !_updates.Busy && (_updates.Ready || _updates.AvailableVerified) && (!_updates.Ready || _canRestart());
+        ActionButton.ToolTip = _updates.Ready || _updates.AvailableVerified ? null : "Retry the update check to verify this earlier result.";
         BusyHint.Visibility = _updates.Ready && !_canRestart() ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = _updates.Busy ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Content = _updates.Status == "Checking…" ? "Cancel" : "Cancel download";

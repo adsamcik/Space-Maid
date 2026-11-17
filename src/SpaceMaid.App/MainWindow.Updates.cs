@@ -20,7 +20,7 @@ public partial class MainWindow
         _updates = AppUpdates.Create(UpdateSettingsPath, Path.Combine(LogDirectory, "Updates"));
         _updates.Changed += UpdateUpdateButton;
         UpdateUpdateButton();
-        _updateTimer = new(TimeSpan.FromHours(1), DispatcherPriority.Background,
+        _updateTimer = new(TimeSpan.FromMinutes(5), DispatcherPriority.Background,
             (_, _) => _ = _updates.RunAutomaticAsync(), Dispatcher);
         _ = _updates.RunAutomaticAsync();
     }
@@ -33,7 +33,11 @@ public partial class MainWindow
     private void UpdateUpdateButton()
     {
         if (_closing) return;
-        UpdateButton.Visibility = _updates?.AvailableVersion is null ? Visibility.Collapsed : Visibility.Visible;
+        bool attention = _updates is { Supported: true } && (_updates.AvailableVersion is not null
+            || _updates.CheckRetryAvailable || _updates.Error is not null);
+        UpdateButton.Visibility = attention ? Visibility.Visible : Visibility.Collapsed;
+        UpdateButton.Content = _updates?.CheckRetryAvailable == true ? "Retry update check" : "Update available";
+        UpdateButton.ToolTip = _updates is null ? null : _updates.Status + "\n" + _updates.CheckHistory;
         _updatesWindow?.Refresh();
     }
 

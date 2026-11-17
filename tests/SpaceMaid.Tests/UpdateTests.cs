@@ -79,19 +79,76 @@ public sealed class UpdateTests
     }
 
     [Fact]
-    public async Task FailedCheckDoesNotRetryAtEveryStartupButManualRetryRemainsAvailable()
+    public async Task FailedChecksUsePersistedBoundedBackoffAndSuccessRestoresDailyFreshness()
     {
         using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
         var manager = new StubUpdateManager(fixture.Path) { CheckError = new IOException("Offline") };
         string settings = Path.Join(fixture.Path, "settings.json");
-        using (var updates = new AppUpdates(manager, settings, Path.Join(fixture.Path, "Logs")))
+        foreach (int minutes in new[] { 15, 30, 60, 120, 120 })
         {
-            await updates.CheckAsync(); Assert.NotNull(updates.Error); Assert.False(updates.AutomaticCheckDue);
+            using (var updates = new AppUpdates(manager, settings, Path.Join(fixture.Path, "Logs"), clock))
+            {
+                Assert.True(updates.AutomaticCheckDue);
+                await updates.RunAutomaticAsync();
+                Assert.NotNull(updates.Error); Assert.True(updates.CheckRetryAvailable);
+                Assert.Equal(clock.Now.AddMinutes(minutes), updates.NextAutomaticCheckUtc);
+            }
+            using var reopenedFailure = new AppUpdates(manager, settings, Path.Join(fixture.Path, "ReopenedLogs"), clock);
+            Assert.True(reopenedFailure.CheckRetryAvailable); Assert.False(reopenedFailure.AutomaticCheckDue);
+            int checks = manager.Checks;
+            await reopenedFailure.RunAutomaticAsync(); Assert.Equal(checks, manager.Checks);
+            clock.Now = clock.Now.AddMinutes(minutes).AddTicks(-1);
+            Assert.False(reopenedFailure.AutomaticCheckDue);
+            clock.Now = clock.Now.AddTicks(1);
+            Assert.True(reopenedFailure.AutomaticCheckDue);
         }
-        using var reopened = new AppUpdates(manager, settings, Path.Join(fixture.Path, "Logs"));
-        Assert.False(reopened.AutomaticCheckDue);
+        using var reopened = new AppUpdates(manager, settings, Path.Join(fixture.Path, "Logs"), clock);
         manager.CheckError = null;
         await reopened.CheckAsync(); Assert.Equal("1.1.0", reopened.AvailableVersion);
+        Assert.False(reopened.CheckRetryAvailable); Assert.True(reopened.AvailableVerified);
+        Assert.Equal(clock.Now.AddDays(1), reopened.NextAutomaticCheckUtc);
+        Assert.False(reopened.AutomaticCheckDue);
+        clock.Now = clock.Now.AddDays(1); Assert.True(reopened.AutomaticCheckDue);
+    }
+
+    [Fact]
+    public async Task ManualRetryBypassesBackoffAndEarlierAvailabilityCannotAuthorizeANewDownload()
+    {
+        using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
+        var manager = new StubUpdateManager(fixture.Path);
+        using var updates = new AppUpdates(manager, Path.Join(fixture.Path, "settings.json"), Path.Join(fixture.Path, "Logs"), clock);
+        await updates.CheckAsync(); Assert.True(updates.AvailableVerified);
+        manager.CheckError = new IOException("Offline");
+        await updates.CheckAsync();
+        Assert.Equal("1.1.0", updates.AvailableVersion); Assert.False(updates.AvailableVerified);
+        Assert.False(updates.AutomaticCheckDue); Assert.Contains("Earlier result", updates.Status);
+        await updates.DownloadAsync(); Assert.Equal(0, manager.Downloads); Assert.False(updates.Ready);
+        manager.CheckError = null;
+        await updates.CheckAsync(); // Explicit retry is allowed before the backoff expires.
+        Assert.True(updates.AvailableVerified); Assert.False(updates.CheckRetryAvailable);
+        await updates.DownloadAsync(); Assert.True(updates.Ready); Assert.Equal(1, manager.Downloads);
+        manager.CheckError = new IOException("Offline again");
+        await updates.CheckAsync();
+        Assert.True(updates.Ready); Assert.False(updates.AvailableVerified);
+        Assert.Equal("1.1.0", updates.AvailableVersion); // A verified downloaded receipt remains usable offline.
+        Assert.Equal(1, manager.Downloads);
+    }
+
+    [Fact]
+    public void InterruptedCheckUsesPersistedAttemptBackoffAndFutureClockCannotSuppressChecks()
+    {
+        using var fixture = new TestDirectory();
+        var clock = new UpdateClock();
+        string settings = Path.Join(fixture.Path, "settings.json");
+        File.WriteAllText(settings, System.Text.Json.JsonSerializer.Serialize(new
+        { AutomaticChecks = true, LastCheckUtc = (DateTimeOffset?)null, LastAttemptUtc = clock.Now, FailedChecks = 1 }));
+        using (var updates = new AppUpdates(new StubUpdateManager(fixture.Path), settings, Path.Join(fixture.Path, "Logs"), clock))
+        { Assert.False(updates.AutomaticCheckDue); Assert.True(updates.CheckRetryAvailable); }
+        clock.Now = clock.Now.AddHours(-1);
+        using var rewound = new AppUpdates(new StubUpdateManager(fixture.Path), settings, Path.Join(fixture.Path, "RewoundLogs"), clock);
+        Assert.True(rewound.AutomaticCheckDue);
     }
 
     [Fact]

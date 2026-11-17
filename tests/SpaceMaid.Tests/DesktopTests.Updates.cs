@@ -25,6 +25,16 @@ public sealed partial class DesktopTests
         updatesField.SetValue(main, updates); windowField.SetValue(main, view);
         try
         {
+            manager.CheckError = new IOException("Owned fixture offline");
+            var failed = updates.CheckAsync(); PumpUntil(() => failed.IsCompleted, TimeSpan.FromSeconds(5)); failed.GetAwaiter().GetResult();
+            typeof(MainWindow).GetMethod("UpdateUpdateButton", flags)!.Invoke(main, null);
+            var sidebar = (Button)main.FindName("UpdateButton");
+            Assert.Equal(Visibility.Visible, sidebar.Visibility); Assert.Equal("Retry update check", sidebar.Content);
+            Assert.Equal("Retry check", ((Button)view.FindName("CheckButton")).Content);
+            Assert.Contains("No successful check", ((TextBlock)view.FindName("CheckHistoryText")).Text);
+            Assert.Null(updates.AvailableVersion);
+            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-offline-{theme}.png"), 430, 430);
+            manager.CheckError = null;
             var check = updates.CheckAsync(); PumpUntil(() => check.IsCompleted, TimeSpan.FromSeconds(5)); check.GetAwaiter().GetResult();
             Assert.Equal("Download update", ((Button)view.FindName("ActionButton")).Content);
             var automatic = (CheckBox)view.FindName("AutomaticBox");
@@ -39,13 +49,17 @@ public sealed partial class DesktopTests
             Assert.False(updates.Ready); Assert.Equal(0, manager.Downloads);
             Assert.Contains("24-hour protection", ((TextBlock)view.FindName("StatusText")).Text);
             Assert.True(((Button)view.FindName("ActionButton")).IsEnabled);
-            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-protection-{theme}.png"), 430, 350);
+            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-protection-{theme}.png"), 430, 400);
             manager.Release.PublishedUtc = DateTimeOffset.UtcNow.AddDays(-2);
             check = updates.CheckAsync(); PumpUntil(() => check.IsCompleted, TimeSpan.FromSeconds(5)); check.GetAwaiter().GetResult();
             Assert.True(updates.AutomaticDownloads); Assert.True(updates.Ready);
-            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-{theme}.png"), 430, 330);
+            Render(view, Path.Join(FindRepository(), "artifacts", "ui", $"updates-{theme}.png"), 430, 380);
             var action = (Button)view.FindName("ActionButton");
             Assert.Equal("Restart and update", action.Content); Assert.True(action.IsEnabled);
+            manager.CheckError = new IOException("Owned fixture offline after download");
+            check = updates.CheckAsync(); PumpUntil(() => check.IsCompleted, TimeSpan.FromSeconds(5)); check.GetAwaiter().GetResult();
+            Assert.True(updates.Ready); Assert.False(updates.AvailableVerified);
+            Assert.True(action.IsEnabled); Assert.Equal("Restart and update", action.Content);
             var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             Func<CancellationToken, Task> browse = _ => gate.Task;
             var browseTask = (Task)typeof(MainWindow).GetMethod("BrowseAsync", flags)!.Invoke(main, [browse])!;
@@ -55,6 +69,10 @@ public sealed partial class DesktopTests
             Assert.True(action.IsEnabled); // Host idle transition updates the open dialog without reactivation.
             action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Assert.Equal(1, restarts);
         }
-        finally { view.Close(); updatesField.SetValue(main, previousUpdates); windowField.SetValue(main, previousWindow); }
+        finally
+        {
+            view.Close(); updatesField.SetValue(main, previousUpdates); windowField.SetValue(main, previousWindow);
+            typeof(MainWindow).GetMethod("UpdateUpdateButton", flags)!.Invoke(main, null);
+        }
     }
 }

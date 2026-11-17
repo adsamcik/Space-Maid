@@ -23,6 +23,9 @@ internal sealed class AppUpdates : IDisposable
     private bool _stopped;
     private UpdateInfo? _available;
     private DateTimeOffset? _lastCheck;
+    private DateTimeOffset? _lastAttempt;
+    private int _failedChecks;
+    private bool _checkFailed, _availableVerified;
     internal event Action? Changed;
     internal Task? Operation { get; private set; }
     internal bool Supported => _manager?.IsInstalled == true;
@@ -36,8 +39,16 @@ internal sealed class AppUpdates : IDisposable
     internal string? AvailableVersion => _available?.TargetFullRelease.Version.ToString();
     internal string Status { get; private set; }
     internal string? Error { get; private set; }
-    internal bool AutomaticCheckDue => Supported && AutomaticChecks && (!_lastCheck.HasValue
-        || _time.GetUtcNow() - _lastCheck.Value >= TimeSpan.FromDays(1));
+    internal bool CheckRetryAvailable => _checkFailed;
+    internal bool AvailableVerified => _availableVerified;
+    internal DateTimeOffset? NextAutomaticCheckUtc => _failedChecks > 0 && _lastAttempt is { } attempt
+        ? attempt.AddMinutes(15 * (1 << Math.Min(_failedChecks - 1, 3)))
+        : _lastCheck?.AddDays(1);
+    internal bool AutomaticCheckDue => Supported && AutomaticChecks
+        && (NextAutomaticCheckUtc is not { } next || _time.GetUtcNow() >= next);
+    internal string CheckHistory => (_lastCheck is { } success ? $"Last successful check: {success.ToLocalTime():g}." : "No successful check yet.")
+        + (_checkFailed && _lastAttempt is { } attempt ? $" Last attempt: {attempt.ToLocalTime():g}." : "")
+        + (_checkFailed && AutomaticChecks && NextAutomaticCheckUtc is { } next ? $" Automatic retry after {next.ToLocalTime():g}." : "");
 
     internal AppUpdates(UpdateManager? manager, string settingsPath, string logDirectory, TimeProvider? time = null)
     {
@@ -56,8 +67,17 @@ internal sealed class AppUpdates : IDisposable
                 AutomaticChecks = settings.AutomaticChecks;
                 AutomaticDownloads = settings.AutomaticDownloads;
                 _lastCheck = settings.LastCheckUtc;
+                _lastAttempt = settings.LastAttemptUtc;
+                _failedChecks = Math.Clamp(settings.FailedChecks, 0, 4);
                 // A clock change must not disable checking indefinitely.
                 if (_lastCheck > _time.GetUtcNow()) _lastCheck = null;
+                if (_lastAttempt > _time.GetUtcNow()) _lastAttempt = null;
+                if (_lastAttempt is null) _failedChecks = 0;
+                if (_failedChecks > 0)
+                {
+                    _checkFailed = true;
+                    if (Supported) Status = "The last update check did not finish · Retry check";
+                }
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
@@ -127,9 +147,13 @@ internal sealed class AppUpdates : IDisposable
         Error = null;
         try { token.ThrowIfCancellationRequested(); await work(token); }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
-        { Status = Ready ? "Ready to restart" : "Cancelled"; _log.Record("update-cancelled", new { }); }
+        { Status = _checkFailed ? "Update check cancelled · Retry when ready" : Ready ? "Ready to restart" : "Cancelled"; _log.Record("update-cancelled", new { }); }
         catch (Exception error)
-        { Status = "Update failed · Try again"; Error = error.ToString(); _log.Record("update-error", new { Error }); }
+        {
+            Status = _checkFailed ? "Update check could not finish · Retry check"
+                + (_available is null ? "" : $" · Earlier result: version {AvailableVersion}") : "Update failed · Try again";
+            Error = error.ToString(); _log.Record("update-error", new { Error });
+        }
         finally
         {
             _operationCancellation?.Dispose(); _operationCancellation = null;
@@ -141,18 +165,30 @@ internal sealed class AppUpdates : IDisposable
     {
         Status = "Checking…"; Notify();
         _log.Record("update-check", new { CurrentVersion });
-        _lastCheck = _time.GetUtcNow();
+        _lastAttempt = _time.GetUtcNow();
+        _failedChecks = Math.Min(_failedChecks + 1, 4);
+        _availableVerified = false;
+        // Persist the bounded retry window before starting an uninterruptible
+        // feed request, including interrupted processes. Success resets it.
         SaveSettings();
         // Velopack's feed API has no cancellation argument. WaitAsync bounds the UI
         // wait; the late feed result cannot update state or download anything.
-        var update = await _manager!.CheckForUpdatesAsync().WaitAsync(TimeSpan.FromSeconds(30), token);
-        token.ThrowIfCancellationRequested();
-        if (update is not null) ValidateUpdate(update, _manager);
+        UpdateInfo? update;
+        try
+        {
+            update = await _manager!.CheckForUpdatesAsync().WaitAsync(TimeSpan.FromSeconds(30), token);
+            token.ThrowIfCancellationRequested();
+            if (update is not null) ValidateUpdate(update, _manager);
+        }
+        catch { _checkFailed = true; throw; }
         var previous = _available?.TargetFullRelease;
         var next = update?.TargetFullRelease;
         if (previous?.FileName != next?.FileName || previous?.Size != next?.Size
             || previous?.SHA256 != next?.SHA256) Ready = false;
         _available = update;
+        _availableVerified = true; _checkFailed = false;
+        _lastCheck = _time.GetUtcNow(); _failedChecks = 0;
+        SaveSettings();
         Status = update is null ? "Up to date" : Ready ? "Ready to restart" : $"Version {AvailableVersion} available";
         if (update is not null && !Ready && AutomaticChecks && AutomaticDownloads)
         {
@@ -185,6 +221,7 @@ internal sealed class AppUpdates : IDisposable
     private async Task DownloadCoreAsync(CancellationToken token)
     {
         if (_available is null) return;
+        if (!_availableVerified) throw new InvalidOperationException("Check for updates again before downloading this earlier result.");
         Ready = false; Progress = 0; Status = "Downloading…"; Notify();
         ValidateUpdate(_available, _manager!);
         var progress = new Progress<int>(value => { if (!_stopped && Operation is not null) { Progress = value; Notify(); } });
@@ -197,6 +234,8 @@ internal sealed class AppUpdates : IDisposable
     internal async Task ScheduleRestartAsync()
     {
         if (Busy || !Ready || _available is null) throw new InvalidOperationException("Download the update first.");
+        // A completed package remains usable offline. Its exact target and
+        // cached bytes are validated below even when a later feed check fails.
         ValidateUpdate(_available, _manager!);
         if (_manager is VerifiedUpdateManager verified) await verified.VerifyPreparedAsync(_available.TargetFullRelease);
         _manager!.WaitExitThenApplyUpdates(_available.TargetFullRelease, silent: false, restart: true);
@@ -216,7 +255,7 @@ internal sealed class AppUpdates : IDisposable
         try
         {
             DiskAccess.Default.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            DiskAccess.Default.WriteAllText(temp, JsonSerializer.Serialize(new UpdateSettings(AutomaticChecks, _lastCheck, AutomaticDownloads)));
+            DiskAccess.Default.WriteAllText(temp, JsonSerializer.Serialize(new UpdateSettings(AutomaticChecks, _lastCheck, AutomaticDownloads, _lastAttempt, _failedChecks)));
             DiskAccess.Default.MoveFile(temp, _settingsPath, overwrite: true);
             return true;
         }
@@ -227,7 +266,8 @@ internal sealed class AppUpdates : IDisposable
 
     private void Notify() { if (!_stopped) Changed?.Invoke(); }
     public void Dispose() { _stopped = true; Cancel(); _log.Dispose(); }
-    private sealed record UpdateSettings(bool AutomaticChecks, DateTimeOffset? LastCheckUtc, bool AutomaticDownloads = false);
+    private sealed record UpdateSettings(bool AutomaticChecks, DateTimeOffset? LastCheckUtc, bool AutomaticDownloads = false,
+        DateTimeOffset? LastAttemptUtc = null, int FailedChecks = 0);
 }
 
 internal sealed class VerifiedUpdateManager(IUpdateSource source, IVelopackLocator? locator = null)
