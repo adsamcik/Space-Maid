@@ -76,11 +76,19 @@ public partial class MainWindow
     private async Task OpenOptimizationWindowAsync()
     {
         var scan = _snapshot;
+        string scope = scan?.RootPath ?? _currentPath;
         var findings = _rows.Select(row => row.Item).ToArray();
         var integration = CreateOptimizationIntegration(scan?.RootPath ?? _currentPath);
         _optimizationWindow = new(scan, findings, Operations, _optimizationSettings, SaveOptimizationPolicy,
-            (preview, policy, token) => scan is null ? throw new InvalidOperationException("Scan a location before deleting generated files.")
-                : StartOptimizationAsync(scan, findings, preview, policy, token), _optimizationSettingsError, integration) { Owner = this };
+            (preview, policy, token) => ReadOptimizationInventory(scope) is { IsCurrent: true } current
+                ? StartOptimizationAsync(current.Scan, current.Findings, preview, policy, token)
+                : throw new InvalidOperationException("Refresh the affected inventory and review files before deleting generated files."),
+            _optimizationSettingsError, integration)
+        {
+            Owner = this,
+            ReadInventory = () => ReadOptimizationInventory(scope),
+            RecheckInventory = token => RecheckOptimizationInventoryAsync(scope, token)
+        };
         var window = _optimizationWindow;
         try { _optimizationWindow.ShowDialog(); }
         finally { _optimizationWindow = null; }
@@ -97,6 +105,32 @@ public partial class MainWindow
             }
             catch (Exception error) { StatusText.Text = "Could not open the extension workflow. " + error.GetBaseException().Message; }
         }
+    }
+
+    internal OptimizationInventory? ReadOptimizationInventory(string scope)
+        => _snapshot is { } scan && scan.RootPath.Equals(scope, StringComparison.OrdinalIgnoreCase)
+            ? new(scan, _rows.Select(row => row.Item).ToArray(), !_scanStale && !ReferenceEquals(_fullRescanRecovery, scan), RequiresInventoryRescan(scan))
+            : null;
+
+    internal async Task RecheckOptimizationInventoryAsync(string scope, CancellationToken token)
+    {
+        if (_closing || _work is not null || _browsing || ReadOptimizationInventory(scope) is not { IsCurrent: false, RequiresFullRescan: false } inventory) return;
+        var requests = _staleScopes.ToArray();
+        if (requests.Length == 0) return;
+        using var work = CancellationTokenSource.CreateLinkedTokenSource(token, _extensionLifetime.Token);
+        using var log = StartActionLog("optimization-inventory-recheck", scope);
+        _work = work; SetBusy(true);
+        try { await RefreshAffectedAsync(inventory.Scan, requests, "Affected optimization folders rechecked.", work.Token, log); }
+        catch (Exception error) when (CleanupBatch.IsExpected(error))
+        {
+            if (!_closing)
+            {
+                MarkScanStale("Affected optimization folders could not be rechecked. " + error.Message, requests);
+                if (ScanRechecker.RequiresFullRescan(error)) OfferFullInventoryRescan(inventory.Scan);
+            }
+            throw;
+        }
+        finally { _work = null; if (!_closing) { ShowActionLogError(log); SetBusy(false); } }
     }
 
     private OptimizationIntegration CreateOptimizationIntegration(string scope)

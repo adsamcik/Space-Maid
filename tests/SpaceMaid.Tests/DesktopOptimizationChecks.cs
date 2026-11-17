@@ -16,6 +16,7 @@ public sealed partial class DesktopTests
         CheckOptimizationHub(app, artifactRoot);
         CheckOptimizationHostIntegration(app);
         CheckOptimizationExclusions(app, artifactRoot);
+        CheckOptimizationInventoryContinuation();
         using var fixture = new TestDirectory();
         using var settingsFixture = new TestDirectory();
         for (int i = 0; i < 24; i++) OptimizationTests.MakePython(fixture.Path, $"module_{i:00}");
@@ -140,6 +141,88 @@ public sealed partial class DesktopTests
         finally { window.Close(); }
     }
 
+    private static void CheckOptimizationInventoryContinuation()
+    {
+        foreach (bool refreshFailure in new[] { false, true })
+        {
+            using var fixture = new TestDirectory();
+            OptimizationTests.MakePython(fixture.Path, "first"); OptimizationTests.MakePython(fixture.Path, "second"); OptimizationTests.Age(fixture.Path);
+            var scanning = new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+            PumpUntil(() => scanning.IsCompleted, TimeSpan.FromSeconds(10));
+            var scan = scanning.GetAwaiter().GetResult();
+            var findings = DeveloperOpportunityFixture.Find(scan);
+            var rule = Assert.Single(findings).AutomaticCleanup!;
+            var policy = new OptimizationPolicy { ScopePath = fixture.Path, MaxFilesPerRun = 1,
+                EnabledRules = [rule.ConsentKey(DeveloperOpportunityFixture.ProviderId)] };
+            var operations = new FileOperations();
+            var inventory = new OptimizationInventory(scan, findings, true, false);
+            int executions = 0, rechecks = 0;
+            async Task Refresh(CancellationToken token)
+            {
+                var updated = await operations.RecheckAsync(inventory.Scan, [new(fixture.Path)], token);
+                inventory = new(updated, DeveloperOpportunityFixture.Find(updated), true, false);
+            }
+            var window = new OptimizationWindow(scan, findings, operations, new(policy), _ => { }, async (preview, chosen, token) =>
+            {
+                Assert.True(inventory.IsCurrent);
+                executions++;
+                var result = await operations.OptimizeAsync(inventory.Scan, inventory.Findings, preview, chosen,
+                    DeveloperOpportunityFixture.Find, token, (_, _) => { });
+                if (refreshFailure && executions == 1) inventory = inventory with { IsCurrent = false };
+                else await Refresh(token);
+                return result;
+            })
+            {
+                ReadInventory = () => inventory,
+                RecheckInventory = async token =>
+                {
+                    rechecks++;
+                    if (rechecks == 1) throw new IOException("Fixture metadata temporarily unavailable.");
+                    await Refresh(token);
+                }
+            };
+            try
+            {
+                window.ShowActivated = false; window.ShowInTaskbar = false;
+                window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -10000; window.Top = -10000; window.Show();
+                var preview = (Button)window.FindName("PreviewButton"); var run = (Button)window.FindName("RunButton");
+                var files = (DataGrid)window.FindName("FileList"); var results = (DataGrid)window.FindName("ResultList");
+                void Review()
+                {
+                    preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+                }
+                Review(); Assert.True(run.IsEnabled);
+                string firstPath = Assert.Single(files.Items.Cast<OptimizationWindow.DisplayFile>()).Path;
+                run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+                Assert.Equal(1, executions); Assert.False(run.IsEnabled); Assert.Single(results.Items.Cast<object>());
+                Assert.False(window.RequestedRescan);
+                if (refreshFailure)
+                {
+                    Assert.Equal("Recheck affected folders", preview.Content);
+                    Review(); // A read failure must retain receipts and must not resubmit deletion.
+                    Assert.Equal(1, executions); Assert.Equal(1, rechecks); Assert.False(run.IsEnabled);
+                    Assert.Single(results.Items.Cast<object>());
+                    Assert.Equal("Recheck affected folders", preview.Content);
+                }
+                else Assert.Equal("Review files", preview.Content);
+                Review(); Assert.True(run.IsEnabled);
+                Assert.NotEqual(firstPath, Assert.Single(files.Items.Cast<OptimizationWindow.DisplayFile>()).Path);
+                Assert.Single(results.Items.Cast<object>()); Assert.False(window.RequestedRescan);
+                Assert.Equal(refreshFailure ? 2 : 0, rechecks);
+                ((TabItem)window.FindName("GeneratedFilesTab")).IsSelected = true;
+                run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
+                Assert.Equal(2, executions); Assert.Empty(Directory.GetFiles(Path.Join(fixture.Path, "__pycache__")));
+                inventory = inventory with { IsCurrent = false, RequiresFullRescan = true };
+                Review();
+                Assert.True(window.RequestedRescan); Assert.Equal(2, executions);
+            }
+            finally { window.Close(); }
+        }
+    }
+
     private static void CheckProofLimitedPreviewCompletion(ScanSnapshot scan,
         IReadOnlyList<SpaceMaid.Core.Analysis.Opportunity> findings, FileOperations operations, OptimizationPolicy policy)
     {
@@ -223,6 +306,9 @@ public sealed partial class DesktopTests
             new OptimizationSettings(policy).Save(host.OptimizationSettingsPath); host.InitializeOptimization();
             var automatic = host.TryAutomaticOptimizationAsync(); PumpUntil(() => automatic.IsCompleted, TimeSpan.FromSeconds(15)); automatic.GetAwaiter().GetResult();
             Assert.Single(Directory.GetFiles(Path.Join(source.Path, "__pycache__")));
+            var refreshedInventory = Assert.IsType<OptimizationInventory>(host.ReadOptimizationInventory(source.Path));
+            Assert.True(refreshedInventory.IsCurrent); Assert.NotSame(snapshot, refreshedInventory.Scan);
+            Assert.Null(host.ReadOptimizationInventory(Path.Join(source.Path, "other-scope")));
             Assert.NotNull(OptimizationSettings.Load(host.OptimizationSettingsPath).LastRunUtc);
             var throttled = host.TryAutomaticOptimizationAsync(); PumpUntil(() => throttled.IsCompleted, TimeSpan.FromSeconds(5)); throttled.GetAwaiter().GetResult();
             Assert.Single(Directory.GetFiles(Path.Join(source.Path, "__pycache__")));
@@ -240,6 +326,8 @@ public sealed partial class DesktopTests
             string retainedPath = host.CurrentPath;
             host.MarkScanStale("Fixture inventory requires a full rescan.", [new(retainedScan.RootPath)]);
             host.OfferFullInventoryRescan(retainedScan);
+            var recoveryInventory = Assert.IsType<OptimizationInventory>(host.ReadOptimizationInventory(source.Path));
+            Assert.False(recoveryInventory.IsCurrent); Assert.True(recoveryInventory.RequiresFullRescan);
             var cancelled = host.ScanCurrentPathAsync();
             Assert.False(button.IsEnabled); Assert.Equal("Available after scan", hint.Text);
             Assert.Same(retainedScan, snapshotField.GetValue(host));

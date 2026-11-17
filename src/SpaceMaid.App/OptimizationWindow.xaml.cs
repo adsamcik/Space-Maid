@@ -14,9 +14,9 @@ namespace SpaceMaid.App;
 
 public partial class OptimizationWindow : Window
 {
-    private readonly ScanSnapshot? _scan;
+    private ScanSnapshot? _scan;
     private readonly string _scopePath;
-    private readonly IReadOnlyList<Opportunity> _findings;
+    private IReadOnlyList<Opportunity> _findings;
     private readonly FileOperations _operations;
     private readonly Action<OptimizationPolicy> _save;
     private readonly Func<OptimizationPreview, OptimizationPolicy, CancellationToken, Task<OptimizationResult>> _run;
@@ -29,10 +29,13 @@ public partial class OptimizationWindow : Window
     private OptimizationPolicy? _previewPolicy;
     private CancellationTokenSource? _work;
     private bool _closeAfterCancel, _scanChanged;
+    private bool _requiresFullRescan = true;
     private OptimizationPolicy _savedPolicy;
     private int _cursor;
     internal bool RequestedRescan { get; private set; }
     internal Extensions.OptimizationContribution? RequestedWorkflow { get; private set; }
+    internal Func<OptimizationInventory?>? ReadInventory { get; init; }
+    internal Func<CancellationToken, Task>? RecheckInventory { get; init; }
 
     internal OptimizationWindow(ScanSnapshot? scan, IReadOnlyList<Opportunity> findings, FileOperations operations,
         OptimizationSettings settings, Action<OptimizationPolicy> save,
@@ -112,11 +115,24 @@ public partial class OptimizationWindow : Window
     private async void Preview_Click(object sender, RoutedEventArgs e)
     {
         if (_work is not null || _scan is null || SelectedAction?.Rule is null) return;
-        if (_scanChanged) { RequestedRescan = true; Close(); return; }
+        SynchronizeInventory();
+        if (_scanChanged && (_requiresFullRescan || RecheckInventory is null)) { RequestedRescan = true; Close(); return; }
         _preview = null; UpdatePreviewActions();
         using var work = new CancellationTokenSource(); _work = work; SetWorking(true);
         try
         {
+            if (_scanChanged)
+            {
+                StatusText.Text = "Rechecking affected folders…";
+                await RecheckInventory!(work.Token);
+                SynchronizeInventory();
+                if (_scanChanged)
+                {
+                    StatusText.Text = _requiresFullRescan ? "Inventory still needs recovery. Choose Rescan inventory; completed results remain below."
+                        : "Some affected folders remain unavailable. Recheck affected folders to retry; completed results remain below.";
+                    return;
+                }
+            }
             var policy = ReadPolicy(manual: true);
             if (_previewPolicy is not null && JsonSerializer.Serialize(policy) != JsonSerializer.Serialize(_previewPolicy)) _cursor = 0;
             _previewPolicy = policy;
@@ -134,8 +150,8 @@ public partial class OptimizationWindow : Window
             SelectedAction!.Status = _preview.Files.Count == 0 ? "No eligible files" : $"{_preview.Files.Count:N0} files · {SizeText.Format(_preview.EstimatedBytes)}";
             StatusText.Text = "Only the exact files shown are eligible. Deletion is permanent; their producer recreates them when needed.";
         }
-        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = error.Message; }
-        finally { _work = null; SetWorking(false); if (_closeAfterCancel) Close(); }
+        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = error.Message; SynchronizeInventory(); }
+        finally { _work = null; UpdateRecoveryButton(); SetWorking(false); if (_closeAfterCancel) Close(); }
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)
@@ -157,6 +173,14 @@ public partial class OptimizationWindow : Window
 
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
+        if (_work is not null) return;
+        SynchronizeInventory();
+        if (_scanChanged)
+        {
+            InvalidatePreview();
+            StatusText.Text = "Refresh the affected inventory and review files before another run. Completed results remain available.";
+            return;
+        }
         if (_work is not null || _preview is null || _previewPolicy is null || !ActionsTab.IsSelected || !GeneratedFilesTab.IsSelected) return;
         using var work = new CancellationTokenSource(); _work = work; SetWorking(true);
         try
@@ -171,11 +195,11 @@ public partial class OptimizationWindow : Window
             StatusText.Text = $"{result.DeletedCount:N0} files deleted · {SizeText.Format(result.RemovedLogicalBytes)} in file contents removed"
                 + (result.Cancelled ? " · Cancelled; completed deletions remain." : ".") + (result.Note is null ? "" : " " + result.Note);
             _scanChanged |= result.DeletedCount > 0;
+            SynchronizeInventory();
             InvalidatePreview(); ResultsTab.IsSelected = true;
-            PreviewText.Text = _scanChanged ? "Scan again to refresh estimates and review more files." : "Review files again before another run.";
-            if (_scanChanged) PreviewButton.Content = "Scan again…";
+            PreviewText.Text = _scanChanged ? "Refresh affected inventory before reviewing more files. Completed results remain below." : "Review files again before another run.";
         }
-        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = error.Message; InvalidatePreview(); }
+        catch (Exception error) when (CleanupBatch.IsExpected(error)) { StatusText.Text = error.Message; SynchronizeInventory(); InvalidatePreview(); }
         finally { _work = null; SetWorking(false); if (_closeAfterCancel) Close(); }
     }
 
@@ -270,11 +294,30 @@ public partial class OptimizationWindow : Window
         // Approval and preview observations expire independently of completed
         // receipts. Settings changes and failed retries must not erase outcomes.
         ShowResults([]);
-        PreviewButton.Content = _scanChanged ? "Scan again…" : "Review files";
+        UpdateRecoveryButton();
         PreviewEmptyText.Text = "Review files to check what can be removed.";
         PreviewEmptyText.Visibility = Visibility.Visible;
         PreviewText.Text = "";
         UpdatePreviewActions();
+    }
+    private void SynchronizeInventory()
+    {
+        if (ReadInventory is null) return; // Standalone callers retain conservative rescan recovery.
+        var inventory = ReadInventory();
+        _scanChanged = inventory?.IsCurrent != true;
+        _requiresFullRescan = inventory is null || inventory.RequiresFullRescan;
+        if (inventory is not { IsCurrent: true } || !inventory.Scan.RootPath.Equals(_scopePath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (inventory is { IsCurrent: true }) { _scanChanged = true; _requiresFullRescan = true; }
+            return;
+        }
+        if (!ReferenceEquals(_scan, inventory.Scan)) { _cursor = 0; _preview = null; }
+        _scan = inventory.Scan; _findings = inventory.Findings;
+    }
+    private void UpdateRecoveryButton()
+    {
+        if (_scanChanged) PreviewButton.Content = _requiresFullRescan || RecheckInventory is null ? "Rescan inventory…" : "Recheck affected folders";
+        else if (_preview is null) PreviewButton.Content = "Review files";
     }
     internal sealed record DisplayFile(string Path, string DisplayPath, string Size, string Rule, string Container);
     internal sealed record DisplayResult(string Path, string DisplayPath, string Reason);
