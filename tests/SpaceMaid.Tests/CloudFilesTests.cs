@@ -97,6 +97,7 @@ public sealed class CloudFilesTests
             var updates = new List<OnlineOnlyProgress>();
             var result = await operations.MakeOnlineOnlyAsync(plan, new InlineProgress<OnlineOnlyProgress>(updates.Add), default);
             Assert.Equal(1, result.Requested);
+            Assert.Equal(0, result.Skipped);
             Assert.Equal(0, result.ConfirmedOnlineOnly); // No real provider is connected to complete it.
             Assert.Equal(2, CloudFiles.Inspect(file)!.PinState);
             Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
@@ -111,6 +112,7 @@ public sealed class CloudFilesTests
             var replaced = await operations.MakeOnlineOnlyAsync(wrongIdentity, null, default);
             Assert.Equal(0, replaced.Requested);
             Assert.Equal(1, replaced.Skipped);
+            Assert.Contains(file, Assert.Single(replaced.Warnings));
             Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
         }
         finally { Marshal.ThrowExceptionForHR(CfUnregisterSyncRoot(fixture.Path)); }

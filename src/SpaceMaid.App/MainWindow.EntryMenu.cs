@@ -94,9 +94,23 @@ public partial class MainWindow
 
     private async Task AddCloudMenuAsync(ContextMenu menu, MenuItem checking, object marker, ScanSnapshot scan, int link, string path)
     {
-        var state = await Operations.InspectCloudAsync(path);
+        var inspection = await Operations.InspectCloudDetailedAsync(path);
         if (!CanUseEntryMenu(scan, link) || !ReferenceEquals(menu.Tag, marker)) return;
         menu.Items.Remove(checking);
+        if (inspection.Status == CloudInspectionStatus.Unavailable)
+        {
+            var retry = new MenuItem { Header = "Cloud availability unavailable · Retry", ToolTip = inspection.Error, StaysOpenOnClick = true };
+            retry.Click += async (_, _) =>
+            {
+                if (!CanUseEntryMenu(scan, link) || !ReferenceEquals(menu.Tag, marker)) return;
+                menu.Items.Remove(retry);
+                menu.Items.Add(checking);
+                await AddCloudMenuAsync(menu, checking, marker, scan, link, path);
+            };
+            menu.Items.Add(retry);
+            return;
+        }
+        var state = inspection.State;
         if (state is not null)
         {
             bool enabled = state.IsDirectory || state.CanRequestOnlineOnly;

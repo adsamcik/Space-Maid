@@ -23,10 +23,13 @@ public static partial class CloudFiles
         using var directory = Open(path);
         if ((LayoutParser.U32(Information(directory, 9, 8), 0) & (uint)FileAttributes.Directory) == 0)
             throw new IOException("Choose a cloud drive folder.");
-        var selected = Inspect(directory);
+        var rootInspection = InspectHandleDetailed(directory);
+        var selected = rootInspection.State;
         var entries = new List<CloudDirectoryEntry>();
         var warnings = new List<string>();
         bool complete = true;
+        if (rootInspection.Status == CloudInspectionStatus.Unavailable)
+            RecordFailure("Cloud availability for this folder is unavailable; online-only requests are disabled. Refresh to retry. " + rootInspection.Error);
         var options = new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, AttributesToSkip = 0 };
         var children = DiskAccess.Default.EnumerateEntries<(string Path, string Name, bool Directory, long Length)>(path,
             (ref FileSystemEntry entry) => (entry.ToFullPath(), entry.FileName.ToString(), entry.IsDirectory,
@@ -48,7 +51,14 @@ public static partial class CloudFiles
                         entries.Add(new(child.Path, child.Name, child.Directory, child.Length, null, "Linked location · not followed", false));
                         continue;
                     }
-                    var state = Inspect(child.Path);
+                    var inspection = InspectDetailed(child.Path);
+                    if (inspection.Status == CloudInspectionStatus.Unavailable)
+                    {
+                        entries.Add(new(child.Path, child.Name, child.Directory, child.Length, null, "Unavailable · refresh to retry", false));
+                        RecordFailure($"{child.Name}: Cloud availability could not be inspected. Refresh to retry. {inspection.Error}");
+                        continue;
+                    }
+                    var state = inspection.State;
                     bool sameRoot = selected is not null && state is not null
                         && state.SyncRootId == selected.SyncRootId && state.Volume == selected.Volume;
                     string availability = state is null ? "Managed by provider"
@@ -61,10 +71,10 @@ public static partial class CloudFiles
                         state is { IsDirectory: false } ? state.LocalBytes : null,
                         availability, sameRoot && (state!.IsDirectory || state.CanRequestOnlineOnly)));
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
+                catch (Exception ex) when (InspectionFailure(ex))
                 {
                     entries.Add(new(child.Path, child.Name, child.Directory, child.Length, null, "Unavailable · refresh to retry", false));
-                    RecordFailure("Some items could not be inspected. Refresh the folder to retry.");
+                    RecordFailure($"{child.Name}: Cloud availability could not be inspected. Refresh to retry. {ex.Message}");
                 }
             }
         }

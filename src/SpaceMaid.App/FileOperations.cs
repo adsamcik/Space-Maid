@@ -68,6 +68,9 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
     public Task<CloudFileState?> InspectCloudAsync(string path, CancellationToken token = default)
         => Task.Run(() => { token.ThrowIfCancellationRequested(); return CloudFiles.Inspect(path); }, token);
 
+    public Task<CloudFileInspection> InspectCloudDetailedAsync(string path, CancellationToken token = default)
+        => Task.Run(() => { token.ThrowIfCancellationRequested(); return CloudFiles.InspectDetailed(path); }, token);
+
     public Task<OnlineOnlyPlan> PrepareOnlineOnlyAsync(ScanSnapshot scan, int link, CancellationToken token)
         => Task.Run(() => CloudFiles.Prepare(scan, link, token), token);
 

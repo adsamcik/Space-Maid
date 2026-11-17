@@ -26,6 +26,7 @@ public sealed class CloudDirectoryTests
         Assert.Equal(4096, listing.Entries[1].LogicalBytes);
         Assert.All(listing.Entries, entry =>
         {
+            Assert.Equal(CloudInspectionStatus.Unsupported, CloudFiles.InspectDetailed(entry.Path).Status);
             Assert.Null(entry.LocalBytes);
             Assert.False(entry.CanRequestOnlineOnly);
         });
@@ -68,6 +69,7 @@ public sealed class CloudDirectoryTests
         Assert.Equal(file, Assert.Single(plan.Targets).Path);
         Assert.Equal(4096, plan.LocalBytes);
         Assert.Equal(1, plan.SkippedCount);
+        Assert.Contains(plan.Warnings, warning => warning.Contains(pending, StringComparison.Ordinal));
         Assert.NotEqual(2, CloudFiles.Inspect(file)!.PinState);
         Assert.Equal(4096, CloudFiles.Inspect(file)!.LocalBytes);
         Assert.Equal(8192, new FileInfo(pending).Length);
