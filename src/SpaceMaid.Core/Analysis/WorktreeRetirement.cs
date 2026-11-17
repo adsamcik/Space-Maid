@@ -20,7 +20,7 @@ public sealed record ManagedWorktreePolicy(string Path, string IntegrationRefere
     }
 }
 
-public enum WorktreeRetirementState { Prepared, Quarantined, Finalizing, Completed, Restored, NeedsReview }
+public enum WorktreeRetirementState { Prepared, Quarantined, Finalizing, Completed, Restored, NeedsReview, RestoreOnly }
 public sealed record WorktreeRetirementEntry(string RelativePath, bool Directory, string Identity, long Length, long Written, long Created, string? Hash);
 public sealed record WorktreeRetirementRecord(Guid Id, ManagedWorktreePolicy Policy, string QuarantinePath, string Head,
     string CommonGitDirectory, DateTime QuarantinedUtc, WorktreeRetirementState State, IReadOnlyList<WorktreeRetirementEntry> Entries,
@@ -176,15 +176,29 @@ public sealed partial class WorktreeRetirement
         {
             var record = Find(id);
             if (record.State is WorktreeRetirementState.Completed or WorktreeRetirementState.Restored) throw new InvalidOperationException("This record has no quarantined checkout to restore.");
+            if (record.State == WorktreeRetirementState.NeedsReview) throw new InvalidOperationException("Choose Recheck recovery first to identify whether the remaining checkout can be restored safely.");
             if (record.State == WorktreeRetirementState.Prepared && _files.DirectoryExists(record.Policy.Path) && !_files.DirectoryExists(record.QuarantinePath))
             { record = record with { State = WorktreeRetirementState.Restored, Message = "The move had not started. The original checkout remains in place." }; Put(record); return record; }
             if (_files.DirectoryExists(record.Policy.Path) || _files.FileExists(record.Policy.Path)) throw new IOException("The original location is occupied. Nothing was overwritten.");
             using (var root = RetirementLease.Open(record.QuarantinePath, false))
                 if (root.Entry.Identity != record.Policy.RootIdentity) throw new IOException("The quarantined root was replaced.");
+            if (record.State == WorktreeRetirementState.RestoreOnly)
+            {
+                using var pointer = RetirementLease.Open(System.IO.Path.Join(record.QuarantinePath, ".git"), false, token);
+                if (!RecoveryPointerMatches(record, pointer.Entry with { RelativePath = ".git" }))
+                    throw new IOException("Git metadata changed after recovery was checked. Choose Recheck recovery; the remaining files were kept.");
+            }
+            using var metadata = new GitWorktreeAnalyzer.MetadataGuard(token);
+            metadata.Ancestors(record.CommonGitDirectory);
+            metadata.File(System.IO.Path.Join(record.CommonGitDirectory, "config"));
+            GitWorktreeAnalyzer.RejectUnsafeConfig(System.IO.Path.Join(record.CommonGitDirectory, "config"));
             var result = await new GitWorktreeAnalyzer.GitReader(record.CommonGitDirectory, token)
                 .Run("worktree", "move", "--", record.QuarantinePath, record.Policy.Path).ConfigureAwait(false);
             if (result.Code != 0) throw new IOException("Git could not restore this checkout. Its files and recovery record were kept. " + Detail(result.Error));
-            record = record with { State = WorktreeRetirementState.Restored, Message = "Checkout restored to its original location. Automatic retirement paused; no branch was deleted." };
+            string restoredMessage = record.State == WorktreeRetirementState.RestoreOnly
+                ? "Remaining checkout restored to its original location. Missing tracked files remain recoverable from " + record.RecoveryReference + ". Automatic retirement paused; no branch was deleted."
+                : "Checkout restored to its original location. Automatic retirement paused; no branch was deleted.";
+            record = record with { State = WorktreeRetirementState.Restored, Message = restoredMessage };
             var state = Load(); Save(state with { Policies = state.Policies.Select(p => p.Path == record.Policy.Path ? p with { Automatic = false } : p).ToArray(),
                 Records = state.Records.Where(r => r.Id != record.Id).Append(record).ToArray() });
             return record;

@@ -24,7 +24,16 @@ public partial class WorktreeLifecycleWindow : Window
         CheckoutList.ItemsSource = _rows; if (_rows.Count > 0) CheckoutList.SelectedIndex = 0;
         CheckoutList.SelectionChanged += (_, _) => LoadSelectedPolicy();
         RecoveryList.SelectionChanged += (_, _) =>
-        { if (RecoveryList.SelectedItem is RecoveryRow row) StatusText.Text = row.Message + " Recovery ref: " + row.Reference; };
+        {
+            if (RecoveryList.SelectedItem is RecoveryRow row)
+            {
+                StatusText.Text = row.Message;
+                RecoveryDetails.Text = row.Message + "\n\nOriginal: " + row.Original + "\nQuarantine: " + row.Quarantine
+                    + "\nShared repository: " + row.CommonGitDirectory + "\nRetained reference: " + row.Reference;
+            }
+            else RecoveryDetails.Text = "Select a recovery record to inspect its exact paths and retained reference.";
+            UpdateRecoveryActions();
+        };
         RefreshRecovery(); LoadSelectedPolicy();
     }
     private string SelectedPath => (CheckoutList.SelectedItem as CheckoutRow)?.Path ?? throw new InvalidOperationException("Select a checkout first.");
@@ -70,6 +79,8 @@ public partial class WorktreeLifecycleWindow : Window
     { var result = await _service.RestoreAsync(SelectedRecord, token); StatusText.Text = result.Message; RefreshRecovery(); _changed(true); });
     private async void Finalize_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
     { var result = await _service.FinalizeAsync(SelectedRecord, token); StatusText.Text = result.Message; RefreshRecovery(); _changed(true); });
+    private async void Reconcile_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
+    { var result = await _service.ReconcileAsync(SelectedRecord, token); RefreshRecovery(); StatusText.Text = result.Message; _changed(false); });
     private async void Pause_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
     {
         string path = RecoveryList.SelectedItem is RecoveryRow recovery ? recovery.Original : SelectedPath;
@@ -87,14 +98,36 @@ public partial class WorktreeLifecycleWindow : Window
     private void SetBusy(bool busy)
     {
         PolicyControls.IsEnabled = CheckoutList.IsEnabled = RecoveryList.IsEnabled = CheckButton.IsEnabled = EnrollButton.IsEnabled
-            = QuarantineButton.IsEnabled = RestoreButton.IsEnabled = FinalizeButton.IsEnabled = PauseButton.IsEnabled = !busy;
+            = QuarantineButton.IsEnabled = PauseButton.IsEnabled = !busy;
+        UpdateRecoveryActions();
         CloseButton.Content = busy ? "Cancel" : "Close";
     }
-    private void RefreshRecovery() => RecoveryList.ItemsSource = _service.Load().Records.OrderByDescending(r => r.QuarantinedUtc)
-        .Select(r => new RecoveryRow(r.Id, r.Policy.Path, r.State.ToString(), r.FinalizeAfterUtc.ToLocalTime().ToString("g"), r.QuarantinePath, r.RecoveryReference, r.Message)).ToArray();
+    private void UpdateRecoveryActions()
+    {
+        var row = RecoveryList.SelectedItem as RecoveryRow;
+        bool actionable = _work is null && row is not null && row.State is not (nameof(WorktreeRetirementState.Completed) or nameof(WorktreeRetirementState.Restored));
+        ReconcileButton.IsEnabled = actionable;
+        RestoreButton.IsEnabled = actionable && row!.State != nameof(WorktreeRetirementState.NeedsReview);
+        FinalizeButton.IsEnabled = actionable && row!.State is nameof(WorktreeRetirementState.Quarantined) or nameof(WorktreeRetirementState.Finalizing);
+    }
+    private void RefreshRecovery()
+    {
+        Guid? selected = (RecoveryList.SelectedItem as RecoveryRow)?.Id;
+        var rows = _service.Load().Records.OrderByDescending(r => r.QuarantinedUtc)
+            .Select(r => new RecoveryRow(r.Id, r.Policy.Path, r.State.ToString(), r.FinalizeAfterUtc.ToLocalTime().ToString("g"), r.QuarantinePath, r.RecoveryReference, r.Message)
+            { CommonGitDirectory = r.CommonGitDirectory }).ToArray();
+        RecoveryList.ItemsSource = rows;
+        RecoveryList.SelectedItem = rows.FirstOrDefault(row => row.Id == selected);
+        UpdateRecoveryActions();
+    }
     private void Close_Click(object sender, RoutedEventArgs e) { if (_work is { } work) work.Cancel(); else Close(); }
     private void Window_Closing(object? sender, CancelEventArgs e)
     { if (_work is { } work) { e.Cancel = true; _closeAfterCancel = true; work.Cancel(); } }
     internal sealed record CheckoutRow(string Path, string Branch, string Status);
-    internal sealed record RecoveryRow(Guid Id, string Original, string State, string FinalizeAfter, string Quarantine, string Reference, string Message);
+    internal sealed record RecoveryRow(Guid Id, string Original, string State, string FinalizeAfter, string Quarantine, string Reference, string Message)
+    {
+        public string CommonGitDirectory { get; init; } = "";
+        public string DisplayState => State switch
+        { nameof(WorktreeRetirementState.RestoreOnly) => "Restore available", nameof(WorktreeRetirementState.NeedsReview) => "Needs review", _ => State };
+    }
 }

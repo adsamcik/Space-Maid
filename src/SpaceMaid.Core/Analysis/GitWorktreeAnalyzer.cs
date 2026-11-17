@@ -316,7 +316,7 @@ public static partial class GitWorktreeAnalyzer
         if (count > 65536) throw new IOException("Git metadata exceeds the bounded inspection size.");
         return new string(buffer, 0, count);
     }
-    private static void RejectUnsafeConfig(string path)
+    internal static void RejectUnsafeConfig(string path)
     {
         string text = ReadSmall(path);
         // Git reads the repository-format feature before command-line config
@@ -327,7 +327,7 @@ public static partial class GitWorktreeAnalyzer
         if (Regex.IsMatch(text, @"^\s*\[\s*(include|includeif|filter)\b", RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             throw new IOException("Git configuration includes or content filters require manual review; external code was not run.");
     }
-    private static Dictionary<string, string>? Registered(string text, string path)
+    internal static Dictionary<string, string>? Registered(string text, string path)
     {
         foreach (string record in text.Split("\0\0", StringSplitOptions.RemoveEmptyEntries))
         {

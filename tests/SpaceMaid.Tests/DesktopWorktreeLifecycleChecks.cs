@@ -43,6 +43,21 @@ public sealed partial class DesktopTests
             quarantine.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => quarantine.IsEnabled, TimeSpan.FromSeconds(20));
             Assert.Equal(WorktreeRetirementState.Quarantined, Assert.Single(service.Load().Records).State);
             var recovery = (DataGrid)window.FindName("RecoveryList"); recovery.SelectedIndex = 0;
+            var record = Assert.Single(service.Load().Records);
+            string lifecycle = Path.Join(fixture.Path, "lifecycle.json");
+            File.WriteAllText(lifecycle, System.Text.Json.JsonSerializer.Serialize(service.Load() with
+            { Records = [record with { State = WorktreeRetirementState.NeedsReview }] }));
+            typeof(WorktreeLifecycleWindow).GetMethod("RefreshRecovery", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null);
+            Assert.False(((Button)window.FindName("FinalizeButton")).IsEnabled);
+            Assert.False(((Button)window.FindName("RestoreButton")).IsEnabled);
+            var reconcile = (Button)window.FindName("ReconcileButton");
+            reconcile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => reconcile.IsEnabled, TimeSpan.FromSeconds(20));
+            Assert.Equal(WorktreeRetirementState.Quarantined, Assert.Single(service.Load().Records).State);
+            Assert.Contains(record.RecoveryReference, ((TextBox)window.FindName("RecoveryDetails")).Text);
+            Assert.True(((Button)window.FindName("FinalizeButton")).IsEnabled);
+            ((TabItem)window.FindName("RecoveryTab")).IsSelected = true;
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "worktree-recovery-compact.png"), 780, 600);
+            Assert.True(((TextBox)window.FindName("RecoveryDetails")).ActualHeight >= 54);
             var restore = (Button)window.FindName("RestoreButton");
             restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => restore.IsEnabled, TimeSpan.FromSeconds(15));
             Assert.Equal(WorktreeRetirementState.Restored, Assert.Single(service.Load().Records).State);
