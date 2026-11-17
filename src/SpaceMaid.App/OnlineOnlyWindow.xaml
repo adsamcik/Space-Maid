@@ -9,7 +9,7 @@
         <TextBox x:Name="TargetPath" IsReadOnly="True" TextWrapping="Wrap" Margin="0,14,0,0" AutomationProperties.Name="Exact online-only location" />
         <Grid Margin="0,14,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="38" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock Text="&#xE753;" FontFamily="Segoe Fluent Icons" FontSize="24" VerticalAlignment="Center" />
+            <TextBlock Text="&#xE753;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="24" VerticalAlignment="Center" />
             <StackPanel Grid.Column="1">
                 <TextBlock x:Name="ProviderText" FontWeight="SemiBold" TextWrapping="Wrap" />
                 <TextBlock x:Name="PlanText" Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12" />

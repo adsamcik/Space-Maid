@@ -42,7 +42,7 @@
                         <ToggleButton x:Name="BuildRulesToggle" Content="Cleanup rules" Click="OpportunityOptions_Click" Visibility="Collapsed" Padding="10,5" Margin="0,0,8,0" AutomationProperties.Name="Show build cleanup rules" />
                         <ToggleButton x:Name="WorktreeOptionsToggle" Content="Worktrees" Click="OpportunityOptions_Click" Visibility="Collapsed" Padding="12,6" Margin="0,0,8,0" AutomationProperties.Name="Show worktree cleanup options" />
                         <ToggleButton x:Name="ViewOptionsToggle" Click="OpportunityOptions_Click" Padding="10,5" AutomationProperties.Name="Show grouping and sorting options">
-                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" Margin="0,0,7,0" VerticalAlignment="Center" /><TextBlock Text="View" /></StackPanel>
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,7,0" VerticalAlignment="Center" /><TextBlock Text="View" /></StackPanel>
                         </ToggleButton>
                     </StackPanel>
                     <Button x:Name="BackToCleanupButton" Content="← Cleanup groups" Click="BackToCleanup_Click" Visibility="Collapsed" HorizontalAlignment="Left" />
@@ -92,8 +92,8 @@
                     <Border x:Name="RecycleBinRow" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,14">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /><ColumnDefinition Width="145" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="&#xE72C;" FontFamily="Segoe Fluent Icons" FontSize="15" Width="30" Height="30" Padding="0" Click="RefreshRecycleBin_Click" ToolTip="Refresh Recycle Bin" AutomationProperties.Name="Refresh Recycle Bin" />
-                            <TextBlock Grid.Column="1" Text="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="22" VerticalAlignment="Center" Margin="5,0,0,0" />
+                            <Button Grid.Column="0" Content="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Width="30" Height="30" Padding="0" Click="RefreshRecycleBin_Click" ToolTip="Refresh Recycle Bin" AutomationProperties.Name="Refresh Recycle Bin" />
+                            <TextBlock Grid.Column="1" Text="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="22" VerticalAlignment="Center" Margin="5,0,0,0" />
                             <TextBlock x:Name="RecycleBinTitle" Grid.Column="2" Text="Recycle Bin" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,14,0" />
                             <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,20,0">
                                 <TextBlock x:Name="RecycleBinSize" Text="—" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Right" ToolTip="Windows' bin size; actual released space may differ." />
@@ -111,7 +111,7 @@
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /><ColumnDefinition Width="145" /><ColumnDefinition Width="Auto" MinWidth="110" /></Grid.ColumnDefinitions>
                                         <CheckBox IsThreeState="True" IsChecked="{Binding Checked, Mode=OneWay}" IsEnabled="{Binding CanSelectGroup}" ToolTip="{Binding SelectionHint}" ToolTipService.ShowOnDisabled="True" Click="CleanupGroupSelection_Click" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name, StringFormat=Select {0} for cleanup}" />
                                         <Border Grid.Column="1" Width="34" Height="34" CornerRadius="8" Background="{DynamicResource CardStrokeColorDefaultBrush}" VerticalAlignment="Center" HorizontalAlignment="Left">
-                                            <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name}" />
+                                            <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name}" />
                                         </Border>
                                         <StackPanel Grid.Column="2" Margin="0,0,20,0" VerticalAlignment="Center">
                                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" />
@@ -223,7 +223,7 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="130" /></Grid.ColumnDefinitions>
                         <Grid>
                             <TextBox x:Name="OpportunitySearch" MinWidth="0" Padding="30,6,8,6" TextChanged="OpportunitySearch_Changed" AutomationProperties.Name="Search opportunity names, paths, types and projects" />
-                            <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" Margin="10,0,0,0" VerticalAlignment="Center" Opacity="0.65" IsHitTestVisible="False" />
+                            <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="10,0,0,0" VerticalAlignment="Center" Opacity="0.65" IsHitTestVisible="False" />
                             <TextBlock Text="Search folders" Margin="31,0,8,0" VerticalAlignment="Center" Opacity="0.65" IsHitTestVisible="False" TextTrimming="CharacterEllipsis">
                                 <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=OpportunitySearch}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                             </TextBlock>

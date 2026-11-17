@@ -108,6 +108,12 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "icons")
+                {
+                    BeginWorkflow("Windows 10 icon fallback");
+                    CheckIconFallback(window, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "folder-deletion")
                 {
                     BeginWorkflow("Explore file and folder deletion");
@@ -1108,6 +1114,8 @@ public sealed partial class DesktopTests
                 CheckCloudDrives(window, app, FindRepository());
                 BeginWorkflow("Agent access sharing and human review");
                 CheckAgentAccess(app);
+                BeginWorkflow("Windows 10 icon fallback");
+                CheckIconFallback(window, artifactRoot);
                 SetStage("closing windows");
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
                 startup.Close(); review.Close(); details.Close(); permanentDeletePreview.Close(); window.Close();
