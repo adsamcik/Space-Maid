@@ -8,7 +8,10 @@ namespace SpaceMaid.Extensions.Photos;
 
 internal enum PhotoMode { Browse, Duplicates, Families }
 internal enum PhotoSort { Name, Size, Type, Captured, Status, Group }
-internal sealed record PhotoCollection(long Id, string Root, string Name, string Status, string? Observed, long Count, string? Coverage = null);
+internal sealed record PhotoCollection(long Id, string Root, string Name, string Status, string? Observed, long Count, string? Coverage = null)
+{
+    public string? RootVersion { get; init; }
+}
 internal sealed record PhotoRow(string ObjectId, string Path, string Name, string Role, long LogicalBytes, long? AllocatedBytes,
     long? DefaultBytes, string Revision, bool ContentAvailable, uint Links, string Status, string? Format,
     int? Width, int? Height, int? Orientation, string? Captured, string? Hash, string? Verified, string SidecarRevision,
@@ -56,7 +59,7 @@ internal static class PhotoKinds
     }
 }
 
-internal sealed class PhotoCatalog : IDisposable
+internal sealed partial class PhotoCatalog : IDisposable
 {
     static PhotoCatalog()
     {
@@ -114,11 +117,24 @@ internal sealed class PhotoCatalog : IDisposable
                     kind TEXT NOT NULL, state TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0,
                     started TEXT NOT NULL, updated TEXT NOT NULL, message TEXT);
                 CREATE TABLE IF NOT EXISTS keep_preferences(object_id TEXT PRIMARY KEY REFERENCES objects(id), revision TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS collection_sequence(singleton INTEGER PRIMARY KEY CHECK(singleton=1), next_id INTEGER NOT NULL);
+                INSERT OR IGNORE INTO collection_sequence SELECT 1,COALESCE(MAX(id),0)+1 FROM collections;
                 UPDATE jobs SET state='Interrupted', message='Interrupted work must be revalidated before resuming.' WHERE state='Running';
                 UPDATE collections SET status='Interrupted discovery · Refresh to validate coverage' WHERE status='Discovering';
                 PRAGMA user_version=1;
                 """;
             command.ExecuteNonQuery();
+            using (var rootSchemaTransaction = connection.BeginTransaction())
+            {
+                using var rootSchema = connection.CreateCommand(); rootSchema.Transaction = rootSchemaTransaction;
+                rootSchema.CommandText = "PRAGMA table_info(collections)";
+                bool hasRootVersion = false;
+                using (var reader = rootSchema.ExecuteReader())
+                    while (reader.Read()) if (reader.GetString(1) == "root_version") hasRootVersion = true;
+                if (!hasRootVersion)
+                { rootSchema.CommandText = "ALTER TABLE collections ADD COLUMN root_version TEXT"; rootSchema.ExecuteNonQuery(); }
+                rootSchemaTransaction.Commit();
+            }
             using var nativeVersion = connection.CreateCommand(); nativeVersion.CommandText = "SELECT sqlite_version()";
             return Convert.ToString(nativeVersion.ExecuteScalar())!;
         }
@@ -128,10 +144,19 @@ internal sealed class PhotoCatalog : IDisposable
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         lock (_gate)
         {
-            using var connection = Open(); using var command = connection.CreateCommand();
-            command.CommandText = "INSERT INTO collections(root,name,status) VALUES($root,$name,'Not discovered') ON CONFLICT(root) DO NOTHING; SELECT id FROM collections WHERE root=$root;";
-            command.Parameters.AddWithValue("$root", root); command.Parameters.AddWithValue("$name", Path.GetFileName(root) is { Length: > 0 } name ? name : root);
-            return Convert.ToInt64(command.ExecuteScalar());
+            using var connection = Open(); using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = "SELECT id FROM collections WHERE root=$root"; Add(command, "$root", root);
+            if (command.ExecuteScalar() is long existing) { transaction.Commit(); return existing; }
+            command.Parameters.Clear();
+            // Removed IDs are never reused: an old asynchronous collection
+            // reference must not acquire authority over a newly added folder.
+            command.CommandText = "SELECT MAX(next_id,(SELECT COALESCE(MAX(id),0)+1 FROM collections)) FROM collection_sequence WHERE singleton=1";
+            long id = Convert.ToInt64(command.ExecuteScalar());
+            command.CommandText = "UPDATE collection_sequence SET next_id=$next WHERE singleton=1; INSERT INTO collections(id,root,name,status) VALUES($id,$root,$name,'Not discovered');";
+            Add(command, "$next", checked(id + 1)); Add(command, "$id", id); Add(command, "$root", root);
+            Add(command, "$name", Path.GetFileName(root) is { Length: > 0 } name ? name : root);
+            command.ExecuteNonQuery(); transaction.Commit(); return id;
         }
     }
     public IReadOnlyList<PhotoCollection> Collections()
@@ -140,12 +165,12 @@ internal sealed class PhotoCatalog : IDisposable
         {
             using var connection = Open(); using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT c.id,c.root,c.name,c.status,c.observed,COUNT(l.path),c.coverage
+                SELECT c.id,c.root,c.name,c.status,c.observed,COUNT(l.path),c.coverage,c.root_version
                 FROM collections c LEFT JOIN locations l ON l.collection_id=c.id AND l.missing=0
                 GROUP BY c.id ORDER BY c.name COLLATE NOCASE,c.root;
                 """;
             using var reader = command.ExecuteReader(); var result = new List<PhotoCollection>();
-            while (reader.Read()) result.Add(new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), String(reader, 4), reader.GetInt64(5), String(reader, 6)));
+            while (reader.Read()) result.Add(new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), String(reader, 4), reader.GetInt64(5), String(reader, 6)) { RootVersion = String(reader, 7) });
             return result;
         }
     }
@@ -157,22 +182,19 @@ internal sealed class PhotoCatalog : IDisposable
         lock (_gate)
         {
             using var connection = Open(); using var transaction = connection.BeginTransaction();
-            using var command = connection.CreateCommand(); command.Transaction = transaction;
-            command.CommandText = """
-                UPDATE objects SET content_revision=NULL,hash_revision=NULL,metadata_revision=NULL,
-                    status='Earlier observation · Refresh incomplete; Analyze to revalidate content'
-                    WHERE id IN (SELECT object_id FROM locations WHERE collection_id=$collection AND missing=0);
-                UPDATE collections SET status='Discovering',generation=$generation WHERE id=$collection;
-                """;
-            Add(command, "$collection", collection); Add(command, "$generation", generation);
-            command.ExecuteNonQuery(); transaction.Commit();
+            BeginDiscoveryCore(connection, transaction, collection, generation); transaction.Commit();
         }
     }
     public void Observe(long collection, string generation, IReadOnlyList<PhotoObservation> observations)
+        => ObserveCore(collection, generation, observations, null, null);
+
+    private void ObserveCore(long collection, string generation, IReadOnlyList<PhotoObservation> observations, PhotoCollection? expected, string? job)
     {
         lock (_gate)
         {
             using var connection = Open(); using var transaction = connection.BeginTransaction();
+            if (expected is not null && !CollectionJobCurrent(connection, transaction, expected, job!, generation))
+                throw new InvalidOperationException("The collection changed while discovery was running. Refresh its current location.");
             using var command = connection.CreateCommand(); command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO objects(id,revision,default_bytes,logical_bytes,allocated_bytes,links,available,status,allocation_generation)
@@ -232,10 +254,14 @@ internal sealed class PhotoCatalog : IDisposable
         }
     }
     public void EndDiscovery(long collection, string generation, bool complete, string status, string? coverage = null)
+        => EndDiscoveryCore(collection, generation, complete, status, coverage, null, null);
+
+    private bool EndDiscoveryCore(long collection, string generation, bool complete, string status, string? coverage, PhotoCollection? expected, string? job)
     {
         lock (_gate)
         {
             using var connection = Open(); using var transaction = connection.BeginTransaction();
+            if (expected is not null && !CollectionJobCurrent(connection, transaction, expected, job!, generation)) return false;
             using var command = connection.CreateCommand(); command.Transaction = transaction;
             if (complete)
             {
@@ -244,7 +270,7 @@ internal sealed class PhotoCatalog : IDisposable
             }
             command.CommandText = "UPDATE collections SET status=$status,observed=$observed,coverage=$coverage WHERE id=$collection";
             Add(command, "$status", status); Add(command, "$coverage", coverage); Add(command, "$observed", DateTime.UtcNow.ToString("O")); Add(command, "$collection", collection);
-            command.ExecuteNonQuery(); transaction.Commit();
+            command.ExecuteNonQuery(); transaction.Commit(); return true;
         }
     }
     public PhotoPage Page(long collection, PhotoMode mode, PhotoSort sort, bool descending, int page, CancellationToken token = default)
@@ -320,10 +346,19 @@ internal sealed class PhotoCatalog : IDisposable
         ORDER BY o.id LIMIT 64;
         """;
     public IReadOnlyList<PhotoRow> AnalysisBatch(long collection, string? after, bool candidatesOnly = false, CancellationToken token = default)
+        => AnalysisBatchCore(collection, after, candidatesOnly, token, null, null);
+
+    private IReadOnlyList<PhotoRow> AnalysisBatchCore(long collection, string? after, bool candidatesOnly, CancellationToken token, PhotoCollection? expected, string? job)
     {
+        token.ThrowIfCancellationRequested();
         lock (_gate)
         {
+            token.ThrowIfCancellationRequested();
             using var connection = Open(); using var command = connection.CreateCommand();
+            using var transaction = expected is null ? null : connection.BeginTransaction();
+            command.Transaction = transaction;
+            if (expected is not null && !CollectionJobCurrent(connection, transaction, expected, job!, null))
+                throw new InvalidOperationException("The collection changed while analysis was running. Analyze its current location.");
             command.CommandText = AnalysisQuery(candidatesOnly);
             Add(command, "$collection", collection); Add(command, "$after", after ?? "");
             // SqliteCommand.Cancel is documented as a no-op. Use SQLite's
@@ -351,12 +386,17 @@ internal sealed class PhotoCatalog : IDisposable
     public void StoreHash(string id, MediaRevision revision, string hash) => StoreAnalysisBatch([new(id, revision.Key, revision, null, hash, "Default stream verified", true)]);
 
     public int StoreAnalysisBatch(IReadOnlyList<PhotoAnalysisUpdate> updates, CancellationToken token = default)
+        => StoreAnalysisCore(updates, token, null, null);
+
+    private int StoreAnalysisCore(IReadOnlyList<PhotoAnalysisUpdate> updates, CancellationToken token, PhotoCollection? expected, string? job)
     {
         if (updates.Count == 0) return 0;
         lock (_gate)
         {
             token.ThrowIfCancellationRequested();
             using var connection = Open(); using var transaction = connection.BeginTransaction();
+            if (expected is not null && !CollectionJobCurrent(connection, transaction, expected, job!, null))
+                throw new InvalidOperationException("The collection changed before analysis could publish. Analyze its current location.");
             using var command = connection.CreateCommand(); command.Transaction = transaction;
             var verified = DateTime.UtcNow.ToString("O"); int affected = 0;
             foreach (var update in updates)

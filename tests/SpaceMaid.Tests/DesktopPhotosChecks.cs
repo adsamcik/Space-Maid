@@ -45,6 +45,7 @@ public sealed partial class DesktopTests
         setStage("discovering and analyzing owned photos through the loaded extension and real tool broker");
         PumpUntil(() => !string.IsNullOrEmpty(((TextBlock)photosView.FindName("ToolText")).Text), TimeSpan.FromSeconds(10));
         CheckPhotoDiscoveryUnavailableEmpty(window, photosView, fixture, artifactRoot, setStage);
+        CheckPhotoCollectionRecovery(window, photosView, fixture, artifactRoot, setStage);
         string photoFolder = Directory.CreateDirectory(Path.Join(fixture.Path, "photo-review")).FullName;
         string originalPhoto = Path.Join(photoFolder, "original.png"), copyPhoto = Path.Join(photoFolder, "copy.png");
         var sample = BitmapSource.Create(200, 100, 96, 96, PixelFormats.Bgra32, null,
@@ -289,6 +290,30 @@ public sealed partial class DesktopTests
             var value = display.GetType().GetProperty("Row")!.GetValue(display)!;
             return (string)value.GetType().GetProperty("Name")!.GetValue(value)!;
         }
+    }
+
+    private static void CheckPhotoCollectionRecovery(MainWindow window, FrameworkElement photosView, TestDirectory fixture,
+        string artifactRoot, Action<string> setStage)
+    {
+        setStage("repairing a moved photo collection and removing only its index");
+        var collectionProperty = photosView.GetType().GetProperty("Collection", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var selected = collectionProperty.GetValue(photosView)!;
+        string original = (string)selected.GetType().GetProperty("Root")!.GetValue(selected)!;
+        string moved = Path.Join(fixture.Path, "photo-collection-repaired"); Directory.Move(original, moved);
+        Assert.True(((Button)photosView.FindName("CollectionOptionsButton")).IsEnabled);
+        var repair = (Task)photosView.GetType().GetMethod("ChangeCollectionLocationAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(photosView, [selected, moved])!;
+        PumpUntil(() => repair.IsCompleted, TimeSpan.FromSeconds(10)); repair.GetAwaiter().GetResult();
+        Assert.Equal(moved, ((TextBlock)photosView.FindName("CollectionPathText")).Text);
+        Assert.Equal("Photos haven't been checked", ((TextBlock)photosView.FindName("EmptyTitle")).Text);
+        Assert.True(Directory.Exists(moved)); Assert.False(Directory.Exists(original));
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-collection-repaired.png"), 1220, 940);
+        selected = collectionProperty.GetValue(photosView)!;
+        var remove = (Task)photosView.GetType().GetMethod("RemoveCollectionIndexAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(photosView, [selected])!;
+        PumpUntil(() => remove.IsCompleted, TimeSpan.FromSeconds(10)); remove.GetAwaiter().GetResult();
+        Assert.Empty(((ComboBox)photosView.FindName("CollectionList")).Items);
+        Assert.True(Directory.Exists(moved)); Assert.Equal("Add folder", ((Button)photosView.FindName("EmptyActionButton")).Content);
     }
 
     private static void CheckPhotoDiscoveryUnavailableEmpty(MainWindow window, FrameworkElement photosView, TestDirectory fixture,

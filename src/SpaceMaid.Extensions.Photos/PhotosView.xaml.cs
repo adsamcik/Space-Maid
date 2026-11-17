@@ -17,7 +17,7 @@ public partial class PhotosView : UserControl
     private readonly object _taskGate = new();
     private bool _shuttingDown, _busy, _started;
     private bool _noticeVisible;
-    private enum EmptyAction { Add, Browse, Analyze, Refresh, Retry }
+    private enum EmptyAction { Add, Browse, Analyze, Refresh, Retry, ReloadCollections }
     private EmptyAction _emptyAction;
     private PhotoCollection? Collection => (CollectionList.SelectedItem as PhotoDisplayCollection)?.Value;
     internal PhotosView(IExtensionHost host, PhotoCatalog catalog, CancellationToken lifetime)
@@ -66,6 +66,7 @@ public partial class PhotosView : UserControl
             case EmptyAction.Analyze: Analyze_Click(sender, e); break;
             case EmptyAction.Refresh: await DiscoverCurrentAsync(); break;
             case EmptyAction.Retry: SetNotice("", false); await LoadPageAsync(); break;
+            case EmptyAction.ReloadCollections: await LoadCollectionsAsync(); break;
         }
     }
 
@@ -131,8 +132,9 @@ public partial class PhotosView : UserControl
         PageButtons.Visibility = _total > PhotoCatalog.PageSize ? Visibility.Visible : Visibility.Collapsed;
         EmptyActionButton.IsEnabled = !_busy;
         if (_discovering) { FreshnessText.Text = "Preliminary"; FreshnessText.Visibility = Visibility.Visible; }
-        AddButton.IsEnabled = !_busy; RefreshButton.IsEnabled = AnalyzeButton.IsEnabled = !_busy && Collection is not null;
-        CollectionList.IsEnabled = !_discovering; CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
+        AddButton.IsEnabled = !_busy; RefreshButton.IsEnabled = AnalyzeButton.IsEnabled = !_busy && !_collectionReloadRequired && Collection is not null;
+        CollectionOptionsButton.IsEnabled = ChangeLocationMenu.IsEnabled = RemoveCollectionMenu.IsEnabled = !_busy && !_collectionReloadRequired && hasCollection;
+        CollectionList.IsEnabled = !_discovering && !_changingCollection; CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
         PreviousButton.IsEnabled = _page > 0; NextButton.IsEnabled = (_page + 1L) * PhotoCatalog.PageSize < _total;
         BrowseTab.IsEnabled = DuplicatesTab.IsEnabled = FamiliesTab.IsEnabled = true;
         FileList.IsEnabled = true;

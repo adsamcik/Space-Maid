@@ -51,6 +51,12 @@
         <Grid x:Name="CollectionHeader" Visibility="Collapsed" Margin="0,0,0,4">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <ComboBox x:Name="CollectionList" Width="240" SelectionChanged="Collection_Changed" AutomationProperties.Name="Photo collection" ToolTip="Choose a photo collection">
+                <ComboBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem x:Name="ChangeLocationMenu" Header="Choose collection location…" Click="ChangeLocation_Click" />
+                        <MenuItem x:Name="RemoveCollectionMenu" Header="Remove collection index…" Click="RemoveCollection_Click" />
+                    </ContextMenu>
+                </ComboBox.ContextMenu>
                 <ComboBox.ItemTemplate><DataTemplate>
                     <DockPanel LastChildFill="True" ToolTip="{Binding Root}">
                         <TextBlock Text="{Binding Count, StringFormat={}{0:N0}}" DockPanel.Dock="Right" FontSize="12" Opacity="0.65" Margin="12,0,0,0" VerticalAlignment="Center" />
@@ -58,7 +64,10 @@
                     </DockPanel>
                 </DataTemplate></ComboBox.ItemTemplate>
             </ComboBox>
-            <Button x:Name="AddButton" Grid.Column="1" Content="Add folder" Click="Add_Click" Margin="8,0,0,0" Padding="10,5" AutomationProperties.Name="Add photo collection folder" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="AddButton" Content="Add folder" Click="Add_Click" Margin="8,0,0,0" Padding="10,5" AutomationProperties.Name="Add photo collection folder" />
+                <Button x:Name="CollectionOptionsButton" Content="&#xE712;" FontFamily="Segoe MDL2 Assets" Padding="8,5" Margin="4,0,0,0" Click="CollectionOptions_Click" ToolTip="Collection location and index" AutomationProperties.Name="Collection options" />
+            </StackPanel>
             <TextBlock x:Name="CollectionPathText" Grid.Column="2" FontSize="12" Opacity="0.6" VerticalAlignment="Center" Margin="14,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <StackPanel Grid.Column="3" Orientation="Horizontal">
                 <Button x:Name="RefreshButton" Content="Refresh" Click="Refresh_Click" Padding="10,5" ToolTip="Update filenames and metadata without reading photo contents." IsEnabled="False" />

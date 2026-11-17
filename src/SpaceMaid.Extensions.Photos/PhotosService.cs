@@ -6,6 +6,17 @@ namespace SpaceMaid.Extensions.Photos;
 
 internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
 {
+    public Task ChangeCollectionRootAsync(PhotoCollection collection, string path, CancellationToken token) => Task.Run(() =>
+    {
+        using var root = new PhotoCollectionRoot(path, host.Files, token);
+        token.ThrowIfCancellationRequested(); catalog.ChangeCollectionRoot(collection, root.Path);
+    }, token);
+
+    public Task RemoveCollectionAsync(PhotoCollection collection, CancellationToken token) => Task.Run(() =>
+    {
+        token.ThrowIfCancellationRequested(); catalog.RemoveCollection(collection);
+    }, token);
+
     // Own the worker here so callers never perform synchronous native/catalog
     // work on the dispatcher. Do not cancel scheduling: accepted refreshes must
     // revoke old content authorization even with an already-cancelled token.
@@ -19,8 +30,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
         var generation = Guid.NewGuid().ToString("N");
         // An accepted refresh always revokes prior content authorization, even
         // when cancellation arrives before the worker gets CPU time.
-        catalog.BeginDiscovery(collection.Id, generation);
-        var job = catalog.StartJob(collection.Id, "Discovery");
+        var job = catalog.StartDiscovery(collection, generation);
         var initializationTicks = Stopwatch.GetTimestamp() - initializing;
         long count = 0, unresolved = 0; var complete = false; var resolvedAll = true; var observedCoverage = false;
         var warnings = new HashSet<string>(StringComparer.Ordinal);
@@ -34,7 +44,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             if (observations.Count == 0) return;
             token.ThrowIfCancellationRequested();
             var started = Stopwatch.GetTimestamp();
-            try { catalog.Observe(collection.Id, generation, observations); }
+            try { catalog.ObserveCollection(collection, job, generation, observations); }
             finally { catalogTicks += Stopwatch.GetTimestamp() - started; }
             committed += observations.Count; commits++; observations.Clear(); lastCommitMs = watch.ElapsedMilliseconds;
         }
@@ -87,7 +97,8 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                 if (watch.ElapsedMilliseconds - lastReportMs >= 1000)
                 {
                     var started = Stopwatch.GetTimestamp();
-                    catalog.JobState(job, "Running", count); catalogTicks += Stopwatch.GetTimestamp() - started;
+                    if (!catalog.TryCollectionJobState(collection, job, "Running", count)) throw new InvalidOperationException("This collection's discovery was superseded. Refresh its current location.");
+                    catalogTicks += Stopwatch.GetTimestamp() - started;
                     progress?.Report(new("Discovering photo metadata", count, Message: $"{unresolved:N0} unavailable identities"));
                     lastReportMs = watch.ElapsedMilliseconds;
                 }
@@ -97,9 +108,11 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             Flush(); token.ThrowIfCancellationRequested();
             complete &= observedCoverage && resolvedAll;
             var finishing = Stopwatch.GetTimestamp();
-            catalog.EndDiscovery(collection.Id, generation, complete, complete ? $"Discovered · {unresolved:N0} metadata-only files" : "Incomplete coverage · Older locations retained", warnings.Count == 0 ? null : string.Join("\n", warnings));
+            if (!catalog.TryEndCollectionDiscovery(collection, job, generation, complete, complete ? $"Discovered · {unresolved:N0} metadata-only files" : "Incomplete coverage · Older locations retained", warnings.Count == 0 ? null : string.Join("\n", warnings)))
+                throw new InvalidOperationException("This collection's location or discovery changed before results could publish.");
             state = complete ? "Completed" : "NeedsAttention";
-            catalog.JobState(job, state, count, complete ? null : "Discovery did not cover every location.");
+            if (!catalog.TryCollectionJobState(collection, job, state, count, complete ? null : "Discovery did not cover every location."))
+                throw new InvalidOperationException("This collection changed before discovery completion could publish.");
             catalogTicks += Stopwatch.GetTimestamp() - finishing;
             progress?.Report(new("Photo discovery complete", count, Message: $"{unresolved:N0} unavailable identities", NeedsAttention: !complete));
         }
@@ -110,8 +123,8 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             var detail = error is OperationCanceledException
                 ? "Discovery was interrupted. Earlier locations remain indexed; Refresh to validate current coverage."
                 : "Discovery could not read every location: " + error.Message;
-            catalog.EndDiscovery(collection.Id, generation, false, error is OperationCanceledException ? "Interrupted discovery · Refresh to validate coverage" : "Discovery failed · Older locations retained", detail);
-            catalog.JobState(job, state, count, detail);
+            if (catalog.TryEndCollectionDiscovery(collection, job, generation, false, error is OperationCanceledException ? "Interrupted discovery · Refresh to validate coverage" : "Discovery failed · Older locations retained", detail))
+                catalog.TryCollectionJobState(collection, job, state, count, detail);
             throw;
         }
         finally
@@ -140,12 +153,14 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
 
     internal async Task AnalyzeCoreAsync(PhotoCollection collection, IExtensionJobContext context)
     {
-        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, hashed = 0, reusedHashes = 0, reusedMetadata = 0, failures = 0, metadataUnavailable = 0, bytes = 0;
+        var job = catalog.StartCollectionJob(collection, "Analysis"); long count = 0, hashed = 0, reusedHashes = 0, reusedMetadata = 0, failures = 0, metadataUnavailable = 0, bytes = 0;
         var watch = Stopwatch.StartNew(); long lastCheckpointMs = 0;
         void CheckpointProgress()
         {
             if (watch.ElapsedMilliseconds - lastCheckpointMs < 1000) return;
-            catalog.JobState(job, "Running", count + hashed + reusedHashes); lastCheckpointMs = watch.ElapsedMilliseconds;
+            if (!catalog.TryCollectionJobState(collection, job, "Running", count + hashed + reusedHashes))
+                throw new InvalidOperationException("This collection's analysis was superseded. Analyze its current location.");
+            lastCheckpointMs = watch.ElapsedMilliseconds;
         }
         try
         {
@@ -157,7 +172,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             while (true)
             {
                 await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
-                var batch = catalog.AnalysisBatch(collection.Id, after, token: context.Cancellation);
+                var batch = catalog.AnalysisCollectionBatch(collection, job, after, false, context.Cancellation);
                 if (batch.Count == 0) break;
                 foreach (var chunk in batch.Chunk(16))
                 {
@@ -215,7 +230,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                                 { updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, null, null, null, "Unresolved · File changed during metadata analysis")); failures++; }
                             }
                         }
-                        int stored = catalog.StoreAnalysisBatch(updates, context.Cancellation);
+                        int stored = catalog.StoreCollectionAnalysis(collection, job, updates, context.Cancellation);
                         failures += updates.Count - stored;
                         if (stored == updates.Count) reusedMetadata += chunkMetadataReused;
                         count += chunk.Length; CheckpointProgress();
@@ -230,7 +245,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             while (true)
             {
                 await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
-                var batch = catalog.AnalysisBatch(collection.Id, after, true, context.Cancellation);
+                var batch = catalog.AnalysisCollectionBatch(collection, job, after, true, context.Cancellation);
                 if (batch.Count == 0) break;
                 foreach (var chunk in batch.Chunk(16))
                 {
@@ -267,7 +282,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                         }
                         // Keep successful source leases stable until the bounded
                         // transaction publishes every result in this chunk.
-                        failures += updates.Count - catalog.StoreAnalysisBatch(updates, context.Cancellation);
+                        failures += updates.Count - catalog.StoreCollectionAnalysis(collection, job, updates, context.Cancellation);
                         hashed += chunkHashed; reusedHashes += chunkReused; CheckpointProgress();
                         context.Report(new("Comparing full default streams", hashed + reusedHashes, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
                     }
@@ -277,13 +292,14 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             }
             string? limitation = metadataUnavailable > 0 ? $"Rich metadata unavailable for {metadataUnavailable:N0} objects; content comparison does not depend on ExifTool." : null;
             string? message = failures > 0 ? $"{failures:N0} unavailable or unresolved content checks." + (limitation is null ? "" : " " + limitation) : limitation;
-            catalog.JobState(job, failures > 0 ? "NeedsAttention" : metadataUnavailable > 0 ? "CompletedWithMetadataLimitations" : "Completed", count + hashed + reusedHashes, message);
+            if (!catalog.TryCollectionJobState(collection, job, failures > 0 ? "NeedsAttention" : metadataUnavailable > 0 ? "CompletedWithMetadataLimitations" : "Completed", count + hashed + reusedHashes, message))
+                throw new InvalidOperationException("This collection changed before analysis completion could publish.");
             host.Log("photos-analysis", new { collection.Id, Inspected = count, Hashed = hashed, ReusedHashes = reusedHashes, ReusedMetadata = reusedMetadata, BytesRead = bytes, Failures = failures, MetadataUnavailable = metadataUnavailable, ElapsedMs = watch.ElapsedMilliseconds });
             context.Report(new("Analysis complete", count, BytesRead: bytes, Message: $"{hashed:N0} candidates hashed · {reusedHashes:N0} unchanged comparisons reused · {failures:N0} unavailable or unresolved content · {metadataUnavailable:N0} without rich metadata", NeedsAttention: failures > 0));
         }
         catch (Exception error)
         {
-            catalog.JobState(job, error is OperationCanceledException ? "Interrupted" : "Failed", count + hashed + reusedHashes, "Analyze revalidates inputs before continuing.");
+            catalog.TryCollectionJobState(collection, job, error is OperationCanceledException ? "Interrupted" : "Failed", count + hashed + reusedHashes, "Analyze revalidates inputs before continuing.");
             throw;
         }
     }

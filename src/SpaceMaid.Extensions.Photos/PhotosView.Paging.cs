@@ -17,6 +17,7 @@ public partial class PhotosView
     private int _page;
     private long _total, _pageGeneration, _collectionGeneration, _viewportInteraction;
     private long? _displayedCollection;
+    private string? _pageLoadFailure;
     private readonly ObservableCollection<PhotoDisplayCollection> _collections = [];
     private readonly ObservableCollection<PhotoDisplayRow> _rows = [];
 
@@ -39,6 +40,7 @@ public partial class PhotosView
         var generation = ++_collectionGeneration;
         var collections = await Task.Run(_catalog.Collections, _lifetime);
         if (_shuttingDown || generation != _collectionGeneration) return;
+        _collectionReloadRequired = false;
         var wanted = select ?? Collection?.Id;
         _suppressCollection = true;
         try
@@ -66,6 +68,7 @@ public partial class PhotosView
         if (_shuttingDown || !IsInitialized) return;
         if (Collection is not { } collection)
         {
+            _pageLoadFailure = null;
             _pageGeneration++; _pageQuery?.Cancel(); _pageRequests?.Cancel(); _rows.Clear(); _total = 0; _displayedCollection = null;
             UpdateEmptyState(null, null); UpdateControls(); return;
         }
@@ -88,6 +91,7 @@ public partial class PhotosView
             token.ThrowIfCancellationRequested();
             var lastJob = await Task.Run(() => _catalog.LastJobStatus(collection.Id), token);
             if (generation != _pageGeneration || token.IsCancellationRequested || Collection?.Id != collection.Id) return;
+            _pageLoadFailure = null;
             // A newly requested page can win the race to the catalog before
             // BeginDiscovery runs. Refresh has already revoked the UI's trust.
             if (_discovering) result = mode == PhotoMode.Duplicates ? new([], 0, 0) :
@@ -113,7 +117,7 @@ public partial class PhotosView
             _host.Log("photos-page", new { collection.Id, Mode = _mode.ToString(), Page = _page, Rows = result.Rows.Count, Total = result.Total, ElapsedMs = watch.ElapsedMilliseconds });
         }
         catch (OperationCanceledException) { }
-        catch (Exception error) { ShowFailure(error); }
+        catch (Exception error) { if (generation == _pageGeneration) _pageLoadFailure = error.Message; ShowFailure(error); }
     }
 
     private void ApplyPage(PhotoPage page, PhotoCollection collection, PhotoMode mode, long generation)

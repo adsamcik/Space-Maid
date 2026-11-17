@@ -30,7 +30,7 @@ public partial class PhotosView
         _previewDispatch = Dispatcher.InvokeAsync(() =>
         {
             _previewDispatch = null;
-            if (_shuttingDown || _discovering) return;
+            if (_shuttingDown || _discovering || _changingCollection) return;
             var selected = FileList.SelectedItem as PhotoDisplayRow;
             var view = FileList.Visibility == Visibility.Visible ? (Control)FileList : PhotoGallery;
             if (!view.IsVisible) return;
@@ -64,7 +64,7 @@ public partial class PhotosView
     private Task PreviewAsync(PhotoDisplayRow display) => Track(PreviewCoreAsync(display));
     private async Task PreviewCoreAsync(PhotoDisplayRow display)
     {
-        if (display.Requested || _pageRequests is null || _discovering) return;
+        if (display.Requested || _pageRequests is null || _discovering || _changingCollection) return;
         display.Requested = true;
         var request = CancellationTokenSource.CreateLinkedTokenSource(_pageRequests.Token);
         _previewRequests.Add(display, request); var token = request.Token;
