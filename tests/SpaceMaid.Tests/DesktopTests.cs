@@ -438,6 +438,9 @@ public sealed partial class DesktopTests
                     tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
                 Assert.True(tree.ContextMenu.Items.Cast<MenuItem>().All(i => i.IsEnabled));
                 var capturedRecycle = (MenuItem)tree.ContextMenu.Items[1];
+                var capturedDelete = (MenuItem)tree.ContextMenu.Items[2];
+                Assert.Equal("Delete", capturedRecycle.InputGestureText);
+                Assert.Equal("Shift+Delete", capturedDelete.InputGestureText);
                 tree.ContextMenu.IsOpen = false;
                 var rootMap = (TreemapPanel)window.FindName("SpaceMap");
                 var projectTile = rootMap.Buttons.Single(b => ((SpaceContribution)b.DataContext).Path == project);
@@ -492,12 +495,12 @@ public sealed partial class DesktopTests
                 string? menuConfirmationPath = null;
                 var menuTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
-                    var dialog = app.Windows.OfType<RecycleEntryWindow>().FirstOrDefault();
+                    var dialog = app.Windows.OfType<PermanentDeleteWindow>().FirstOrDefault();
                     if (dialog is null) return;
                     menuConfirmationPath = ((TextBox)dialog.FindName("TargetPath")).Text;
                     dialog.Close();
                 }, Dispatcher.CurrentDispatcher);
-                capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                capturedDelete.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
                 menuTimer.Stop();
                 Assert.Equal(project, menuConfirmationPath); // Current selection is bin, menu was opened on its parent.
@@ -545,37 +548,35 @@ public sealed partial class DesktopTests
                 RightClick(window, tree, keyboard: true);
                 PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.True(((MenuItem)tree.ContextMenu.Items[1]).IsEnabled);
+                var deletePermanently = (MenuItem)tree.ContextMenu.Items[2];
+                Assert.True(deletePermanently.IsEnabled);
                 RenderMenu(tree.ContextMenu, Path.Join(FindRepository(), "artifacts", "ui", "stale-folder-menu.png"));
                 tree.ContextMenu.IsOpen = false;
                 Exception? confirmationFailure = null;
                 bool confirmed = false;
                 var confirmationTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
-                    var dialog = app.Windows.OfType<RecycleEntryWindow>().FirstOrDefault();
+                    var dialog = app.Windows.OfType<PermanentDeleteWindow>().FirstOrDefault();
                     if (dialog is null) return;
                     try
                     {
                         Assert.Equal(bin, ((TextBox)dialog.FindName("TargetPath")).Text);
-                        Assert.True(((Button)dialog.FindName("KeepButton")).IsDefault);
-                        Assert.True(((Button)dialog.FindName("KeepButton")).IsCancel);
-                        Assert.Equal("Cancel", ((Button)dialog.FindName("KeepButton")).Content);
+                        Assert.True(((Button)dialog.FindName("CancelButton")).IsDefault);
+                        Assert.True(((Button)dialog.FindName("CancelButton")).IsCancel);
                         Assert.Equal("bin", ((TextBlock)dialog.FindName("TargetName")).Text);
                         Assert.False(((Expander)dialog.FindName("DeletionDetails")).IsExpanded);
                         Assert.Equal(Visibility.Collapsed, ((TextBlock)dialog.FindName("PartialScanNote")).Visibility);
-                        Assert.Contains("8 KiB · Estimated", ((TextBlock)dialog.FindName("TargetSize")).Text);
-                        Render(dialog, Path.Join(FindRepository(), "artifacts", "ui", "recycle-estimate.png"), 520, 300);
+                        Assert.Equal("8 KiB on disk", ((TextBlock)dialog.FindName("TargetSize")).Text);
+                        Render(dialog, Path.Join(FindRepository(), "artifacts", "ui", "permanent-delete-estimate.png"), 520, 300);
                         confirmed = true;
                     }
                     catch (Exception ex) { confirmationFailure = ex; }
                     finally { dialog.Close(); }
                 }, Dispatcher.CurrentDispatcher);
-                var deleteKey = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(tree), Environment.TickCount, Key.Delete)
-                    { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-                tree.RaiseEvent(deleteKey);
+                deletePermanently.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(10));
                 confirmationTimer.Stop();
                 if (confirmationFailure is not null) throw confirmationFailure;
-                Assert.True(deleteKey.Handled, $"Explore: {((RadioButton)window.FindName("ExploreTab")).IsChecked}; modifiers: {Keyboard.Modifiers}; repeat: {deleteKey.IsRepeat}; source: {deleteKey.OriginalSource?.GetType().Name}");
                 Assert.True(confirmed);
                 Assert.True(Directory.Exists(bin));
                 Assert.Equal(16384, new FileInfo(Path.Join(bin, "sample.dll")).Length);
@@ -620,18 +621,22 @@ public sealed partial class DesktopTests
                     }, DispatcherPriority.Loaded);
                 };
                 originalRows.CollectionChanged += observeRecycle;
-                var approveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
+                bool unexpectedWarning = false;
+                var warningTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
-                    var dialog = app.Windows.OfType<RecycleEntryWindow>().FirstOrDefault();
-                    if (dialog is not null) ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    var dialog = app.Windows.OfType<PermanentDeleteWindow>().FirstOrDefault();
+                    if (dialog is null) return;
+                    unexpectedWarning = true;
+                    dialog.Close();
                 }, Dispatcher.CurrentDispatcher);
                 var recycleTask = window.DeleteSelectedEntryAsync();
                 PumpUntil(() => recycleTask.IsCompleted, TimeSpan.FromSeconds(10));
-                approveTimer.Stop();
+                warningTimer.Stop();
                 originalRows.CollectionChanged -= observeRecycle;
                 var recycled = Assert.IsType<RecycleResult>(recycleTask.GetAwaiter().GetResult());
                 try
                 {
+                    Assert.False(unexpectedWarning);
                     if (recycledRowFailure is not null) throw recycledRowFailure;
                     Assert.NotNull(backgroundBrowse);
                     Assert.True(backgroundBrowse.IsCompletedSuccessfully);
@@ -782,7 +787,7 @@ public sealed partial class DesktopTests
                 CheckToolCaches(app, artifactRoot);
                 BeginWorkflow("managed worktree lifecycle");
                 CheckWorktreeLifecycle(app, artifactRoot);
-                var recyclePreview = new RecycleEntryWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
+                var permanentDeletePreview = new PermanentDeleteWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
 #pragma warning disable WPF0001 // Exercise the same Fluent theme through its experimental C# API in this smoke test only.
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {
@@ -809,7 +814,7 @@ public sealed partial class DesktopTests
                     Render(window, Path.Join(artifactRoot, "artifacts", "ui", $"main-{theme}.png"), 1220, 910);
                     Render(review, Path.Join(artifactRoot, "artifacts", "ui", $"review-{theme}.png"), 860, 700);
                     Render(details, Path.Join(artifactRoot, "artifacts", "ui", $"details-{theme}.png"), 700, 680);
-                    Render(recyclePreview, Path.Join(artifactRoot, "artifacts", "ui", $"recycle-{theme}.png"), 520, 300);
+                    Render(permanentDeletePreview, Path.Join(artifactRoot, "artifacts", "ui", $"permanent-delete-{theme}.png"), 520, 300);
                     Render(onlinePreview, Path.Join(artifactRoot, "artifacts", "ui", $"online-only-{theme}.png"), 590, 550);
                     VerifyUpdatesUi(window, theme);
                 }
@@ -943,10 +948,10 @@ public sealed partial class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BackendStatusText")).Visibility);
                 Assert.Empty(tree.ContextMenu.Items.Cast<object>());
-                int dialogsBefore = app.Windows.OfType<RecycleEntryWindow>().Count();
+                int dialogsBefore = app.Windows.OfType<PermanentDeleteWindow>().Count();
                 capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 Assert.True(scanButton.IsEnabled);
-                Assert.Equal(dialogsBefore, app.Windows.OfType<RecycleEntryWindow>().Count()); // An older scan's menu cannot delete a current target.
+                Assert.Equal(dialogsBefore, app.Windows.OfType<PermanentDeleteWindow>().Count()); // An older scan's menu cannot delete a current target.
 
                 BeginWorkflow("Photos");
                 CheckPhotos(window, app, fixture, artifactRoot, SetStage);
@@ -1100,7 +1105,7 @@ public sealed partial class DesktopTests
                 CheckAgentAccess(app);
                 SetStage("closing windows");
                 string extensionLog = Assert.Single(Directory.GetFiles(Path.Join(window.LogDirectory, "Extensions"), "*.jsonl"));
-                startup.Close(); review.Close(); details.Close(); recyclePreview.Close(); window.Close();
+                startup.Close(); review.Close(); details.Close(); permanentDeletePreview.Close(); window.Close();
                 PumpUntil(() => !app.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(10));
                 Assert.True(appHelper.Exit.IsCompletedSuccessfully); Assert.False(appHelper.IsAvailable);
                 Directory.CreateDirectory(Path.Join(artifactRoot, "artifacts", "extensions"));

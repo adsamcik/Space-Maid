@@ -342,11 +342,20 @@ public partial class MainWindow
     }
     private async void Tree_KeyDown(object sender, KeyEventArgs e)
     {
-        // Headers now live inside the list. Their keys must not navigate a selected folder.
-        if (!ReferenceEquals(e.OriginalSource, SpaceTree)
-            && ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is not ListBoxItem) return;
+        // Headers live inside the list but their keys do not act on a row.
+        if (e.OriginalSource is not DependencyObject source) return;
+        var container = ItemsControl.ContainerFromElement(SpaceTree, source) as ListBoxItem;
+        if (!ReferenceEquals(source, SpaceTree) && container is null) return;
         if (SpaceTree.SelectedItem is not ExplorerRow row || _explorer is null) return;
-        if (e.Key == Key.Right)
+        if (e.Key == Key.Delete)
+        {
+            var modifiers = Keyboard.Modifiers;
+            if (modifiers is not (ModifierKeys.None or ModifierKeys.Shift) || e.IsRepeat
+                || container is { IsSelected: false } || ExploreTab.IsChecked != true) return;
+            e.Handled = true;
+            await DeleteSelectedEntryAsync(permanent: modifiers == ModifierKeys.Shift);
+        }
+        else if (e.Key == Key.Right)
         {
             e.Handled = true;
             if (row.CanExpand && !row.Expanded) await BrowseAsync(token => ToggleFolderAsync(row, token));

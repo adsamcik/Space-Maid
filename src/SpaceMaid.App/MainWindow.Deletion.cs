@@ -2,10 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Media;
 using System.Windows.Threading;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
@@ -16,19 +13,6 @@ public partial class MainWindow
 {
     private bool _removingEntry, _scanStale;
     private Task? _entryRemovalTask;
-
-    private async void Explore_KeyDown(object sender, KeyEventArgs e)
-    {
-        var modifiers = Keyboard.Modifiers;
-        if (e.Key != Key.Delete || modifiers is not (ModifierKeys.None or ModifierKeys.Shift) || e.IsRepeat
-            || ExploreTab.IsChecked != true) return;
-        // Delete in a path field retains normal text-selection behavior.
-        for (DependencyObject? source = e.OriginalSource as DependencyObject; source is not null;
-             source = VisualTreeHelper.GetParent(source))
-            if (source is TextBoxBase) return;
-        e.Handled = true;
-        await DeleteSelectedEntryAsync(permanent: modifiers == ModifierKeys.Shift);
-    }
 
     internal Task<RecycleResult?> DeleteSelectedEntryAsync(bool permanent = false)
     {
@@ -44,17 +28,16 @@ public partial class MainWindow
     private async Task<RecycleResult?> DeleteEntryAsync(ScanSnapshot scan, int link, bool permanent = false)
     {
         if (!CanUseEntryMenu(scan, link)) return null;
-        bool isDirectory = scan.Entry(link).IsDirectory;
-        string kind = isDirectory ? "folder" : "file";
-        string kindLabel = isDirectory ? "Folder" : "File";
-        string mayHaveMoved = isDirectory ? "Some contents may already have moved." : "The file may already have moved.";
+        var entry = scan.Entry(link);
+        string path = scan.EntryPath(link) ?? scan.RootPath;
+        string kind = entry.IsDirectory ? "folder" : "file";
+        string mayHaveMoved = entry.IsDirectory ? "Some contents may already have moved." : "The file may already have moved.";
         using var work = new CancellationTokenSource();
-        using var log = StartActionLog(permanent ? "delete-permanently" : "recycle", scan.EntryPath(link) ?? scan.RootPath);
+        using var log = StartActionLog(permanent ? "delete-permanently" : "recycle", path);
         _work = work;
-        bool started = false;
-        bool deleted = false;
-        bool recycleMayHaveMoved = false;
-        RecycleResult? outcome = null;
+        bool mayHaveChanged = false;
+        EntryRemoval? completed = null;
+        RecycleResult? recycle = null;
         var requests = new List<ScanRecheckRequest>();
         try
         {
@@ -62,126 +45,107 @@ public partial class MainWindow
             StatusText.Text = $"Checking selected {kind}…";
             var target = await Operations.PrepareExploreDeletionAsync(scan, link, work.Token);
             if (_closing || work.IsCancellationRequested || !ReferenceEquals(_snapshot, scan)) return null;
-            if (!Confirm(target)) return null;
-            string name = scan.Entry(link).Name;
-            _removingEntry = true;
-            ExplorePanel.IsEnabled = true;
-            string parent = Path.GetDirectoryName(target.Path)!;
-            requests.Add(new(link == -1 ? scan.RootPath : parent, link == -1));
-            string volume = Path.GetPathRoot(target.Path)!;
-            string recycleRoot = Path.Combine(volume, "$Recycle.Bin");
-            bool recycleBinInScan = scan.FindEntry(recycleRoot) is not null || scan.FindEntry(volume) is not null;
-            var binScope = new ScanRecheckRequest(recycleRoot);
+
+            requests.Add(link == -1 ? new(scan.RootPath) : new(Path.GetDirectoryName(target.Path)!, false));
+            string? recycleWarning = null;
             if (!permanent)
             {
-                StatusText.Text = $"Moving {name} to the Recycle Bin…";
-                if (recycleBinInScan) requests.Add(binScope);
-                started = true;
+                string volume = Path.GetPathRoot(target.Path)!;
+                string recycleRoot = Path.Combine(volume, "$Recycle.Bin");
+                bool binInScan = scan.FindEntry(recycleRoot) is not null || scan.FindEntry(volume) is not null;
+                var binScope = new ScanRecheckRequest(recycleRoot);
+                if (binInScan) requests.Add(binScope);
+                BeginRemoval($"Moving {entry.Name} to the Recycle Bin…");
+                mayHaveChanged = true;
                 try
                 {
-                    var recycleTask = Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
-                    _entryRemovalTask = recycleTask;
-                    outcome = await recycleTask;
-                    log.Record("recycle-result", outcome);
+                    var task = Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
+                    _entryRemovalTask = task;
+                    recycle = await task;
+                    if (!recycle.Cancelled) completed = EntryRemoval.Recycled;
+                    log.Record("recycle-result", recycle);
+                    if (binInScan && recycle.RecycledPath is { } destination)
+                    {
+                        requests.Remove(binScope);
+                        requests.Add(new(recycleRoot, false));
+                        requests.Add(new(Path.GetDirectoryName(destination)!, false));
+                        if (entry.IsDirectory) requests.Add(new(destination));
+                    }
                 }
                 catch (RecycleUnavailableException error)
                 {
-                    started = false;
                     _entryRemovalTask = null;
-                    recycleMayHaveMoved = error.MayHaveMoved;
-                    if (!recycleMayHaveMoved) requests.Remove(binScope);
+                    mayHaveChanged = error.MayHaveMoved;
+                    if (!mayHaveChanged) requests.Remove(binScope);
                     log.Record("recycle-unavailable", new { target.Path, error.MayHaveMoved });
+                    recycleWarning = mayHaveChanged ? $"{error.Message} {mayHaveMoved}" : error.Message;
                     permanent = true;
-                    string warning = recycleMayHaveMoved ? $"{error.Message} {mayHaveMoved}" : error.Message;
-                    if (_closing || work.IsCancellationRequested || !Confirm(target, warning))
-                    {
-                        if (!_closing && recycleMayHaveMoved)
-                            MarkPartial($"Recycling stopped. {mayHaveMoved} Recheck the folder.");
-                        return null;
-                    }
                 }
             }
+
             if (permanent)
             {
-                StatusText.Text = $"Permanently deleting {name}…";
-                _entryRemovalTask = Operations.DeletePermanentlyAsync(target, work.Token, () => started = true);
+                if (!ConfirmPermanentDelete(target, recycleWarning))
+                {
+                    log.Record("permanent-delete-confirmation-cancelled", new { target.Path });
+                    if (!_closing)
+                    {
+                        if (mayHaveChanged) MarkIncomplete($"Recycling stopped. {mayHaveMoved}");
+                        else StatusText.Text = "Deletion cancelled.";
+                    }
+                    return null;
+                }
+
+                BeginRemoval($"Permanently deleting {entry.Name}…");
+                _entryRemovalTask = Operations.DeletePermanentlyAsync(target, work.Token, () => mayHaveChanged = true);
                 await _entryRemovalTask;
-                deleted = true;
+                completed = EntryRemoval.Deleted;
                 log.Record("permanent-delete-completed", new { target.Path });
             }
-            if (!_closing)
+
+            if (_closing) return recycle;
+            if (completed is { } removal)
+                await RefreshCompletedRemovalAsync(target, removal);
+            else
             {
-                if (recycleBinInScan && outcome?.RecycledPath is { } destination)
-                {
-                    requests.Remove(binScope);
-                    requests.Add(new(recycleRoot, false));
-                    requests.Add(new(Path.GetDirectoryName(destination)!, false));
-                    if (isDirectory) requests.Add(new(destination));
-                }
-                string completed = deleted ? $"Permanently deleted {name}." : $"Moved {name} to the Recycle Bin.";
-                string note = deleted ? completed : completed + " Empty the bin to free space.";
-                if (outcome is not { Cancelled: true })
-                {
-                    StatusText.Text = completed + " Updating scan results…";
-                    // A completed removal survives cancellation of the refresh.
-                    await WaitForExplorerBrowseAsync(CancellationToken.None);
-                    if (_closing || !ReferenceEquals(_snapshot, scan)) return outcome;
-                    _staleScopes.RemoveWhere(scope => scope.Path.Equals(target.Path, StringComparison.Ordinal)
-                        || scope.Path.StartsWith(target.Path + "\\", StringComparison.Ordinal));
-                    MarkExplorerEntryRemoved(link, deleted ? EntryRemoval.Deleted : EntryRemoval.Recycled);
-                    await Dispatcher.Yield(DispatcherPriority.Background);
-                    if (_closing || !ReferenceEquals(_snapshot, scan)) return outcome;
-                    if (link == -1 || !scan.HasAllocationData)
-                    {
-                        MarkScanStale(note + (link == -1 ? " Scan another folder to update results."
-                            : " Rescan to update results."), requests);
-                        return outcome;
-                    }
-                }
-                else
-                {
-                    note = $"Recycling cancelled. {mayHaveMoved}";
-                    StatusText.Text = "Recycling cancelled. Updating scan results…";
-                    if (isDirectory && link != -1 && await Task.Run(() => Operations.Files.DirectoryExists(target.Path), work.Token))
-                        requests.Add(new(target.Path));
-                }
-                await RefreshAffectedAsync(scan, requests, note, work.Token, log);
+                string note = $"Recycling cancelled. {mayHaveMoved}";
+                StatusText.Text = "Recycling cancelled. Updating scan results…";
+                if (entry.IsDirectory && link != -1 && await Task.Run(() => Operations.Files.DirectoryExists(target.Path), work.Token))
+                    requests.Add(new(target.Path));
+                if (scan.HasAllocationData) await RefreshAffectedAsync(scan, requests, note, work.Token, log);
+                else MarkIncomplete(note);
             }
-            return outcome;
+            return recycle;
         }
         catch (OperationCanceledException)
         {
             if (!_closing)
             {
-                if (deleted || outcome is { Cancelled: false })
-                    MarkScanStale((deleted ? $"{kindLabel} permanently deleted." : $"{kindLabel} moved to the Recycle Bin.")
-                        + " Refresh cancelled. Recheck to update results.", requests);
-                else if (started || recycleMayHaveMoved)
-                    MarkPartial(permanent && started
-                        ? isDirectory ? "Deletion stopped. Some items may already be permanently deleted. Recheck or rescan to update results."
-                            : "Deletion stopped. Recheck the folder to see whether the file is still present."
-                        : $"Recycling stopped. {mayHaveMoved} Recheck or rescan to update results.");
-                else StatusText.Text = $"Cancelled. {kindLabel} unchanged.";
+                if (completed is { } removal)
+                    MarkScanStale(CompletionText(removal) + " Refresh cancelled. Recheck to update results.", requests);
+                else if (mayHaveChanged)
+                {
+                    string message = permanent ? "Deletion stopped." : $"Recycling stopped. {mayHaveMoved}";
+                    if (permanent && entry.IsDirectory) message += " Some contents may have been removed.";
+                    MarkIncomplete(message);
+                }
+                else StatusText.Text = "Deletion cancelled.";
             }
-            return outcome;
+            return recycle;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or UnauthorizedAccessException
             or Win32Exception or COMException or InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {
+            log.Record(completed.HasValue ? "entry-refresh-failed" : "entry-action-failed", new { Error = ex.ToString(), permanent, mayHaveChanged });
             if (!_closing)
             {
-                bool completed = deleted || outcome is { Cancelled: false };
-                string message = completed ? (deleted ? $"{kindLabel} permanently deleted." : $"{kindLabel} moved to the Recycle Bin.")
-                    + " Refresh failed. Recheck to update results." : permanent
-                    ? $"Could not finish deleting the {kind}. {ex.Message}" : $"Could not recycle the {kind}: {ex.Message}";
-                if (permanent && started && !completed && isDirectory)
-                    message = "Deletion was incomplete. Some items may already be permanently deleted. " + ex.Message;
-                log.Record(completed ? "entry-refresh-failed" : "entry-action-failed", new { Error = ex.ToString(), permanent, started });
-                if (completed) MarkScanStale(message, requests);
-                else if (started || recycleMayHaveMoved) MarkPartial(message + " Recheck or rescan to update results.");
+                string message = $"Could not {(permanent ? "finish deleting" : "recycle")} the {kind}. {ex.Message}";
+                if (completed is { } removal)
+                    MarkScanStale(CompletionText(removal) + " Refresh failed. Recheck to update results.", requests);
+                else if (mayHaveChanged) MarkIncomplete(message);
                 else StatusText.Text = message;
             }
-            return outcome;
+            return recycle;
         }
         finally
         {
@@ -190,19 +154,47 @@ public partial class MainWindow
             if (!_closing) { ShowActionLogError(log); SetBusy(false); }
         }
 
-        bool Confirm(DeletionTarget target, string? recycleWarning = null)
+        bool ConfirmPermanentDelete(DeletionTarget target, string? recycleWarning)
         {
-            var confirmation = new RecycleEntryWindow(target, permanent, recycleWarning) { Owner = this };
-            if (confirmation.ShowDialog() == true && !_closing && !work.IsCancellationRequested) return true;
-            log.Record("entry-confirmation-cancelled", new { target.Path, permanent });
-            if (!_closing) StatusText.Text = $"{kindLabel} unchanged.";
-            return false;
+            if (_closing || work.IsCancellationRequested) return false;
+            var confirmation = new PermanentDeleteWindow(target, recycleWarning) { Owner = this };
+            return confirmation.ShowDialog() == true && !_closing && !work.IsCancellationRequested;
         }
 
-        void MarkPartial(string message)
+        void BeginRemoval(string message)
         {
-            if (isDirectory && permanent && link != -1) requests.Add(new(scan.EntryPath(link)!));
-            MarkScanStale(message, requests);
+            _removingEntry = true;
+            ExplorePanel.IsEnabled = !_browsing;
+            StatusText.Text = message;
+        }
+
+        string CompletionText(EntryRemoval removal) => removal == EntryRemoval.Recycled
+            ? $"Moved {entry.Name} to the Recycle Bin."
+            : $"Permanently deleted {entry.Name}.";
+
+        async Task RefreshCompletedRemovalAsync(DeletionTarget target, EntryRemoval removal)
+        {
+            string note = CompletionText(removal);
+            StatusText.Text = note + " Updating scan results…";
+            // A completed removal survives cancellation of the refresh.
+            await WaitForExplorerBrowseAsync(CancellationToken.None);
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+            _staleScopes.RemoveWhere(scope => scope.Path.Equals(target.Path, StringComparison.Ordinal)
+                || scope.Path.StartsWith(target.Path + "\\", StringComparison.Ordinal));
+            MarkExplorerEntryRemoved(link, removal);
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+            if (removal == EntryRemoval.Recycled) note += " You can restore it from the Recycle Bin.";
+            if (link == -1 || !scan.HasAllocationData)
+                MarkScanStale(note + (link == -1 ? " Scan another folder to update results." : " Rescan to update results."), requests);
+            else
+                await RefreshAffectedAsync(scan, requests, note, work.Token, log);
+        }
+
+        void MarkIncomplete(string message)
+        {
+            if (entry.IsDirectory && link != -1 && !requests.Contains(new(path))) requests.Add(new(path));
+            MarkScanStale(message + " Recheck or rescan to update results.", requests);
         }
     }
 

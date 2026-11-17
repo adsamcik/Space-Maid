@@ -47,6 +47,7 @@ public partial class MainWindow
         var recycle = new MenuItem
         {
             Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
+            InputGestureText = recycleRoot is null ? "Delete" : "",
             ToolTip = recycleRoot is null ? blocked : $"Permanently deletes your recycled items on {recycleRoot}"
         };
         ToolTipService.SetShowOnDisabled(recycle, true);

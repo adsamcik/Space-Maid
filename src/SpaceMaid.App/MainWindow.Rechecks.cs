@@ -116,7 +116,8 @@ public partial class MainWindow
             updated.IncompleteRecheckScopes, updated.WarningCount, updated.Warnings, updated.AllocatedBytes, updated.LogicalBytes, Opportunities = _rows.Count });
         if (updated.IncompleteRecheckScopes.Count > 0)
         {
-            MarkScanStale("Readable items refreshed. Some locations are unavailable; earlier values kept where available. See scan details.");
+            string result = _removingEntry ? note + " " : "";
+            MarkScanStale(result + "Readable items refreshed. Some locations are unavailable; earlier values kept where available. See scan details.");
             TreeNote.Text = "Partial refresh · Some locations unavailable";
         }
         else if (_scanStale) MarkScanStale(note + " Other affected locations remain out of date. Recheck them or rescan.");
