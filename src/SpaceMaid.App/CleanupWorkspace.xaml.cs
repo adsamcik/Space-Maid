@@ -576,6 +576,10 @@ internal partial class CleanupWorkspace : UserControl
             var data = await Task.Run(() => (Definitions: _store.LoadDefinitions(), Runs: _store.LoadRunHeaders()));
             if (!IsCurrentNavigation(navigation)) return; LibraryPanel.Children.Clear();
             AddLibraryHeading(history ? "History" : "Saved cleanups");
+            foreach (var run in data.Runs.Where(run => run.RecoveryError is not null))
+                AddLibraryRow(run.Name, run.Message ?? "Receipt unavailable. Keep its original files for recovery.",
+                    ("Open recovery folder", () => { RevealRequested?.Invoke(Path.Join(_store.DirectoryPath, "Runs")); return Task.CompletedTask; }),
+                    ("Retry reading receipt", async () => await ShowLibraryAsync(history)));
             if (!history)
             {
                 foreach (var run in data.Runs.Where(run => run.State == CleanupRunState.Review))
@@ -593,7 +597,7 @@ internal partial class CleanupWorkspace : UserControl
             }
             else
             {
-                foreach (var run in data.Runs.OrderByDescending(run => run.CreatedUtc).Take(_historyLimit))
+                foreach (var run in data.Runs.Where(run => run.RecoveryError is null).OrderByDescending(run => run.CreatedUtc).Take(_historyLimit))
                     AddLibraryRow(run.Name, run.CreatedUtc.ToLocalTime().ToString("g") + " · " + run.Source + " · " + run.State + Environment.NewLine + run.Message,
                         ("View run", async () => await OpenRecordByIdAsync(run.Id)));
                 if (data.Runs.Count == 0) AddLibraryText("No cleanup runs yet.");

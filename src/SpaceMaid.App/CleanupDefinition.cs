@@ -148,7 +148,12 @@ internal sealed record CleanupPreparedRun(CleanupDefinition Definition, CleanupP
 internal sealed record CleanupRunHeader(Guid Id, Guid DefinitionId, int DefinitionRevision, string Name,
     DateTimeOffset CreatedUtc, DateTimeOffset UpdatedUtc, CleanupRunState State, string Source, string? Message,
     string? OccurrenceId, bool HasUncertainOutcome, int TargetCount, int ReadyCount, int KeptCount,
-    int RecycledCount, int DeletedCount, int SkippedCount, int NotStartedCount, int NeedsCheckingCount);
+    int RecycledCount, int DeletedCount, int SkippedCount, int NotStartedCount, int NeedsCheckingCount)
+{
+    // Display/recovery information only; never an executable manifest.
+    public string? RecoveryError { get; init; }
+    public string[] RecoveryScopes { get; init; } = [];
+}
 
 internal static class CleanupRunOwnership
 {

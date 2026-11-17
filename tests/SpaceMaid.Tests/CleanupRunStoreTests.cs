@@ -11,6 +11,74 @@ namespace SpaceMaid.Tests;
 public sealed class CleanupRunStoreTests
 {
     [Fact]
+    public void DamagedManifestIsVisibleWithoutBlockingHealthyDefinitionsHistoryOrReceiptPersistence()
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(DiskAccess.Default, state);
+        var healthy = Record(fixture.Path); var damaged = Record(fixture.Path);
+        store.SaveDefinition(healthy.Definition); store.SaveRun(healthy); store.SaveRun(damaged);
+        string path = Path.Join(state, "Runs", damaged.Id.ToString("N") + ".json");
+        const string original = "{interrupted manifest";
+        File.WriteAllText(path, original); File.WriteAllText(Path.Join(state, "run-index.dirty"), "interrupted");
+
+        Assert.Equal(healthy.Definition.Id, Assert.Single(store.LoadDefinitions()).Id);
+        var headers = store.LoadRunHeaders();
+        Assert.Equal(2, headers.Count);
+        Assert.Null(headers.Single(item => item.Id == healthy.Id).RecoveryError);
+        var recovery = headers.Single(item => item.Id == damaged.Id);
+        Assert.Equal(CleanupRunState.NeedsAttention, recovery.State); Assert.True(recovery.HasUncertainOutcome);
+        Assert.NotNull(recovery.RecoveryError); Assert.Empty(recovery.RecoveryScopes);
+        Assert.Equal(healthy.Id, Assert.Single(store.LoadRuns()).Id);
+        var next = Record(fixture.Path); store.SaveRun(next);
+        Assert.Contains(store.LoadRunHeaders(), item => item.Id == next.Id && item.RecoveryError is null);
+        Assert.Throws<InvalidDataException>(() => store.SaveRun(damaged));
+        Assert.Equal(original, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void DamagedJournalRetainsItsCapturedScopeAndCanRecoverWithoutRestart()
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(DiskAccess.Default, state);
+        var run = Record(fixture.Path) with { State = CleanupRunState.Running };
+        store.SaveRun(run); var target = run.Targets[0].Location;
+        store.AppendReceipt(run.Id, new(target.Path, target.ProviderId, target.RuleId, CleanupOutcome.Uncertain,
+            "Started", true, DateTimeOffset.UtcNow));
+        string journal = Path.Join(state, "Runs", run.Id.ToString("N") + ".journal");
+        string intact = File.ReadAllText(journal), damaged = "{broken middle line\n" + intact;
+        File.WriteAllText(journal, damaged);
+        // A live run is read even with a valid cached index; one bad run does
+        // not prevent recovering other workers or opening the library.
+        store.RecoverInterruptedRuns();
+        var recovery = Assert.Single(store.LoadRunHeaders());
+        Assert.NotNull(recovery.RecoveryError);
+        Assert.Equal(target.Path, Assert.Single(recovery.RecoveryScopes));
+        Assert.Throws<InvalidDataException>(() => store.LoadRun(run.Id));
+        Assert.Equal(damaged, File.ReadAllText(journal));
+
+        File.WriteAllText(journal, intact);
+        var restored = Assert.Single(store.LoadRunHeaders());
+        Assert.Null(restored.RecoveryError); Assert.Equal(CleanupRunState.Running, restored.State);
+        Assert.Equal(CleanupOutcome.Uncertain, Assert.Single(store.LoadRun(run.Id)!.Receipts).Outcome);
+    }
+
+    [Fact]
+    public void OrphanedJournalRemainsVisibleAsUnknownRecoveryInsteadOfDisappearingFromHistory()
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(DiskAccess.Default, state); var run = Record(fixture.Path);
+        store.SaveRun(run); var target = run.Targets[0].Location;
+        store.AppendReceipt(run.Id, new(target.Path, target.ProviderId, target.RuleId, CleanupOutcome.Uncertain,
+            "Started", true, DateTimeOffset.UtcNow));
+        File.Delete(Path.Join(state, "Runs", run.Id.ToString("N") + ".json"));
+        File.Delete(Path.Join(state, "run-index.json"));
+        var recovery = Assert.Single(store.LoadRunHeaders());
+        Assert.Equal(run.Id, recovery.Id); Assert.NotNull(recovery.RecoveryError);
+        Assert.True(recovery.HasUncertainOutcome); Assert.Empty(recovery.RecoveryScopes);
+        Assert.True(File.Exists(Path.Join(state, "Runs", run.Id.ToString("N") + ".journal")));
+    }
+
+    [Fact]
     public void EndedWorkerRecoveryRequiresItsExactClaimAndRetainsUnknownOutcomes()
     {
         using var fixture = new TestDirectory(); var store = new CleanupRunStore(DiskAccess.Default, Path.Join(fixture.Path, "state"));

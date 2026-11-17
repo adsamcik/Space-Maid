@@ -12,6 +12,39 @@ namespace SpaceMaid.Tests;
 public sealed class CleanupRunCoordinatorTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnreadableReceiptsKeepUnknownScopesAndPermitOnlyProvenUnrelatedCleanup(bool damagedManifest)
+    {
+        using var fixture = new TestDirectory(); var first = CleanupRulePlanTests.Project(fixture.Path, "first", 60);
+        var second = CleanupRulePlanTests.Project(fixture.Path, "second", 60);
+        var operations = new FileOperations(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(operations.Files, state);
+        var coordinator = new CleanupRunCoordinator(operations, store, DeveloperOpportunityFixture.Find);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var definition = CleanupRunStoreTests.Definition(fixture.Path);
+        var earlier = await coordinator.PrepareAsync(definition with { ScopePaths = [first.Output] }, scan,
+            DeveloperOpportunityFixture.Find(scan), default);
+        store.SaveRun(earlier.Record with { State = CleanupRunState.Running });
+        var target = Assert.Single(earlier.Record.Targets).Location;
+        store.AppendReceipt(earlier.Record.Id, new(target.Path, target.ProviderId, target.RuleId,
+            CleanupOutcome.Uncertain, "Mutation started", true, DateTimeOffset.UtcNow));
+        string path = Path.Join(state, "Runs", earlier.Record.Id.ToString("N") + (damagedManifest ? ".json" : ".journal"));
+        const string damaged = "{damaged record\n{}\n";
+        File.WriteAllText(path, damaged);
+        // Keep the cached index intact: live receipt validation must notice and
+        // isolate the newly damaged journal during this very preparation.
+        var next = await coordinator.PrepareAsync(definition with { Id = Guid.NewGuid() }, scan,
+            DeveloperOpportunityFixture.Find(scan), default);
+        Assert.Contains(next.Plan.BlockedLocations, item => item.Opportunity.Path == first.Output && item.Reason.Contains("unreadable earlier receipt"));
+        if (damagedManifest) Assert.Empty(next.Plan.Targets);
+        else Assert.Equal(second.Output, Assert.Single(next.Plan.Targets).Path);
+        Assert.Equal(damaged, File.ReadAllText(path));
+        Assert.Equal("generated output", File.ReadAllText(first.File));
+        Assert.Equal("generated output", File.ReadAllText(second.File));
+    }
+
+    [Theory]
     [InlineData("edit")]
     [InlineData("delete")]
     [InlineData("pause")]

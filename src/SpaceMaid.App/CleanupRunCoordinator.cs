@@ -302,13 +302,33 @@ internal sealed class CleanupRunCoordinator(FileOperations operations, CleanupRu
         // A live journal can be newer than its compact header. Active states
         // must always inspect that journal, including older cached headers that
         // did not mark a running operation as potentially uncertain.
-        var uncertainPaths = store.LoadRunHeaders().Where(run => run.Id != except && (run.HasUncertainOutcome
-                || run.State is CleanupRunState.Running or CleanupRunState.Queued))
-            .Select(run => store.LoadRun(run.Id)).Where(run => run is not null).SelectMany(run => run!.Receipts)
-            .Where(item => item.Outcome is CleanupOutcome.Partial or CleanupOutcome.Uncertain || item.Attempted && item.Outcome is CleanupOutcome.Failed or CleanupOutcome.Cancelled)
-            .Select(item => item.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var headers = store.LoadRunHeaders().Where(run => run.Id != except).ToArray();
+        var unreadable = headers.Where(run => run.RecoveryError is not null).ToList();
+        var uncertainPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in headers.Where(run => run.RecoveryError is null && (run.HasUncertainOutcome
+            || run.State is CleanupRunState.Running or CleanupRunState.Queued)))
+        {
+            CleanupRunRecord? record;
+            try { record = store.LoadRun(header.Id); }
+            catch (Exception error) when (CleanupBatch.IsExpected(error))
+            {
+                // Reading the live journal may discover damage newer than the
+                // cached header. Refresh recovery metadata, never execute from
+                // the older header or let one unreadable run hide healthy ones.
+                var recovery = store.LoadRunHeaders().SingleOrDefault(run => run.Id == header.Id);
+                if (recovery?.RecoveryError is null) throw;
+                unreadable.Add(recovery); continue;
+            }
+            if (record is null) throw new IOException("An earlier active cleanup receipt is unavailable. Restore its manifest before retrying.");
+            foreach (var receipt in record.Receipts.Where(item => item.Outcome is CleanupOutcome.Partial or CleanupOutcome.Uncertain
+                || item.Attempted && item.Outcome is CleanupOutcome.Failed or CleanupOutcome.Cancelled))
+                uncertainPaths.Add(receipt.Path);
+        }
         foreach (var item in candidates)
-            if (uncertainPaths.Any(path => OptimizationPolicy.Covers(path, item.Path) || OptimizationPolicy.Covers(item.Path, path)))
+            if (unreadable.Any(run => run.RecoveryScopes.Length == 0
+                    || run.RecoveryScopes.Any(path => OptimizationPolicy.Covers(path, item.Path) || OptimizationPolicy.Covers(item.Path, path))))
+                blocked[item.Path] = "An unreadable earlier receipt may cover this location. Open History, preserve its files and restore the receipt before retrying · Kept";
+            else if (uncertainPaths.Any(path => OptimizationPolicy.Covers(path, item.Path) || OptimizationPolicy.Covers(item.Path, path)))
                 blocked[item.Path] = "An earlier cleanup outcome needs checking. Inspect its original receipt before retrying · Kept";
     }
 

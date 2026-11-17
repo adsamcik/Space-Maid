@@ -18,6 +18,7 @@ internal sealed class CleanupRunStore
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false, Converters = { new AutomaticCleanupRuleConverter() } };
     private readonly DiskAccess _files;
     private readonly ConcurrentDictionary<Guid, (Guid Claim, string Message)> _endedWorkers = new();
+    private readonly HashSet<Guid> _unreadableRuns = [];
     private readonly string _directory, _definitionsPath, _runsDirectory, _stopDirectory, _mutexName, _indexPath, _indexDirtyPath;
     internal string DirectoryPath => _directory;
     internal bool HasEndedWorkers => !_endedWorkers.IsEmpty;
@@ -184,11 +185,15 @@ internal sealed class CleanupRunStore
         var headers = LoadRunHeadersCore();
         // Missing data can mean an unavailable profile volume. Only positive
         // terminal state proves that an ended-worker marker is no longer needed.
-        foreach (var header in headers.Where(item => item.State is not (CleanupRunState.Running or CleanupRunState.Queued)))
+        foreach (var header in headers.Where(item => item.RecoveryError is null && item.State is not (CleanupRunState.Running or CleanupRunState.Queued)))
             _endedWorkers.TryRemove(header.Id, out _);
-        var active = headers.Where(item => item.State is CleanupRunState.Running or CleanupRunState.Queued).ToArray();
-        foreach (var run in active.Select(item => LoadRunCore(item.Id)!).Where(item => item is not null))
+        var active = headers.Where(item => item.RecoveryError is null && item.State is CleanupRunState.Running or CleanupRunState.Queued).ToArray();
+        foreach (var header in active)
         {
+            CleanupRunRecord? run;
+            try { run = LoadRunCore(header.Id); }
+            catch (Exception error) when (RecoveryFailure(error)) { continue; }
+            if (run is null) continue;
             bool endedHere = _endedWorkers.TryGetValue(run.Id, out var ended) && ended.Claim == run.ApprovalClaimId
                 && run.OwnerProcessId == Environment.ProcessId && run.OwnerStartedUtc == CleanupRunOwnership.CurrentStartedUtc;
             if (!endedHere && !CleanupRunOwnership.IsDefinitelyGone(run)) continue;
@@ -220,35 +225,89 @@ internal sealed class CleanupRunStore
         foreach (string path in _files.EnumerateFiles(_runsDirectory, "*.json"))
         {
             if (!Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out Guid id)) continue;
-            var record = LoadRunCore(id);
-            if (record is not null) records.Add(record);
+            try
+            {
+                var record = LoadRunCore(id);
+                if (record is not null) records.Add(record);
+            }
+            catch (Exception error) when (RecoveryFailure(error)) { }
         }
         return records.OrderByDescending(item => item.CreatedUtc).ToArray();
     }
 
     private IReadOnlyList<CleanupRunHeader> LoadRunHeadersCore()
     {
-        if (_files.FileExists(_indexDirtyPath) || !_files.FileExists(_indexPath))
+        if (_unreadableRuns.Count > 0 || _files.FileExists(_indexDirtyPath) || !_files.FileExists(_indexPath))
             return RebuildRunHeadersCore();
         RunIndex index;
         try { index = Read<RunIndex>(_indexPath, 64 * 1024 * 1024); }
         catch (InvalidDataException) { return RebuildRunHeadersCore(); }
-        if (index.Version != 1 || index.Runs is null || index.Runs.Any(item => item is null || item.Id == Guid.Empty || !Enum.IsDefined(item.State))
+        if (index.Version != 1 || index.Runs is null || index.Runs.Any(item => item is null || item.Id == Guid.Empty || item.RecoveryScopes is null || !Enum.IsDefined(item.State))
             || index.Runs.Select(item => item.Id).Distinct().Count() != index.Runs.Length)
             return RebuildRunHeadersCore();
+        // Recovery entries are retried on each explicit read, so restoring a
+        // manifest/journal is sufficient; no app restart or destructive reset.
+        if (index.Runs.Any(item => item.RecoveryError is not null)) return RebuildRunHeadersCore();
         return index.Runs.OrderByDescending(item => item.CreatedUtc).ToArray();
     }
 
     private IReadOnlyList<CleanupRunHeader> RebuildRunHeadersCore()
     {
         if (!_files.DirectoryExists(_runsDirectory)) return [];
-        var rebuilt = LoadRunsCore().Select(Header).ToArray();
-        Write(_indexPath, new RunIndex(1, rebuilt));
+        var rebuilt = new List<CleanupRunHeader>();
+        var ids = _files.EnumerateFiles(_runsDirectory, "*.json").Concat(_files.EnumerateFiles(_runsDirectory, "*.journal"))
+            .Select(path => Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out Guid id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty).Distinct().ToArray();
+        foreach (Guid id in ids)
+        {
+            string path = Path.Join(_runsDirectory, id.ToString("N") + ".json");
+            try
+            {
+                var record = LoadRunCore(id) ?? throw new IOException("The cleanup manifest is missing; its journal remains preserved.");
+                rebuilt.Add(Header(record));
+            }
+            catch (Exception error) when (RecoveryFailure(error))
+            {
+                CleanupRunHeader? captured = null;
+                try
+                {
+                    // A readable manifest establishes the complete captured
+                    // scope even when its newer journal is damaged. It cannot
+                    // establish which mutations completed.
+                    var manifest = Read<CleanupRunRecord>(path, 64 * 1024 * 1024);
+                    ValidateRecord(manifest);
+                    if (manifest.Id == id) captured = Header(manifest) with
+                    { RecoveryScopes = manifest.Targets.Select(item => item.Location.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
+                }
+                catch (Exception manifestError) when (RecoveryFailure(manifestError)) { }
+                captured ??= new(id, Guid.Empty, 0, "Unreadable cleanup " + id.ToString("N"),
+                    DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, CleanupRunState.NeedsAttention,
+                    "Recovery", null, null, true, 0, 0, 0, 0, 0, 0, 0, 0);
+                rebuilt.Add(captured with { State = CleanupRunState.NeedsAttention, HasUncertainOutcome = true,
+                    RecoveryError = error.Message, Message = "Receipt unavailable. Preserve its original manifest and journal; restore them and refresh to retry. " + error.Message });
+            }
+        }
+        Write(_indexPath, new RunIndex(1, rebuilt.ToArray()));
         if (_files.FileExists(_indexDirtyPath)) _files.DeleteFile(_indexDirtyPath);
         return rebuilt.OrderByDescending(item => item.CreatedUtc).ToArray();
     }
 
+    private static bool RecoveryFailure(Exception error) => error is IOException or UnauthorizedAccessException
+        or ArgumentException or InvalidOperationException or JsonException or NotSupportedException;
+
     private CleanupRunRecord? LoadRunCore(Guid id)
+    {
+        try
+        {
+            var record = ReadRunCore(id);
+            if (record is not null) _unreadableRuns.Remove(id);
+            return record;
+        }
+        catch (Exception error) when (RecoveryFailure(error))
+        { _unreadableRuns.Add(id); throw; }
+    }
+
+    private CleanupRunRecord? ReadRunCore(Guid id)
     {
         RequireId(id);
         string path = Path.Join(_runsDirectory, id.ToString("N") + ".json");
