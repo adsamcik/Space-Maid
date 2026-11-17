@@ -11,6 +11,66 @@ namespace SpaceMaid.Tests;
 public sealed class HostExtensionsTests
 {
     [Fact]
+    public async Task FailedDiscoveryCanBeRetriedWithoutDuplicatingEntriesOrEnablingDisabledCode()
+    {
+        using var fixture = new TestDirectory();
+        string bundles = Directory.CreateDirectory(Path.Join(fixture.Path, "bundles")).FullName;
+        string data = Directory.CreateDirectory(Path.Join(fixture.Path, "data")).FullName;
+        string broken = Directory.CreateDirectory(Path.Join(bundles, "broken")).FullName;
+        File.WriteAllText(Path.Join(broken, "extension.json"), "{");
+        MakeManifest(Path.Join(bundles, "disabled"), "test.disabled", 1);
+        File.WriteAllText(Path.Join(data, "extensions.json"), JsonSerializer.Serialize(new ExtensionSettings([], ["test.disabled"])));
+        await using var runtime = new ExtensionRuntime(() => null, () => false, _ => { }, data, bundles, Path.Join(fixture.Path, "logs"), administrator: false);
+        await runtime.InitializeAsync();
+        var disabled = Assert.Single(runtime.Entries, entry => entry.Id == "test.disabled");
+        Assert.Equal("Disabled", disabled.Status);
+        MakeManifest(broken, "test.repaired", 99);
+        await runtime.RetryFailedAsync();
+        Assert.Equal(2, runtime.Entries.Count);
+        Assert.Same(disabled, Assert.Single(runtime.Entries, entry => entry.Id == disabled.Id));
+        Assert.Contains("API version 99", Assert.Single(runtime.Entries, entry => entry.Directory == broken).Error);
+        MakeManifest(broken, "test.repaired", 1);
+        await runtime.RetryFailedAsync();
+        Assert.Equal(2, runtime.Entries.Count);
+        Assert.Contains("DLL is missing", Assert.Single(runtime.Entries, entry => entry.Directory == broken).Error);
+        Assert.False(Directory.Exists(Path.Join(data, "test.disabled")));
+    }
+
+    [Fact]
+    public async Task FailedStartupEnumerationCanRecoverAfterFolderRepair()
+    {
+        using var fixture = new TestDirectory();
+        string bundles = Directory.CreateDirectory(Path.Join(fixture.Path, "bundles")).FullName;
+        string data = Directory.CreateDirectory(Path.Join(fixture.Path, "data")).FullName;
+        await using var runtime = new ExtensionRuntime(() => null, () => false, _ => { }, data, bundles, Path.Join(fixture.Path, "logs"), administrator: false);
+        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runtime.InitializeAsync(cancelled.Token));
+        MakeManifest(Path.Join(bundles, "repaired"), "test.repaired", 99);
+        await runtime.RetryFailedAsync();
+        Assert.Contains("API version 99", Assert.Single(runtime.Entries).Error);
+    }
+
+    [Fact]
+    public async Task MissingSettingsAfterCorruptionDoNotSilentlyEnableExtensionsOnRetry()
+    {
+        using var fixture = new TestDirectory();
+        string bundles = Directory.CreateDirectory(Path.Join(fixture.Path, "bundles")).FullName;
+        string data = Directory.CreateDirectory(Path.Join(fixture.Path, "data")).FullName;
+        MakeManifest(Path.Join(bundles, "first"), "test.first", 1);
+        string path = Path.Join(data, "extensions.json"); File.WriteAllText(path, "{");
+        await using var runtime = new ExtensionRuntime(() => null, () => false, _ => { }, data, bundles, Path.Join(fixture.Path, "logs"), administrator: false);
+        await runtime.InitializeAsync(); File.Delete(path);
+        await runtime.RetryFailedAsync();
+        Assert.NotNull(runtime.SettingsError);
+        Assert.Equal("Unavailable", Assert.Single(runtime.Entries).Status);
+        Assert.False(Directory.Exists(Path.Join(data, "test.first")));
+        File.WriteAllText(path, JsonSerializer.Serialize(new ExtensionSettings([], ["test.first"])));
+        await runtime.RetryFailedAsync();
+        Assert.Null(runtime.SettingsError);
+        Assert.Equal("Disabled", Assert.Single(runtime.Entries).Status);
+    }
+
+    [Fact]
     public void ToolMetadataKeepsCaseSensitivePathsDistinctAndRejectsAmbiguousFallback()
     {
         string lower = @"C:\Photos\photo.png", upper = @"C:\Photos\PHOTO.PNG";

@@ -58,6 +58,7 @@ public sealed partial class DesktopTests
             search.Text = "no-such-extension";
             Assert.Empty(list.Items); Assert.Equal(Visibility.Visible, ((TextBlock)manager.FindName("EmptyText")).Visibility);
             search.Text = "";
+            CheckExtensionContextRecovery(window, runtime, manager, fixture.Path);
 
             string output = Path.Join(artifactRoot, "artifacts", "ui");
 #pragma warning disable WPF0001
@@ -98,6 +99,63 @@ public sealed partial class DesktopTests
         {
             window.SetScanTarget(previousPath);
             ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
+        }
+    }
+
+    private sealed class RecoverableContextView : UserControl, IExtensionContextView
+    {
+        internal bool Fail = true;
+        internal int Calls;
+        public void SetContext(ExtensionViewContext context)
+        { Calls++; if (Fail) throw new IOException("Owned transient context fixture"); }
+    }
+
+    private static void CheckExtensionContextRecovery(MainWindow window, ExtensionRuntime runtime, ExtensionsView manager, string fixture)
+    {
+        var entries = Assert.IsType<List<LoadedExtension>>(typeof(ExtensionRuntime).GetField("_entries", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtime));
+        var links = Assert.IsType<Dictionary<string, RadioButton>>(typeof(MainWindow).GetField("_extensionLinks", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+        var healthy = runtime.Entries.Single(entry => entry.Id == "space-maid.agents").View!;
+        var healthyParent = healthy.Parent;
+        var view = new RecoverableContextView();
+        var entry = new LoadedExtension("test.context-recovery", "Recovery fixture", fixture, "Loaded", view);
+        string previous = window.CurrentPath;
+        entries.Add(entry);
+        try
+        {
+            typeof(MainWindow).GetMethod("InitializeExtensionWorkspace", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+            Assert.False(view.IsEnabled);
+            int failedCalls = view.Calls;
+            window.SetBusy(true); window.SetBusy(false);
+            Assert.Equal(failedCalls, view.Calls); // Repeated publication must not loop failed delivery.
+            view.Fail = false;
+            var retry = Assert.IsAssignableFrom<Task>(typeof(MainWindow).GetMethod("RetryExtensionsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null));
+            PumpUntil(() => retry.IsCompleted, TimeSpan.FromSeconds(15)); retry.GetAwaiter().GetResult();
+            Assert.True(view.IsEnabled);
+            Assert.Same(healthy, runtime.Entries.Single(item => item.Id == "space-maid.agents").View);
+            Assert.Same(healthyParent, healthy.Parent);
+            Assert.Same(manager, ((ContentControl)window.FindName("ExtensionManagerContent")).Content);
+            Assert.Single(links.Where(pair => pair.Key == entry.Id));
+            view.Fail = true;
+            window.SetBusy(true); // The inherited disabled value is not the view's local state.
+            window.SetScanTarget(@"R:\OwnedRecoveryFailure");
+            window.SetBusy(false);
+            Assert.False(view.IsEnabled);
+            view.Fail = false;
+            window.SetScanTarget(@"R:\OwnedRecoveryChangedContext");
+            Assert.True(view.IsEnabled);
+        }
+        finally
+        {
+            entries.Remove(entry);
+            if (links.Remove(entry.Id, out var link))
+            {
+                if (link.Tag is FrameworkElement page && page.Parent is Panel pages) pages.Children.Remove(page);
+                if (link.Parent is Panel navigation) navigation.Children.Remove(link);
+            }
+            foreach (string field in new[] { "_publishedContexts", "_failedContexts", "_contextEnabled" })
+                ((System.Collections.IDictionary)typeof(MainWindow).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!).Remove(view);
+            ((HashSet<FrameworkElement>)typeof(MainWindow).GetField("_contextFailures", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!).Remove(view);
+            manager.ReloadEntries(); window.SetScanTarget(previous);
         }
     }
 }

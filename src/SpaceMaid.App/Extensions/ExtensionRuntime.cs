@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
@@ -37,6 +38,9 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     private readonly DiskAccess _files;
     private readonly List<ISpaceMaidExtension> _loaded = [];
     private readonly List<ExtensionLoadContext> _contexts = [];
+    private readonly Dictionary<string, (ExtensionLoadContext Context, string Assembly, string Fingerprint)> _candidateContexts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _unsafeRetries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _loadedAssemblyFingerprints = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<LoadedExtension> _entries = [];
     private readonly bool _administrator;
     private readonly Func<IInventoryEvidenceSession, IReadOnlyList<EvidenceId>, CancellationToken, Task<EvidenceCleanupReviewResult>>? _evidenceReview;
@@ -49,6 +53,7 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _initializing;
     private bool _disposed, _initialized;
+    private bool _createViews;
     internal IReadOnlyList<LoadedExtension> Entries => _entries;
     internal IReadOnlyList<ExtensionJobRecord> RecentJobs => _jobs.Recent;
     internal string? LogPath => _diagnostics.FilePath;
@@ -93,41 +98,79 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_initialized) return _initializing ?? Task.CompletedTask;
-        _initialized = true;
+        _initialized = true; _createViews = createViews;
         _initializing = InitializeCoreAsync(createViews, token);
         return _initializing;
     }
-    private async Task InitializeCoreAsync(bool createViews, CancellationToken callerToken)
+    internal bool CanRetry => !_administrator && !_disposed && _initializing?.IsCompleted != false
+        && !RecentJobs.Any(job => job.State is ExtensionJobState.Queued or ExtensionJobState.Running);
+
+    internal Task RetryFailedAsync(CancellationToken token = default)
+    {
+        if (!CanRetry) throw new InvalidOperationException("Wait for extension work to finish before retrying.");
+        if (!_initialized) return InitializeAsync(token);
+        if (SettingsError is not null)
+        {
+            var retained = _settings; SettingsError = null;
+            var read = ReadSettingsCore(requireExisting: true);
+            if (SettingsError is null) _settings = read; else _settings = retained;
+        }
+        _initializing = InitializeCoreAsync(_createViews, token, retry: true);
+        return _initializing;
+    }
+
+    private async Task InitializeCoreAsync(bool createViews, CancellationToken callerToken, bool retry = false)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, _lifetime.Token);
         CancellationToken token = linked.Token;
+        token.ThrowIfCancellationRequested();
         var directories = new List<(string Path, bool Enabled)>();
         if (_files.DirectoryExists(_bundleRoot))
             directories.AddRange(_files.EnumerateDirectories(_bundleRoot).Take(64).Select(path => (path, true)));
         directories.AddRange(_settings.Directories.Take(64).Select(value => (value.Directory, value.Enabled)));
-        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ids = (retry ? _entries.Where(entry => entry.Status is "Loaded" or "Disabled" or "Not needed for background discovery")
+            .Select(entry => entry.Id) : Enumerable.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in directories)
         {
             token.ThrowIfCancellationRequested();
             string id = Path.GetFileName(candidate.Path), name = id;
             ISpaceMaidExtension? instance = null;
+            ExtensionLoadContext? attemptedContext = null;
             try
             {
                 string directory = Path.GetFullPath(candidate.Path);
                 if (!paths.Add(directory)) continue;
+                if (retry && _entries.Any(entry => entry.Directory.Equals(directory, StringComparison.OrdinalIgnoreCase)
+                    && entry.Status is "Loaded" or "Disabled" or "Not needed for background discovery")) continue;
+                if (_unsafeRetries.Contains(directory)) throw new InvalidOperationException("Extension shutdown did not finish. Restart Space Maid before retrying this extension.");
                 var manifest = ReadManifestUsing(_files, directory); id = manifest.Id; name = manifest.Name;
+                if (retry && _addedIds.Contains(id)) continue; // Newly trusted code still uses the advertised restart boundary.
                 if (!ids.Add(id)) throw new InvalidDataException("Another extension has the same ID. Only one directory per extension is supported.");
                 bool enabled = candidate.Enabled && !_settings.DisabledIds.Contains(id, StringComparer.OrdinalIgnoreCase);
                 _initialEnabled[id] = enabled;
-                if (!enabled) { _entries.Add(new(id, name, directory, "Disabled", Version: manifest.Version)); continue; }
-                if (SettingsError is not null) { _entries.Add(new(id, name, directory, "Unavailable", Error: SettingsError)); continue; }
+                if (!enabled) { PublishEntry(new(id, name, directory, "Disabled", Version: manifest.Version)); continue; }
+                if (SettingsError is not null) { PublishEntry(new(id, name, directory, "Unavailable", Error: SettingsError)); continue; }
                 if (_administrator)
-                { _entries.Add(new(id, name, directory, "Unavailable", Error: "Reopen Space Maid without administrator access to use extensions.")); continue; }
+                { PublishEntry(new(id, name, directory, "Unavailable", Error: "Reopen Space Maid without administrator access to use extensions.")); continue; }
                 string assemblyPath = Path.Combine(directory, manifest.EntryAssembly);
                 ValidateEntryPath(directory, assemblyPath, _files);
-                var context = new ExtensionLoadContext(assemblyPath);
-                _contexts.Add(context);
+                var fingerprint = AssemblyFingerprint(assemblyPath);
+                ExtensionLoadContext context;
+                if (_candidateContexts.TryGetValue(directory, out var cached))
+                {
+                    if (!cached.Assembly.Equals(assemblyPath, StringComparison.OrdinalIgnoreCase)
+                        || cached.Context.Assemblies.Any() && cached.Fingerprint != fingerprint)
+                        throw new InvalidOperationException("Extension code changed after loading. Restart Space Maid to use the changed binaries.");
+                    foreach (var loaded in cached.Context.Assemblies.Where(assembly => !assembly.IsDynamic && !string.IsNullOrEmpty(assembly.Location)))
+                        if (_loadedAssemblyFingerprints.TryGetValue(loaded.Location, out string? expected)
+                            && AssemblyFingerprint(loaded.Location) != expected)
+                            throw new InvalidOperationException("An extension dependency changed after loading. Restart Space Maid to use the changed binaries.");
+                    context = cached.Context;
+                }
+                else { context = new ExtensionLoadContext(assemblyPath); _contexts.Add(context); }
+                _candidateContexts[directory] = (context, assemblyPath, fingerprint);
+                attemptedContext = context;
                 Assembly assembly = context.LoadFromAssemblyPath(assemblyPath);
                 if (assembly.GetReferencedAssemblies().Any(reference => reference.Name is "SpaceMaid.App"))
                     throw new InvalidDataException("Extensions must reference the shared Contracts API instead of App implementation types.");
@@ -136,7 +179,7 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                     throw new InvalidDataException("The entry type does not implement the supported extension API.");
                 if (!createViews && !typeof(IOpportunityExtension).IsAssignableFrom(type))
                 {
-                    _entries.Add(new(id, name, directory, "Not needed for background discovery", Version: manifest.Version));
+                    PublishEntry(new(id, name, directory, "Not needed for background discovery", Version: manifest.Version));
                     continue;
                 }
                 instance = (ISpaceMaidExtension?)Activator.CreateInstance(type) ?? throw new InvalidDataException("The extension entry type could not be created.");
@@ -149,25 +192,57 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                 await instance.InitializeAsync(host, token);
                 token.ThrowIfCancellationRequested();
                 FrameworkElement? view = createViews ? instance.CreateView() : null;
+                var navigationIcon = !createViews ? null : ReadNavigationIcon(_files, directory, manifest.NavigationIcon,
+                    reason => _diagnostics.Record("extension-navigation-icon-unavailable", new { Id = id, manifest.NavigationIcon, Reason = reason }));
                 if (instance is IOpportunityExtension opportunities) Opportunities.Register(id, opportunities);
                 bool supportsOpportunities = instance is IOpportunityExtension;
                 _loaded.Add(instance); instance = null;
-                _entries.Add(new(id, name, directory, "Loaded", view, Version: manifest.Version, SupportsOpportunities: supportsOpportunities)
+                PublishEntry(new(id, name, directory, "Loaded", view, Version: manifest.Version, SupportsOpportunities: supportsOpportunities)
                 {
-                    NavigationIcon = !createViews ? null : ReadNavigationIcon(_files, directory, manifest.NavigationIcon,
-                        reason => _diagnostics.Record("extension-navigation-icon-unavailable", new { Id = id, manifest.NavigationIcon, Reason = reason }))
+                    NavigationIcon = navigationIcon
                 });
                 _diagnostics.Record("extension-loaded", new { Id = id, manifest.Version, manifest.ContractVersion });
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { if (instance is not null) await instance.DisposeAsync(); throw; }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                if (instance is not null)
+                    try { await instance.DisposeAsync(); }
+                    catch (Exception cleanup) { _unsafeRetries.Add(Path.GetFullPath(candidate.Path)); _diagnostics.Record("extension-failed-initialization-cleanup", new { Id = id, Error = cleanup.Message }); }
+                throw;
+            }
             catch (Exception ex)
             {
-                if (instance is not null) { try { await instance.DisposeAsync(); } catch (Exception) { } }
-                _entries.Add(new(id, name, candidate.Path, "Failed to load", Error: ex.GetBaseException().Message));
+                if (instance is not null)
+                {
+                    try { await instance.DisposeAsync(); }
+                    catch (Exception cleanup) { _unsafeRetries.Add(Path.GetFullPath(candidate.Path)); _diagnostics.Record("extension-failed-initialization-cleanup", new { Id = id, Error = cleanup.Message }); }
+                }
+                PublishEntry(new(id, name, candidate.Path, "Failed to load", Error: ex.GetBaseException().Message));
                 _diagnostics.Record("extension-load-failed", new { Id = id, Error = ex.GetBaseException().Message });
+            }
+            finally
+            {
+                if (attemptedContext is not null)
+                    foreach (var loaded in attemptedContext.Assemblies.Where(assembly => !assembly.IsDynamic && !string.IsNullOrEmpty(assembly.Location)))
+                        if (!_loadedAssemblyFingerprints.ContainsKey(loaded.Location))
+                            try { _loadedAssemblyFingerprints.Add(loaded.Location, AssemblyFingerprint(loaded.Location)); }
+                            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                            {
+                                _unsafeRetries.Add(Path.GetFullPath(candidate.Path));
+                                _diagnostics.Record("extension-code-identity-unavailable", new { Id = id, Error = error.Message });
+                            }
             }
         }
     }
+    private string AssemblyFingerprint(string path)
+    { using var input = _files.OpenRead(path); return Convert.ToHexString(SHA256.HashData(input)); }
+
+    private void PublishEntry(LoadedExtension entry)
+    {
+        int previous = _entries.FindIndex(item => item.Directory.Equals(entry.Directory, StringComparison.OrdinalIgnoreCase));
+        if (previous < 0) _entries.Add(entry); else _entries[previous] = entry;
+    }
+
     internal void SetDiscoveryBusy(bool busy) => _jobs.SetDiscoveryBusy(busy);
     internal async Task<EvidenceCleanupReviewResult> ReviewEvidenceAsync(IInventoryEvidenceSession session,
         IReadOnlyList<EvidenceId> selected, CancellationToken token)
@@ -224,13 +299,18 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
     }
     private IEnumerable<string> DisabledIdsForExplicitSave() => SettingsError is null ? _settings.DisabledIds
         : _settings.DisabledIds.Concat(_entries.Select(entry => entry.Id)).Distinct(StringComparer.OrdinalIgnoreCase);
-    private ExtensionSettings ReadSettings()
+    private ExtensionSettings ReadSettings() => ReadSettingsCore(requireExisting: false);
+
+    private ExtensionSettings ReadSettingsCore(bool requireExisting)
     {
         try
         {
-            if (!_files.FileExists(_settingsPath)) return new([], []);
-            if (_files.FileLength(_settingsPath) > 64 * 1024) throw new InvalidDataException("The extension settings file is too large.");
-            var settings = JsonSerializer.Deserialize<ExtensionSettings>(_files.ReadAllText(_settingsPath), Json) ?? throw new InvalidDataException("The extension settings are empty.");
+            using var input = _files.OpenRead(_settingsPath);
+            var bytes = new byte[64 * 1024 + 1]; int count = 0, read;
+            while (count < bytes.Length && (read = input.Read(bytes.AsSpan(count))) > 0) count += read;
+            if (count == bytes.Length) throw new InvalidDataException("The extension settings file is too large.");
+            using var text = new StreamReader(new MemoryStream(bytes, 0, count), detectEncodingFromByteOrderMarks: true);
+            var settings = JsonSerializer.Deserialize<ExtensionSettings>(text.ReadToEnd(), Json) ?? throw new InvalidDataException("The extension settings are empty.");
             if (settings.Directories is null || settings.DisabledIds is null || settings.Directories.Count > 64 || settings.DisabledIds.Count > 128)
                 throw new InvalidDataException("The extension settings have invalid limits.");
             if (settings.Directories.Any(value => value is null || string.IsNullOrWhiteSpace(value.Directory) || !Path.IsPathFullyQualified(value.Directory))
@@ -238,6 +318,8 @@ internal sealed partial class ExtensionRuntime : IAsyncDisposable
                 throw new InvalidDataException("The extension settings contain an invalid directory or ID.");
             return settings;
         }
+        catch (FileNotFoundException) when (!requireExisting) { return new([], []); }
+        catch (DirectoryNotFoundException) when (!requireExisting && !_files.DirectoryExists(_dataRoot)) { return new([], []); }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)
         { SettingsError = "Extension settings could not be read: " + ex.Message; return new([], []); }
     }

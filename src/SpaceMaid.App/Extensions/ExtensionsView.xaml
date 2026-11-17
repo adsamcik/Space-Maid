@@ -4,6 +4,7 @@
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel Margin="0,0,0,16">
+            <Button x:Name="RetryButton" Content="Retry initialization" Click="Retry_Click" DockPanel.Dock="Right" Margin="8,0,0,0" Padding="14,6" AutomationProperties.Name="Retry failed extension initialization and context"/>
             <Button x:Name="AddButton" Content="Add extension" Click="Add_Click" DockPanel.Dock="Right" Padding="14,6"/>
             <StackPanel><TextBlock Text="Extensions" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="Manage trusted extensions. Open workflows from the sidebar." Opacity="0.7" Margin="0,4,16,0" TextWrapping="Wrap"/></StackPanel>
         </DockPanel>
