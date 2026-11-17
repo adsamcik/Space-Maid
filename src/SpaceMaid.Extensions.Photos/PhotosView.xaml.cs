@@ -69,7 +69,7 @@ public partial class PhotosView : UserControl
         }
     }
 
-    private void UpdateEmptyState(PhotoCollection? collection, string? lastJob)
+    private void UpdateEmptyState(PhotoCollection? collection, PhotoJobStatus? lastJob)
     {
         var empty = FileList.Items.Count == 0;
         UpdateDisplayControls();
@@ -83,8 +83,8 @@ public partial class PhotosView : UserControl
             SetEmpty("No related files found", "", EmptyAction.Browse, "Browse photos");
         else if (_mode == PhotoMode.Duplicates && collection.Count > 0)
         {
-            var analyzed = lastJob?.StartsWith("Analysis", StringComparison.Ordinal) == true && lastJob.Contains("Completed", StringComparison.Ordinal);
-            SetEmpty("No verified duplicates", analyzed ? "" : "Analyze photos to compare file contents.",
+            var analyzed = lastJob?.ContentComparisonComplete == true;
+            SetEmpty("No verified duplicates", analyzed ? lastJob!.Message ?? "" : "Analyze photos to compare file contents.",
                 analyzed ? EmptyAction.Browse : EmptyAction.Analyze, analyzed ? "Browse photos" : "Analyze photos");
         }
         else SetEmpty("No photos found", "No supported photo filenames in this folder.", EmptyAction.Refresh, "Refresh");
@@ -98,14 +98,15 @@ public partial class PhotosView : UserControl
         EmptySymbol.Visibility = action == EmptyAction.Add ? Visibility.Collapsed : Visibility.Visible;
         EmptyActionButton.Visibility = Visibility.Visible;
     }
-    private void UpdateCoverageNotice(PhotoCollection collection, string? lastJob)
+    private void UpdateCoverageNotice(PhotoCollection collection, PhotoJobStatus? lastJob)
     {
         FreshnessText.Text = _discovering ? "Preliminary" : collection.Status.StartsWith("Incomplete", StringComparison.Ordinal) ? "Incomplete" :
-            collection.Status.Contains("Interrupted", StringComparison.OrdinalIgnoreCase) || lastJob?.Contains("Interrupted", StringComparison.Ordinal) == true ? "Interrupted" :
-            collection.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) || lastJob?.Contains("Failed", StringComparison.Ordinal) == true || lastJob?.Contains("NeedsAttention", StringComparison.Ordinal) == true ? "Needs attention" :
+            collection.Status.Contains("Interrupted", StringComparison.OrdinalIgnoreCase) || lastJob?.State == "Interrupted" ? "Interrupted" :
+            collection.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) || lastJob?.State is "Failed" or "NeedsAttention" ? "Needs attention" :
+            lastJob?.MetadataLimited == true ? "Metadata limited" :
             collection.Status == "Not discovered" ? "Not discovered" : "";
         FreshnessText.Visibility = FreshnessText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        FreshnessText.ToolTip = collection.Status + (lastJob is null ? "" : "\n" + lastJob) + (collection.Coverage is null ? "" : "\n" + collection.Coverage);
+        FreshnessText.ToolTip = collection.Status + (lastJob is null ? "" : "\n" + lastJob.Summary) + (collection.Coverage is null ? "" : "\n" + collection.Coverage);
     }
     private void Columns_Click(object sender, RoutedEventArgs e)
     { if (sender is Button { ContextMenu: { } menu } button) { menu.PlacementTarget = button; menu.IsOpen = true; } }

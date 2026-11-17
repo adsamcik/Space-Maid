@@ -64,10 +64,11 @@ public partial class PhotosView
         {
             await work(progress, _operation.Token);
             acceptProgress = false;
-            var completedJob = operationCollection is long id ? await Task.Run(() => _catalog.LastJob(id), _lifetime) : null;
-            var needsAttention = completedJob?.Contains("NeedsAttention", StringComparison.Ordinal) == true;
-            SetNotice((discovering ? "Discovery finished" : completedJob?.Contains("Completed", StringComparison.Ordinal) == true ? "Analysis complete" : "Analysis finished") + (needsAttention ? " · Needs attention" : ""), needsAttention);
-            StatusText.ToolTip = completedJob ?? StatusText.Text;
+            var completedJob = operationCollection is long id ? await Task.Run(() => _catalog.LastJobStatus(id), _lifetime) : null;
+            var needsAttention = completedJob?.State == "NeedsAttention";
+            SetNotice((discovering ? "Discovery finished" : completedJob?.ContentComparisonComplete == true ? "Analysis complete" : "Analysis finished")
+                + (needsAttention ? " · Needs attention" : completedJob?.MetadataLimited == true ? " · Rich metadata unavailable" : ""), needsAttention);
+            StatusText.ToolTip = completedJob?.Summary ?? StatusText.Text;
         }
         catch (OperationCanceledException) { SetNotice("Interrupted · Results kept"); }
         catch (Exception error) { ShowFailure(error); }

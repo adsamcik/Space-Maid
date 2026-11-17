@@ -27,6 +27,12 @@ internal sealed record PhotoObservation(string Path, string Identity, string Rev
     long LogicalBytes, long? AllocatedBytes, uint Links, bool ContentAvailable, string Status, string Role, string Stem);
 internal sealed record PhotoAnalysisUpdate(string ObjectId, string? ExpectedRevision, MediaRevision? Revision,
     MediaToolMetadata? Metadata, string? Hash, string Status, bool HashOnly = false);
+internal sealed record PhotoJobStatus(string Kind, string State, long Completed, string? Message)
+{
+    public bool ContentComparisonComplete => Kind == "Analysis" && State is "Completed" or "CompletedWithMetadataLimitations";
+    public bool MetadataLimited => State == "CompletedWithMetadataLimitations";
+    public string Summary => $"{Kind} · {(MetadataLimited ? "Completed · Rich metadata unavailable" : State)} · {Completed:N0} {(Kind == "Discovery" ? "locations" : "checks")}" + (Message is null ? "" : " · " + Message);
+}
 
 internal static class PhotoKinds
 {
@@ -425,12 +431,14 @@ internal sealed class PhotoCatalog : IDisposable
         Execute("INSERT INTO jobs(id,collection_id,kind,state,started,updated) VALUES($id,$collection,$kind,'Running',$now,$now)", ("$id", id), ("$collection", collection), ("$kind", kind), ("$now", DateTime.UtcNow.ToString("O"))); return id;
     }
     public void JobState(string job, string state, long completed, string? message = null) => Execute("UPDATE jobs SET state=$state,completed=$completed,updated=$now,message=$message WHERE id=$id", ("$id", job), ("$state", state), ("$completed", completed), ("$now", DateTime.UtcNow.ToString("O")), ("$message", message));
-    public string? LastJob(long collection)
+    public string? LastJob(long collection) => LastJobStatus(collection)?.Summary;
+    public PhotoJobStatus? LastJobStatus(long collection)
     {
         lock (_gate)
         {
-            using var connection = Open(); using var command = connection.CreateCommand(); command.CommandText = "SELECT kind || ' · ' || state || ' · ' || completed || CASE WHEN kind='Discovery' THEN ' locations' ELSE ' checks' END FROM jobs WHERE collection_id=$collection ORDER BY started DESC LIMIT 1";
-            Add(command, "$collection", collection); return command.ExecuteScalar() as string;
+            using var connection = Open(); using var command = connection.CreateCommand(); command.CommandText = "SELECT kind,state,completed,message FROM jobs WHERE collection_id=$collection ORDER BY started DESC LIMIT 1";
+            Add(command, "$collection", collection); using var reader = command.ExecuteReader();
+            return reader.Read() ? new(reader.GetString(0), reader.GetString(1), reader.GetInt64(2), reader.IsDBNull(3) ? null : reader.GetString(3)) : null;
         }
     }
     private void Execute(string sql, params (string Name, object? Value)[] values)

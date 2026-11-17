@@ -112,6 +112,27 @@ public sealed partial class DesktopTests
         Assert.Null(photoFiles.SelectedItem); Assert.Equal(Visibility.Collapsed, ((Border)photosView.FindName("SelectionPanel")).Visibility);
         ((RadioButton)photosView.FindName("DuplicatesTab")).IsChecked = true;
         PumpUntil(() => photoFiles.Items.Count == 0 && Equals(((Button)photosView.FindName("EmptyActionButton")).Content, "Analyze photos"), TimeSpan.FromSeconds(3));
+        setStage("keeping completed photo comparisons useful when optional metadata is unavailable");
+        var collectionPicker = (ComboBox)photosView.FindName("CollectionList");
+        var collectionValue = collectionPicker.SelectedItem.GetType().GetProperty("Value")!.GetValue(collectionPicker.SelectedItem);
+        var jobType = photosView.GetType().Assembly.GetType("SpaceMaid.Extensions.Photos.PhotoJobStatus", throwOnError: true)!;
+        var metadataLimited = Activator.CreateInstance(jobType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, args: ["Analysis", "CompletedWithMetadataLimitations", 2L, "Rich metadata unavailable for 2 objects; content comparison does not depend on ExifTool."], culture: null);
+        var updateEmpty = photosView.GetType().GetMethod("UpdateEmptyState", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var updateCoverage = photosView.GetType().GetMethod("UpdateCoverageNotice", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        updateEmpty.Invoke(photosView, [collectionValue, metadataLimited]);
+        updateCoverage.Invoke(photosView, [collectionValue, metadataLimited]);
+        Assert.Equal("No verified duplicates", ((TextBlock)photosView.FindName("EmptyTitle")).Text);
+        Assert.Equal("Browse photos", ((Button)photosView.FindName("EmptyActionButton")).Content);
+        Assert.Contains("Rich metadata unavailable", ((TextBlock)photosView.FindName("EmptyText")).Text);
+        Assert.Equal("Metadata limited", ((TextBlock)photosView.FindName("FreshnessText")).Text);
+        Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-metadata-limited-empty.png"), 1220, 940);
+        var contentIncomplete = Activator.CreateInstance(jobType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, args: ["Analysis", "NeedsAttention", 2L, "One content check was unavailable."], culture: null);
+        updateEmpty.Invoke(photosView, [collectionValue, contentIncomplete]);
+        updateCoverage.Invoke(photosView, [collectionValue, contentIncomplete]);
+        Assert.Equal("Analyze photos", ((Button)photosView.FindName("EmptyActionButton")).Content);
+        Assert.Equal("Needs attention", ((TextBlock)photosView.FindName("FreshnessText")).Text);
         var analyzePhotos = (Button)photosView.FindName("AnalyzeButton");
         ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         PumpUntil(() => analyzePhotos.IsEnabled && ((TextBlock)photosView.FindName("StatusText")).Text.Contains("Analysis complete", StringComparison.Ordinal), TimeSpan.FromSeconds(10));

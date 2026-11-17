@@ -137,7 +137,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
 
     internal async Task AnalyzeCoreAsync(PhotoCollection collection, IExtensionJobContext context)
     {
-        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, hashed = 0, failures = 0, bytes = 0;
+        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, hashed = 0, failures = 0, metadataUnavailable = 0, bytes = 0;
         var watch = Stopwatch.StartNew(); long lastCheckpointMs = 0;
         void CheckpointProgress()
         {
@@ -175,7 +175,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                         {
                             IReadOnlyList<MediaToolMetadata> metadata;
                             try { metadata = await host.Tools.ReadExifMetadataAsync(leases.Select(x => x.Row.Path).ToArray(), context.Cancellation); }
-                            catch (Exception error) when (error is not OperationCanceledException)
+                            catch (Exception error) when (error is not OperationCanceledException || !context.Cancellation.IsCancellationRequested)
                             {
                                 host.Log("photos-metadata-unavailable", new { Error = error.GetType().Name });
                                 metadata = [];
@@ -187,8 +187,10 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                                 {
                                     pair.File.VerifyUnchanged();
                                     var details = metadata.FirstOrDefault(x => string.Equals(x.Path, pair.Row.Path, StringComparison.Ordinal));
-                                    if (details is null || details.Error is not null) failures++;
-                                    updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, pair.File.Revision, details, null,
+                                    // Optional rich metadata does not determine whether
+                                    // the default streams can be safely compared.
+                                    if (details is null || details.Error is not null) metadataUnavailable++;
+                                    updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, pair.File.Revision, details is { Error: null } ? details : null, null,
                                         details is { Error: null } ? "Metadata verified · Default stream not compared" : "Default size verified · ExifTool metadata unavailable"));
                                 }
                                 catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception)
@@ -197,7 +199,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                         }
                         failures += updates.Count - catalog.StoreAnalysisBatch(updates, context.Cancellation);
                         count += chunk.Length; CheckpointProgress();
-                        context.Report(new("Inspecting metadata", count, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
+                        context.Report(new("Inspecting metadata", count, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved content · {metadataUnavailable:N0} without rich metadata"));
                     }
                     finally { foreach (var pair in leases) pair.File.Dispose(); }
                 }
@@ -251,9 +253,11 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                 }
                 after = batch[^1].ObjectId;
             }
-            catalog.JobState(job, failures > 0 ? "NeedsAttention" : "Completed", count + hashed, failures > 0 ? $"{failures} unavailable or unresolved objects." : null);
-            host.Log("photos-analysis", new { collection.Id, Inspected = count, Hashed = hashed, BytesRead = bytes, Failures = failures, ElapsedMs = watch.ElapsedMilliseconds });
-            context.Report(new("Analysis complete", count, BytesRead: bytes, Message: $"{hashed:N0} candidates hashed · {failures:N0} unavailable or unresolved", NeedsAttention: failures > 0));
+            string? limitation = metadataUnavailable > 0 ? $"Rich metadata unavailable for {metadataUnavailable:N0} objects; content comparison does not depend on ExifTool." : null;
+            string? message = failures > 0 ? $"{failures:N0} unavailable or unresolved content checks." + (limitation is null ? "" : " " + limitation) : limitation;
+            catalog.JobState(job, failures > 0 ? "NeedsAttention" : metadataUnavailable > 0 ? "CompletedWithMetadataLimitations" : "Completed", count + hashed, message);
+            host.Log("photos-analysis", new { collection.Id, Inspected = count, Hashed = hashed, BytesRead = bytes, Failures = failures, MetadataUnavailable = metadataUnavailable, ElapsedMs = watch.ElapsedMilliseconds });
+            context.Report(new("Analysis complete", count, BytesRead: bytes, Message: $"{hashed:N0} candidates hashed · {failures:N0} unavailable or unresolved content · {metadataUnavailable:N0} without rich metadata", NeedsAttention: failures > 0));
         }
         catch (Exception error)
         {

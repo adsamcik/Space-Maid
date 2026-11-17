@@ -86,7 +86,7 @@ public partial class PhotosView
         {
             var result = await Task.Run(() => _catalog.Page(collection.Id, mode, sort, descending, requestedPage, token), token);
             token.ThrowIfCancellationRequested();
-            var lastJob = await Task.Run(() => _catalog.LastJob(collection.Id), token);
+            var lastJob = await Task.Run(() => _catalog.LastJobStatus(collection.Id), token);
             if (generation != _pageGeneration || token.IsCancellationRequested || Collection?.Id != collection.Id) return;
             // A newly requested page can win the race to the catalog before
             // BeginDiscovery runs. Refresh has already revoked the UI's trust.
@@ -102,8 +102,9 @@ public partial class PhotosView
             {
                 PhotoMode.Duplicates => "Default-stream equality only · Companion files and alternate streams are not equivalent by implication.",
                 PhotoMode.Families => "Possible basename relationships within the same folder · No equivalence or edit-fidelity claim.",
-                _ => lastJob ?? "Filenames provide format hints. Analyze verifies supported metadata and content."
-            }) + (collection.Coverage is null ? "" : "\n" + collection.Coverage);
+                _ => lastJob?.Summary ?? "Filenames provide format hints. Analyze verifies supported metadata and content."
+            }) + (_mode != PhotoMode.Browse && lastJob?.Message is { } message ? "\n" + message : "")
+                + (collection.Coverage is null ? "" : "\n" + collection.Coverage);
             if (_discovering) CoverageText.Text = "Preliminary metadata · Unvisited locations retain earlier observations.\n" + CoverageText.Text;
             PageText.Text = $"{_page * PhotoCatalog.PageSize + 1:N0}–{_page * PhotoCatalog.PageSize + result.Rows.Count:N0} of {_total:N0} files";
             PageText.ToolTip = $"Sorted by {_sort} ({(_descending ? "descending" : "ascending")}) · {PhotoCatalog.PageSize} rows per page";
