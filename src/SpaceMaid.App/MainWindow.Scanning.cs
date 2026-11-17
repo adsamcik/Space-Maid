@@ -25,12 +25,15 @@ public partial class MainWindow
         else await ScanCurrentPathAsync();
     }
 
-    internal async Task<bool> ScanCurrentPathAsync()
+    internal Task<bool> ScanCurrentPathAsync() => ScanPathAsync(_currentPath);
+
+    private async Task<bool> ScanPathAsync(string target)
     {
         if (_work is not null || _browsing || _closing || _currentPath.Length == 0) return false;
         _driveRestoreAttempted = true;
-        string target = _currentPath;
-        ClearResults();
+        var retained = _snapshot;
+        if (retained is null) ClearResults();
+        bool published = false;
         using var work = new CancellationTokenSource();
         _work = work;
         _scanning = true;
@@ -45,17 +48,21 @@ public partial class MainWindow
             Build = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
             Runtime = Environment.Version.ToString(), OperatingSystem = Environment.OSVersion.ToString(), ProcessId = Environment.ProcessId });
         SetBusy(true);
-        OpportunityBrowser?.SetEmptyMessage("Scanning…");
-        CandidateCaption.Text = "Scanning…";
+        if (retained is null)
+        {
+            OpportunityBrowser?.SetEmptyMessage("Scanning…");
+            CandidateCaption.Text = "Scanning…";
+        }
         bool acquiring = true;
         var progress = new ScanUiProgress(p =>
         {
             if (!_closing && acquiring && ReferenceEquals(_work, work))
             {
-                StatusText.Text = $"{p.Phase} · {p.Files:N0} files · {p.Elapsed.TotalSeconds:0.0}s";
+                StatusText.Text = $"{p.Phase} · {p.Files:N0} files · {p.Elapsed.TotalSeconds:0.0}s"
+                    + (retained is null ? "" : " · Showing previous inventory");
                 BackendStatusText.Text = p.Backend + (p.FallbackReason is null ? "" : $" · {p.FallbackReason}")
                     + (log.Error is null ? "" : $" · Logging unavailable: {log.Error}");
-                if (p.Preliminary is { } preliminary) ShowPreliminary(preliminary);
+                if (retained is null && p.Preliminary is { } preliminary) ShowPreliminary(preliminary);
             }
         });
         try
@@ -86,10 +93,13 @@ public partial class MainWindow
                 fastUnavailableReason: helperFailure);
             acquiring = false;
             if (_closing) return false;
-            if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
-            PreliminaryCaption.Text = "Preparing results…";
+            if (retained is null)
+            {
+                if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
+                PreliminaryCaption.Text = "Preparing results…";
+            }
             BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : $" · {scan.FallbackReason}");
-            StatusText.Text = "Finding cleanup opportunities…";
+            StatusText.Text = retained is null ? "Finding cleanup opportunities…" : "Preparing updated inventory · Showing previous results";
             await InitializeExtensionsAsync().WaitAsync(work.Token);
             log.Record("detection-start", new { scan.FileCount, scan.DirectoryCount });
             var result = await Task.Run(() =>
@@ -102,20 +112,40 @@ public partial class MainWindow
             }, work.Token);
             if (_closing) return false;
             work.Token.ThrowIfCancellationRequested();
-            _snapshot = scan;
-            _detectionElapsed = result.Elapsed;
             log.Record("opportunity-extensions", new { Providers = _extensions?.Entries.Select(entry => new { entry.Id, entry.Status }),
                 Status = OpportunityExtensions.Status(scan), ExtensionLog = _extensions?.LogPath });
             log.Record("detection-complete", new { ElapsedMs = result.Elapsed.TotalMilliseconds, Opportunities = result.Opportunities.Count, result.Total.EstimatedBytes });
             var presentation = Stopwatch.StartNew();
             log.Record("explorer-start", new { Root = scan.RootPath });
-            PublishOpportunities(scan, result.Opportunities, result.Groups);
+            var column = VisibleTreeSort(scan);
+            bool descending = column == _treeSortColumn ? _treeDescending : column != ScanSortColumn.Name;
+            string selected = retained?.EntryPath(_selectedLink) ?? scan.RootPath;
+            var prepared = await PrepareExplorerRefreshAsync(scan, result.Opportunities,
+                _explorer?.ExpandedPaths() ?? [scan.RootPath], selected, column, descending, [], work.Token);
+            work.Token.ThrowIfCancellationRequested();
+            if (_closing) return false;
+            // All cancellable preparation precedes publication. A failed
+            // replacement never dismantles the inventory the user was browsing.
+            var viewport = retained is null ? null : CaptureTreeViewport();
+            var selectedLocations = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
+            string? detailPath = OpportunityBrowser?.Detail?.Path;
+            bool grouped = retained is not null && _selectionIsGroup;
+            ClearFullInventoryRescan();
+            _scanStale = false; _staleScopes.Clear();
+            _snapshotVolumeId = null;
+            _explorerRecheckPath = null; _explorerReturnPending = false;
+            _detectionElapsed = result.Elapsed;
+            PublishExplorerRefresh(prepared, column, descending, grouped);
+            PublishOpportunities(scan, result.Opportunities, result.Groups, selectedLocations, detailPath, preserveScope: retained is not null);
+            TreeNote.Text = scan.HasAllocationData ? "Shared files counted once" : "Logical sizes only · Physical allocation is unavailable";
+            MapBasis.Text = scan.HasAllocationData ? "Area = allocated size" : "Area = logical size";
             ScannedSizeLabel.Text = "Scanned";
             ScannedSizeText.Text = SizeText.Format(scan.HasAllocationData ? scan.AllocatedBytes : scan.LogicalBytes);
             CandidateText.Text = SizeText.Format(result.Total.EstimatedBytes);
             CandidateCaption.Text = $"Observed · {_rows.Count:N0} {(_rows.Count == 1 ? "folder" : "folders")}";
             OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
-            await InitializeExplorerAsync(scan, result.Opportunities, work.Token);
+            RestoreTreeViewport(viewport);
+            published = true;
             ScannedSizeCaption.Text = scan.HasAllocationData ? "On disk"
                 : "Logical · Size on disk unavailable";
             _presentationElapsed = presentation.Elapsed;
@@ -133,7 +163,8 @@ public partial class MainWindow
             RefreshPathDriveSpace();
             string? verifiedVolume = await RememberDriveScanAsync(scan, historyVolume);
             if (_closing) return false;
-            work.Token.ThrowIfCancellationRequested();
+            // Publication already completed. Cancellation while saving history
+            // must not turn the new inventory into a cancelled acquisition.
             _snapshotVolumeId = verifiedVolume;
             return true;
         }
@@ -143,19 +174,29 @@ public partial class MainWindow
             log.Record("scan-cancelled", new { Target = target });
             if (!_closing)
             {
-                if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
-                RetainCancelledPreliminary();
-                StatusText.Text = _preliminary is null ? "Scan cancelled." : "Scan cancelled · Preliminary results retained.";
-                OpportunityBrowser?.SetEmptyMessage("Start another scan to calculate cleanup estimates.");
-                TreeHint.Text = "Scan cancelled. Start another scan when you're ready.";
+                if (published) StatusText.Text = _scanStatus + " · Post-scan update cancelled.";
+                else if (retained is not null) RetainPreviousScan(retained, "Scan cancelled.");
+                else
+                {
+                    if (progress.LatestPreliminary is { } preliminary) ShowPreliminary(preliminary);
+                    RetainCancelledPreliminary();
+                    StatusText.Text = _preliminary is null ? "Scan cancelled." : "Scan cancelled · Preliminary results retained.";
+                    OpportunityBrowser?.SetEmptyMessage("Start another scan to calculate cleanup estimates.");
+                    TreeHint.Text = "Scan cancelled. Start another scan when you're ready.";
+                }
             }
-            return false;
+            return published;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OverflowException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception or OverflowException)
         {
             log.Record("scan-failed", new { Target = target, Error = ex.ToString(), Win32Error = (ex as Win32Exception)?.NativeErrorCode });
-            if (!_closing) { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; OpportunityBrowser?.SetEmptyMessage("Check that the drive is connected and accessible, then try again."); }
-            return false;
+            if (!_closing)
+            {
+                if (published) StatusText.Text = _scanStatus + " · Post-scan update could not finish: " + ex.Message;
+                else if (retained is not null) RetainPreviousScan(retained, "Scan could not finish: " + ex.Message);
+                else { ClearResults(); StatusText.Text = $"Scan could not finish: {ex.Message}"; OpportunityBrowser?.SetEmptyMessage("Check that the drive is connected and accessible, then try again."); }
+            }
+            return published;
         }
         finally
         {
@@ -172,6 +213,14 @@ public partial class MainWindow
             if (!_closing) SetBusy(false);
             if (!_closing) _ = Dispatcher.BeginInvoke(new Action(async () => await TryAutomaticOptimizationAsync()));
         }
+    }
+
+    private void RetainPreviousScan(ScanSnapshot scan, string message)
+    {
+        // Read-only refresh failure changes neither the old snapshot's coverage
+        // nor any existing stale scopes or required full-rescan recovery.
+        BackendStatusText.Text = scan.Backend + (scan.FallbackReason is null ? "" : " · " + scan.FallbackReason);
+        StatusText.Text = message + " Previous inventory and selection retained; values are from the earlier scan.";
     }
 
     private void Details_Click(object sender, RoutedEventArgs e)

@@ -196,17 +196,20 @@ public partial class MainWindow
             }
             if (_closing) return false;
             EndPathEdit(); ExploreTab.IsChecked = true;
+            bool opened = true;
             if (!forceScan && ReferenceEquals(_snapshot, scan) && scan is not null && link is { } destination
                 && _explorer?.IsInRemovedBranch(destination) != true
                 && scan.Entry(destination) is { IsDirectory: true, IsPrimaryName: true } entry && !scan.IsUnmeasuredDirectory(entry.FileIndex))
                 await NavigateToEntryAsync(destination);
+            else if (forceScan && ReferenceEquals(_snapshot, scan) && scan is not null && link is not null)
+                opened = await ScanPathAsync(path);
             else
-            { SetScanTarget(path); await ScanCurrentPathAsync(); }
+            { SetScanTarget(path); opened = await ScanCurrentPathAsync(); }
             // Focusing the list can restore its previously focused row and
             // navigate away again. Focus the chosen row instead.
             if (SpaceTree.SelectedItem is { } selected
                 && SpaceTree.ItemContainerGenerator.ContainerFromItem(selected) is ListBoxItem container) container.Focus();
-            return true;
+            return opened;
         }
         finally
         {

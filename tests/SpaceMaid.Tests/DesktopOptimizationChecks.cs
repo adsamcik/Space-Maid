@@ -231,12 +231,49 @@ public sealed partial class DesktopTests
             Assert.Empty(Directory.GetFiles(Path.Join(source.Path, "__pycache__")));
             Assert.Equal(2, Directory.GetFiles(source.Path, "*.py").Length);
             Assert.Equal(2, Directory.GetFiles(Path.Join(state.Path, "logs", "Optimization"), "*.jsonl").Length);
+            var snapshotField = typeof(MainWindow).GetField("_snapshot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var retainedScan = (ScanSnapshot)snapshotField.GetValue(host)!;
+            var tree = (ListBox)host.FindName("SpaceTree");
+            var retainedRows = tree.ItemsSource;
+            var retainedSelection = tree.SelectedItem;
+            string retainedPath = host.CurrentPath;
+            host.MarkScanStale("Fixture inventory requires a full rescan.", [new(retainedScan.RootPath)]);
+            host.OfferFullInventoryRescan(retainedScan);
             var cancelled = host.ScanCurrentPathAsync();
             Assert.False(button.IsEnabled); Assert.Equal("Available after scan", hint.Text);
+            Assert.Same(retainedScan, snapshotField.GetValue(host));
+            Assert.Same(retainedRows, tree.ItemsSource);
+            Assert.False(((FrameworkElement)host.FindName("ExplorePanel")).IsEnabled);
             ((Button)host.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => cancelled.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(cancelled.GetAwaiter().GetResult());
-            Assert.True(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
+            Assert.True(button.IsEnabled); Assert.Equal(Visibility.Collapsed, hint.Visibility);
+            Assert.Same(retainedScan, snapshotField.GetValue(host));
+            Assert.Same(retainedRows, tree.ItemsSource); Assert.Same(retainedSelection, tree.SelectedItem);
+            Assert.Equal(retainedPath, host.CurrentPath);
+            Assert.Equal("Rescan inventory", ((Button)host.FindName("ScanButton")).Content);
+            Assert.Contains("Previous inventory", ((TextBlock)host.FindName("StatusText")).Text);
+
+            // A disconnected target must retain the earlier results and their
+            // recovery requirement, without treating a failed read as mutation.
+            string unavailable = source.Path + "-unavailable";
+            Directory.Move(source.Path, unavailable);
+            try
+            {
+                var unavailableScan = host.ScanCurrentPathAsync();
+                PumpUntil(() => unavailableScan.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(unavailableScan.GetAwaiter().GetResult());
+                Assert.Same(retainedScan, snapshotField.GetValue(host));
+                Assert.Same(retainedRows, tree.ItemsSource); Assert.Same(retainedSelection, tree.SelectedItem);
+                Assert.Equal(retainedPath, host.CurrentPath);
+                Assert.Equal("Rescan inventory", ((Button)host.FindName("ScanButton")).Content);
+                Assert.Contains("Previous inventory", ((TextBlock)host.FindName("StatusText")).Text);
+            }
+            finally { Directory.Move(unavailable, source.Path); }
+            var recovered = host.NavigatePathAsync(source.Path, forceScan: true);
+            PumpUntil(() => recovered.IsCompleted, TimeSpan.FromSeconds(15)); Assert.True(recovered.GetAwaiter().GetResult());
+            Assert.NotSame(retainedScan, snapshotField.GetValue(host));
+            Assert.Equal("Scan", ((Button)host.FindName("ScanButton")).Content);
             host.SetScanTarget(Path.Join(source.Path, "missing"));
+            Assert.Null(snapshotField.GetValue(host)); // New scopes cannot inherit unrelated results.
             var failed = host.ScanCurrentPathAsync();
             PumpUntil(() => failed.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(failed.GetAwaiter().GetResult());
             Assert.True(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
