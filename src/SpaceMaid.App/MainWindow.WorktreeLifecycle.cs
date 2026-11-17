@@ -38,7 +38,7 @@ public partial class MainWindow
         {
             var paths = _rows.Where(row => row.Item.IsWorktree).Select(row => row.Path).ToArray();
             _worktreeLifecycleWindow = new(paths, new WorktreeRetirement(WorktreeLifecycleSettingsPath, Operations.Files), RunWorktreeLifecycleActionAsync,
-                moved => { InitializeWorktreeLifecycle(); if (moved && _snapshot is { } scan) MarkScanStale("Worktree lifecycle changed a checkout. Scan again to update locations.", [new(scan.RootPath)]); }) { Owner = this };
+                moved => { InitializeWorktreeLifecycle(); if (moved && _snapshot is { } scan) MarkScanStale("Worktree operations may have changed checkout locations. Recheck affected folders or rescan to update them.", [new(scan.RootPath)]); }) { Owner = this };
             _worktreeLifecycleWindow.ShowDialog();
         }
         catch (Exception error) when (SettingsError(error)) { StatusText.Text = "Managed worktrees unavailable. " + error.Message; }

@@ -15,7 +15,10 @@ public sealed partial class DesktopTests
         var creation = GitWorktreeAnalyzerTests.GitFixture.Create(fixture.Path);
         PumpUntil(() => creation.IsCompleted, TimeSpan.FromSeconds(15)); using var repo = creation.GetAwaiter().GetResult();
         var service = new WorktreeRetirement(Path.Join(fixture.Path, "lifecycle.json"));
-        var window = new WorktreeLifecycleWindow([repo.Checkout], service, (operation, token) => operation(token), _ => { });
+        int operationCalls = 0;
+        var changed = new List<bool>();
+        var window = new WorktreeLifecycleWindow([repo.Checkout], service, (operation, token) =>
+        { operationCalls++; return operation(token); }, moved => changed.Add(moved));
         try
         {
             window.ShowActivated = false; window.ShowInTaskbar = false;
@@ -59,9 +62,69 @@ public sealed partial class DesktopTests
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", "worktree-recovery-compact.png"), 780, 600);
             Assert.True(((TextBox)window.FindName("RecoveryDetails")).ActualHeight >= 54);
             var restore = (Button)window.FindName("RestoreButton");
-            restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => restore.IsEnabled, TimeSpan.FromSeconds(15));
+            restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => check.IsEnabled, TimeSpan.FromSeconds(15));
             Assert.Equal(WorktreeRetirementState.Restored, Assert.Single(service.Load().Records).State);
             Assert.True(File.Exists(repo.Source)); Assert.Contains("Automatic retirement paused", status.Text);
+            Assert.False(restore.IsEnabled);
+
+            // Model the durable boundary independently: a launcher can stop
+            // after the intent was saved, without the view reaching its happy path.
+            var restored = Assert.Single(service.Load().Records);
+            var intent = restored with { Id = Guid.NewGuid(), State = WorktreeRetirementState.Prepared,
+                QuarantinedUtc = DateTime.UtcNow.AddMinutes(1), Entries = [], Message = "Prepared recovery intent retained." };
+            changed.Clear();
+            Task StoppedMutation(Func<CancellationToken, Task> operation) => (Task)typeof(WorktreeLifecycleWindow)
+                .GetMethod("PerformMutation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(window, [operation])!;
+            var stopped = StoppedMutation(_ =>
+            {
+                File.WriteAllText(lifecycle, System.Text.Json.JsonSerializer.Serialize(service.Load() with { Records = [restored, intent] }));
+                throw new IOException("Fixture Git launch unavailable after intent was recorded.");
+            });
+            PumpUntil(() => stopped.IsCompleted, TimeSpan.FromSeconds(15)); stopped.GetAwaiter().GetResult();
+            Assert.Equal(2, recovery.Items.Count);
+            Assert.Equal(restored.Id, ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).Id);
+            Assert.Contains("Fixture Git launch unavailable", status.Text);
+            Assert.Contains(true, changed); // A stopped mutation with Prepared intent may already have moved files.
+
+            recovery.SelectedItem = recovery.Items.Cast<WorktreeLifecycleWindow.RecoveryRow>().Single(row => row.Id == intent.Id);
+            var interrupted = intent with { State = WorktreeRetirementState.NeedsReview, Message = "Inspect the recorded checkout before retrying." };
+            stopped = StoppedMutation(_ =>
+            {
+                File.WriteAllText(lifecycle, System.Text.Json.JsonSerializer.Serialize(service.Load() with { Records = [restored, interrupted] }));
+                throw new OperationCanceledException();
+            });
+            PumpUntil(() => stopped.IsCompleted, TimeSpan.FromSeconds(15)); stopped.GetAwaiter().GetResult();
+            Assert.Equal(intent.Id, ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).Id);
+            Assert.Equal(nameof(WorktreeRetirementState.NeedsReview), ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).State);
+            Assert.Contains("Cancelled", status.Text); Assert.Contains(true, changed);
+            Assert.False(restore.IsEnabled); Assert.False(((Button)window.FindName("FinalizeButton")).IsEnabled);
+
+            var previousRows = recovery.ItemsSource;
+            string readable = File.ReadAllText(lifecycle);
+            changed.Clear();
+            stopped = StoppedMutation(_ =>
+            {
+                File.WriteAllText(lifecycle, "unreadable fixture record");
+                throw new IOException("Fixture operation stopped before completion.");
+            });
+            PumpUntil(() => stopped.IsCompleted, TimeSpan.FromSeconds(15)); stopped.GetAwaiter().GetResult();
+            Assert.Same(previousRows, recovery.ItemsSource);
+            Assert.Equal(intent.Id, ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).Id);
+            Assert.Contains("Fixture operation stopped", status.Text); Assert.Contains("could not be refreshed", status.Text);
+            Assert.False(reconcile.IsEnabled); Assert.False(restore.IsEnabled);
+            Assert.Contains(true, changed); // Unknown durable state cannot certify the interrupted mutation as untouched.
+
+            File.WriteAllText(lifecycle, readable);
+            changed.Clear();
+            int attempts = operationCalls;
+            ((Button)window.FindName("RefreshRecoveryButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(attempts, operationCalls); // A records refresh never repeats a mutation.
+            Assert.Empty(changed);
+            Assert.Equal(intent.Id, ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).Id);
+            Assert.True(reconcile.IsEnabled); Assert.False(restore.IsEnabled);
+            Assert.Contains("No file operation was repeated", status.Text);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "worktree-recovery-stopped.png"), 780, 600);
         }
         finally { window.Close(); }
     }

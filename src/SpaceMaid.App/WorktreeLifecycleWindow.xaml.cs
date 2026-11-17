@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using SpaceMaid.Core.Analysis;
 
 namespace SpaceMaid.App;
@@ -12,7 +14,7 @@ public partial class WorktreeLifecycleWindow : Window
     private readonly Action<bool> _changed;
     private readonly List<CheckoutRow> _rows;
     private CancellationTokenSource? _work;
-    private bool _closeAfterCancel;
+    private bool _closeAfterCancel, _recoveryCurrent, _mutationInvoked;
 
     internal WorktreeLifecycleWindow(IEnumerable<string> paths, WorktreeRetirement service,
         Func<Func<CancellationToken, Task>, CancellationToken, Task> run, Action<bool> changed)
@@ -27,8 +29,9 @@ public partial class WorktreeLifecycleWindow : Window
         {
             if (RecoveryList.SelectedItem is RecoveryRow row)
             {
-                StatusText.Text = row.Message;
-                RecoveryDetails.Text = row.Message + "\n\nOriginal: " + row.Original + "\nQuarantine: " + row.Quarantine
+                string freshness = _recoveryCurrent ? "" : "Previous recovery records · Choose Refresh records to check their current status.\n\n";
+                StatusText.Text = freshness + row.Message;
+                RecoveryDetails.Text = freshness + row.Message + "\n\nOriginal: " + row.Original + "\nQuarantine: " + row.Quarantine
                     + "\nShared repository: " + row.CommonGitDirectory + "\nRetained reference: " + row.Reference;
             }
             else RecoveryDetails.Text = "Select a recovery record to inspect its exact paths and retained reference.";
@@ -70,17 +73,17 @@ public partial class WorktreeLifecycleWindow : Window
         await _service.EnrollAsync(SelectedPath, TargetBox.Text.Trim(), retention.Days, retention.Grace, AutomaticBox.IsChecked == true, token);
         _changed(false); StatusText.Text = "Managed policy saved for this exact checkout and branch.";
     });
-    private async void Quarantine_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
+    private async void Quarantine_Click(object sender, RoutedEventArgs e) => await PerformMutation(async token =>
     {
         var policy = _service.Load().Policies.SingleOrDefault(p => p.Path == SelectedPath) ?? throw new InvalidOperationException("Save a managed policy first.");
-        var result = await _service.QuarantineAsync(policy, token); StatusText.Text = result.Message; RefreshRecovery(); _changed(true);
+        var result = await _service.QuarantineAsync(policy, token); StatusText.Text = result.Message; _changed(true);
     });
-    private async void Restore_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
-    { var result = await _service.RestoreAsync(SelectedRecord, token); StatusText.Text = result.Message; RefreshRecovery(); _changed(true); });
-    private async void Finalize_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
-    { var result = await _service.FinalizeAsync(SelectedRecord, token); StatusText.Text = result.Message; RefreshRecovery(); _changed(true); });
+    private async void Restore_Click(object sender, RoutedEventArgs e) => await PerformMutation(async token =>
+    { var result = await _service.RestoreAsync(SelectedRecord, token); StatusText.Text = result.Message; _changed(true); });
+    private async void Finalize_Click(object sender, RoutedEventArgs e) => await PerformMutation(async token =>
+    { var result = await _service.FinalizeAsync(SelectedRecord, token); StatusText.Text = result.Message; _changed(true); });
     private async void Reconcile_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
-    { var result = await _service.ReconcileAsync(SelectedRecord, token); RefreshRecovery(); StatusText.Text = result.Message; _changed(false); });
+    { var result = await _service.ReconcileAsync(SelectedRecord, token); StatusText.Text = result.Message; _changed(false); });
     private async void Pause_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
     {
         string path = RecoveryList.SelectedItem is RecoveryRow recovery ? recovery.Original : SelectedPath;
@@ -89,23 +92,60 @@ public partial class WorktreeLifecycleWindow : Window
     private async Task Perform(Func<CancellationToken, Task> operation)
     {
         if (_work is not null) return;
-        using var work = new CancellationTokenSource(); _work = work; SetBusy(true);
+        using var work = new CancellationTokenSource(); _work = work; _mutationInvoked = false; SetBusy(true);
+        var previous = RecoveryList.Items.Cast<RecoveryRow>().ToArray();
+        bool stopped = false;
         try { await _run(operation, work.Token); }
         catch (Exception error) when (CleanupBatch.IsExpected(error) || error is System.Text.Json.JsonException)
-        { StatusText.Text = error is OperationCanceledException ? "Cancelled. Completed moves or removals remain recorded in Recovery." : error.Message; }
-        finally { _work = null; SetBusy(false); if (_closeAfterCancel) Close(); }
+        { stopped = true; StatusText.Text = error is OperationCanceledException ? "Cancelled. Completed moves or removals remain recorded in Recovery." : error.Message; }
+        finally
+        {
+            string outcome = StatusText.Text;
+            try
+            {
+                RefreshRecovery();
+                // Prepared can survive a move when cancellation precedes the
+                // next receipt update. It is uncertainty, not proof of no change.
+                if (stopped && _mutationInvoked && !previous.SequenceEqual(RecoveryList.Items.Cast<RecoveryRow>())) _changed(true);
+            }
+            catch (Exception error) when (CleanupBatch.IsExpected(error) || error is System.Text.Json.JsonException)
+            {
+                outcome += " Recovery records could not be refreshed; previous records remain visible. Choose Refresh records to retry. " + error.Message;
+                if (stopped && _mutationInvoked) _changed(true);
+            }
+            finally
+            {
+                StatusText.Text = outcome;
+                _work = null; SetBusy(false); if (_closeAfterCancel) Close();
+            }
+        }
+    }
+    private Task PerformMutation(Func<CancellationToken, Task> operation) => Perform(async token =>
+    {
+        _mutationInvoked = true;
+        await operation(token);
+    });
+    private void RefreshRecovery_Click(object sender, RoutedEventArgs e)
+    {
+        if (_work is not null) return;
+        string outcome = StatusText.Text;
+        try { RefreshRecovery(); StatusText.Text = "Recovery records refreshed. No file operation was repeated."; }
+        catch (Exception error) when (CleanupBatch.IsExpected(error) || error is System.Text.Json.JsonException)
+        { StatusText.Text = outcome + " Recovery records remain unavailable. " + error.Message; }
+        finally { UpdateRecoveryActions(); }
     }
     private void SetBusy(bool busy)
     {
         PolicyControls.IsEnabled = CheckoutList.IsEnabled = RecoveryList.IsEnabled = CheckButton.IsEnabled = EnrollButton.IsEnabled
             = QuarantineButton.IsEnabled = PauseButton.IsEnabled = !busy;
+        RefreshRecoveryButton.IsEnabled = !busy;
         UpdateRecoveryActions();
         CloseButton.Content = busy ? "Cancel" : "Close";
     }
     private void UpdateRecoveryActions()
     {
         var row = RecoveryList.SelectedItem as RecoveryRow;
-        bool actionable = _work is null && row is not null && row.State is not (nameof(WorktreeRetirementState.Completed) or nameof(WorktreeRetirementState.Restored));
+        bool actionable = _work is null && _recoveryCurrent && row is not null && row.State is not (nameof(WorktreeRetirementState.Completed) or nameof(WorktreeRetirementState.Restored));
         ReconcileButton.IsEnabled = actionable;
         RestoreButton.IsEnabled = actionable && row!.State != nameof(WorktreeRetirementState.NeedsReview);
         FinalizeButton.IsEnabled = actionable && row!.State is nameof(WorktreeRetirementState.Quarantined) or nameof(WorktreeRetirementState.Finalizing);
@@ -113,12 +153,25 @@ public partial class WorktreeLifecycleWindow : Window
     private void RefreshRecovery()
     {
         Guid? selected = (RecoveryList.SelectedItem as RecoveryRow)?.Id;
+        var known = RecoveryList.Items.Cast<RecoveryRow>().Select(row => row.Id).ToHashSet();
+        var scroll = FindScrollViewer(RecoveryList);
+        double offset = scroll?.VerticalOffset ?? 0;
+        _recoveryCurrent = false;
         var rows = _service.Load().Records.OrderByDescending(r => r.QuarantinedUtc)
             .Select(r => new RecoveryRow(r.Id, r.Policy.Path, r.State.ToString(), r.FinalizeAfterUtc.ToLocalTime().ToString("g"), r.QuarantinePath, r.RecoveryReference, r.Message)
             { CommonGitDirectory = r.CommonGitDirectory }).ToArray();
+        _recoveryCurrent = true;
         RecoveryList.ItemsSource = rows;
-        RecoveryList.SelectedItem = rows.FirstOrDefault(row => row.Id == selected);
+        RecoveryList.SelectedItem = rows.FirstOrDefault(row => row.Id == selected) ?? rows.FirstOrDefault(row => !known.Contains(row.Id));
+        scroll?.ScrollToVerticalOffset(offset);
         UpdateRecoveryActions();
+    }
+    private static ScrollViewer? FindScrollViewer(DependencyObject parent)
+    {
+        if (parent is ScrollViewer scroll) return scroll;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            if (FindScrollViewer(VisualTreeHelper.GetChild(parent, i)) is { } found) return found;
+        return null;
     }
     private void Close_Click(object sender, RoutedEventArgs e) { if (_work is { } work) work.Cancel(); else Close(); }
     private void Window_Closing(object? sender, CancelEventArgs e)
