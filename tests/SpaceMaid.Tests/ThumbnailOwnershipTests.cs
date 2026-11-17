@@ -84,6 +84,55 @@ public sealed class ThumbnailOwnershipTests
     }
 
     [Fact]
+    public async Task UnavailableCacheRootKeepsPreviewInMemoryAndCanRecoverWithoutRestart()
+    {
+        using var directory = new TestDirectory();
+        var fixture = CreatePhoto(directory.Path);
+        string cacheDirectory = Path.GetDirectoryName(fixture.CachePath)!;
+        Directory.Delete(cacheDirectory);
+        File.WriteAllText(cacheDirectory, "Owned fixture blocking the cache directory");
+        byte[] sourceBefore = File.ReadAllBytes(fixture.Row.Path);
+        var cache = new ThumbnailCache(fixture.Host);
+
+        var result = await cache.GetAsync(fixture.Row, CancellationToken.None);
+
+        Assert.NotNull(result.Image);
+        Assert.Contains("Disk cache unavailable", result.Status);
+        Assert.DoesNotContain("Codec missing", result.Status);
+        Assert.True(cache.MemoryBytes is > 0 and <= ThumbnailCache.MemoryLimit);
+        Assert.Equal("Owned fixture blocking the cache directory", File.ReadAllText(cacheDirectory));
+        Assert.Equal(sourceBefore, File.ReadAllBytes(fixture.Row.Path));
+        Assert.Contains(fixture.Host.Logs, log => log.Event == "photos-thumbnail-cache-unavailable");
+
+        File.Delete(cacheDirectory);
+        Directory.CreateDirectory(cacheDirectory);
+        // A different orientation is a new valid preview key. The same cache
+        // instance must retry storage on a later miss after it becomes usable.
+        var recovered = await cache.GetAsync(fixture.Row with { Orientation = 2 }, CancellationToken.None);
+        Assert.NotNull(recovered.Image);
+        Assert.DoesNotContain("Disk cache unavailable", recovered.Status);
+        Assert.Single(Directory.EnumerateFiles(cacheDirectory, "*.png"));
+        Assert.Equal(sourceBefore, File.ReadAllBytes(fixture.Row.Path));
+    }
+
+    [Fact]
+    public async Task UnreadableImageIsNotReportedAsACacheProblem()
+    {
+        using var directory = new TestDirectory();
+        var fixture = CreatePhoto(directory.Path);
+        File.WriteAllText(fixture.Row.Path, "Owned invalid image fixture");
+        MediaRevision revision;
+        using (var metadata = NativeMediaFile.Open(fixture.Row.Path, false)) revision = metadata.Revision;
+        var row = fixture.Row with { Revision = revision.Key, ObjectId = revision.Identity };
+
+        var result = await new ThumbnailCache(fixture.Host).GetAsync(row, CancellationToken.None);
+
+        Assert.Null(result.Image);
+        Assert.Contains("Codec missing or file unreadable", result.Status);
+        Assert.DoesNotContain("Disk cache unavailable", result.Status);
+    }
+
+    [Fact]
     public async Task CorruptOwnedPreviewIsRecreatedWithAReceiptAndCanBeReused()
     {
         using var directory = new TestDirectory();

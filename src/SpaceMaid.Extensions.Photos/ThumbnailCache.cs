@@ -85,7 +85,7 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                     }
                 }
                 var cachePath = Path.Join(_directory, key + ".png");
-                BitmapSource? bitmap = null; var diskHit = false; var unfamiliarCollision = false;
+                BitmapSource? bitmap = null; var diskHit = false; var unfamiliarCollision = false; var cacheUnavailable = false;
                 await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
                 try
                 {
@@ -109,6 +109,14 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                         }
                     }
                 }
+                catch (Exception error) when (CacheFailure(error))
+                {
+                    // Cache storage is optional. Keep the source leases and
+                    // decode into bounded memory without retrying disk writes
+                    // or touching an unfamiliar/unavailable cache location.
+                    bitmap = null; cacheUnavailable = true; _diskBytes = null;
+                    host.Log("photos-thumbnail-cache-unavailable", new { Error = error.GetType().Name });
+                }
                 finally { _diskGate.Release(); }
                 if (bitmap is null)
                 {
@@ -116,36 +124,41 @@ internal sealed class ThumbnailCache(IExtensionHost host)
                     source.Stream!.Position = 0;
                     bitmap = Orient(Decode(source.Stream!), row.Orientation); source.VerifyUnchanged();
                     context.Cancellation.ThrowIfCancellationRequested();
-                    await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
-                    try
+                    if (!cacheUnavailable)
                     {
-                        InitializeDisk();
-                        if (!_diskWritesDisabled && !unfamiliarCollision)
+                        await _diskGate.WaitAsync(context.Cancellation).ConfigureAwait(false);
+                        try
                         {
-                            var temporary = Path.Join(_directory, key + "." + Guid.NewGuid().ToString("N") + ".tmp");
-                            GeneratedProducedFile? produced = null;
-                            try
+                            InitializeDisk();
+                            cacheUnavailable = _diskWritesDisabled;
+                            if (!_diskWritesDisabled && !unfamiliarCollision)
                             {
-                                using (var output = host.Files.Open(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                                var temporary = Path.Join(_directory, key + "." + Guid.NewGuid().ToString("N") + ".tmp");
+                                GeneratedProducedFile? produced = null;
+                                try
                                 {
-                                    var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(output);
-                                    produced = GeneratedFileOwnership.CaptureProduced(output, temporary);
+                                    using (var output = host.Files.Open(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                                    {
+                                        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(output);
+                                        produced = GeneratedFileOwnership.CaptureProduced(output, temporary);
+                                    }
+                                    host.Files.MoveFile(temporary, cachePath, overwrite: false); _diskBytes += produced.Revision.Length;
+                                    GeneratedFileOwnership.Record(cachePath, Owner, [row.Path], produced);
                                 }
-                                host.Files.MoveFile(temporary, cachePath, overwrite: false); _diskBytes += produced.Revision.Length;
-                                GeneratedFileOwnership.Record(cachePath, Owner, [row.Path], produced);
+                                catch (Exception error) when (CacheFailure(error))
+                                { cacheUnavailable = true; _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-write-failed", new { Error = error.GetType().Name }); }
+                                finally { if (produced is not null) GeneratedFileOwnership.TryDeleteProduced(temporary, produced); }
+                                try { EvictDisk(); }
+                                catch (Exception error) when (CacheFailure(error))
+                                { cacheUnavailable = true; _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-eviction-failed", new { Error = error.GetType().Name }); }
                             }
-                            catch (Exception error) when (CacheFailure(error))
-                            { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-write-failed", new { Error = error.GetType().Name }); }
-                            finally { if (produced is not null) GeneratedFileOwnership.TryDeleteProduced(temporary, produced); }
-                            try { EvictDisk(); }
-                            catch (Exception error) when (CacheFailure(error))
-                            { _diskWritesDisabled = true; host.Log("photos-thumbnail-cache-eviction-failed", new { Error = error.GetType().Name }); }
                         }
+                        finally { _diskGate.Release(); }
                     }
-                    finally { _diskGate.Release(); }
                 }
                 metadata.VerifyUnchanged(); AddMemory(key, bitmap);
-                result = new(bitmap, "Preview · Embedded RAW previews may not reflect current edits");
+                result = new(bitmap, "Preview · Embedded RAW previews may not reflect current edits"
+                    + (cacheUnavailable ? " · Disk cache unavailable; kept in memory" : ""));
                 host.Log("photos-thumbnail", new { Cache = diskHit ? "disk" : "decoded", Width = bitmap.PixelWidth, Height = bitmap.PixelHeight, MemoryBytes });
             }, null, token);
             return result ?? new(null, "Preview unavailable");

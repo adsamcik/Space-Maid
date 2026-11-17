@@ -51,6 +51,7 @@ public sealed class ThumbnailCacheConcurrencyTests
         }
         var result = await first;
         Assert.NotNull(result.Image); // A failed disk cache must still show the decoded source.
+        Assert.Contains("Disk cache unavailable", result.Status);
         Assert.NotNull(duplicate);
         Assert.Same(result.Image, (await duplicate).Image);
         Assert.True(cache.MemoryBytes <= ThumbnailCache.MemoryLimit);
