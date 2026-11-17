@@ -96,10 +96,13 @@ public partial class MainWindow
         return outcome;
     }
 
-    private sealed class CloudStorageServices(MainWindow window) : ICloudStorageServices
+    private sealed class CloudStorageServices(MainWindow window) : ICloudStorageServices, ICloudStoragePagingServices
     {
         public Task<CloudDirectoryListing> ReadDirectoryAsync(string path, CancellationToken token)
             => window.Operations.ReadCloudDirectoryAsync(path, token);
+
+        public Task<CloudDirectoryListing> ReadDirectoryPageAsync(string path, CloudDirectoryContinuation? continuation, CancellationToken token)
+            => window.Operations.ReadCloudDirectoryPageAsync(path, continuation, token);
 
         public async Task<CloudStorageReviewResult> ReviewOnlineOnlyAsync(string path, CancellationToken token)
         {

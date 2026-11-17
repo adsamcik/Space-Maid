@@ -105,17 +105,41 @@ public sealed class CloudDirectoryTests
 
     [Fact]
     [Trait("Stage", "System")]
-    public void LargeDirectoriesHaveAnExplicitBoundAndIncompleteCoverage()
+    public void LargeDirectoriesContinueWithoutDuplicatesAndRejectChangedMembership()
     {
         using var fixture = new TestDirectory();
-        for (int i = 0; i < 5001; i++) File.WriteAllBytes(Path.Join(fixture.Path, $"file-{i:D4}.bin"), []);
+        string root = Directory.CreateDirectory(Path.Join(fixture.Path, "cloud")).FullName;
+        for (int i = 0; i < 5001; i++) File.WriteAllBytes(Path.Join(root, $"file-{i:D4}.bin"), []);
 
-        var listing = CloudFiles.ReadDirectory(fixture.Path, default);
+        var listing = CloudFiles.ReadDirectory(root, default);
 
         Assert.Equal(5000, listing.Entries.Count);
         Assert.False(listing.Complete);
+        Assert.True(listing.PageComplete);
         Assert.Contains("5,000", Assert.Single(listing.Warnings));
-        Assert.Equal(5001, Directory.GetFiles(fixture.Path).Length);
+        var cursor = Assert.IsType<CloudDirectoryContinuation>(listing.Continuation);
+        var last = CloudFiles.ReadDirectoryPage(root, cursor, default);
+        Assert.True(last.Complete);
+        Assert.Null(last.Continuation);
+        Assert.Single(last.Entries);
+        Assert.Equal(5001, listing.Entries.Concat(last.Entries).Select(entry => entry.Path).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal("file-5000.bin", last.Entries[0].Name);
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        Assert.Throws<OperationCanceledException>(() => CloudFiles.ReadDirectoryPage(root, cursor, cancellation.Token));
+        string other = Directory.CreateDirectory(Path.Join(fixture.Path, "other")).FullName;
+        Assert.Throws<IOException>(() => CloudFiles.ReadDirectoryPage(other, cursor, default));
+        File.WriteAllText(Path.Join(root, "new-file"), "keep");
+        Directory.SetLastWriteTimeUtc(root, DateTime.UtcNow.AddSeconds(1));
+        Assert.Contains("refresh", Assert.Throws<IOException>(() => CloudFiles.ReadDirectoryPage(root, cursor, default)).Message);
+        var refreshed = CloudFiles.ReadDirectoryPage(root, null, default);
+        Assert.NotNull(refreshed.Continuation);
+        string previous = Path.Join(fixture.Path, "previous");
+        Directory.Move(root, previous);
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Join(root, "replacement"), "keep replacement");
+        Assert.Throws<IOException>(() => CloudFiles.ReadDirectoryPage(root, refreshed.Continuation, default));
+        Assert.Equal("keep replacement", File.ReadAllText(Path.Join(root, "replacement")));
+        Assert.Equal(5002, Directory.GetFiles(previous).Length);
     }
 
     [Theory]

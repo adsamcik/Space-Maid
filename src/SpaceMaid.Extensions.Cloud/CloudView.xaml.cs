@@ -21,6 +21,9 @@ public partial class CloudView : UserControl, IExtensionContextView
     private readonly List<CloudRoot> _saved = [];
     private IReadOnlyList<CloudRoot> _discovered = [];
     private IReadOnlyList<CloudEntryRow> _entries = [];
+    private CloudDirectoryContinuation? _continuation;
+    private bool _coverageIncomplete, _listingStale;
+    private string[] _listingWarnings = [];
     private readonly Dictionary<string, (string? SelectedPath, double Offset)> _positions = new(StringComparer.OrdinalIgnoreCase);
     private SortDescription[] _sorting = [];
     private CancellationTokenSource? _work;
@@ -59,30 +62,56 @@ public partial class CloudView : UserControl, IExtensionContextView
         });
     }
 
-    internal Task BrowseAsync(string path) => RunAsync(async token =>
+    internal Task BrowseAsync(string path) => ReadPageAsync(path, false);
+    internal Task LoadMoreAsync() => _currentPath is { } path ? ReadPageAsync(path, true) : Task.CompletedTask;
+
+    private Task ReadPageAsync(string path, bool append) => RunAsync(async token =>
     {
         if (_storage is null) throw new InvalidOperationException("Update Space Maid to browse cloud folders.");
         if (Root is not { } root || !Within(path, root.Path)) throw new IOException("Choose a folder within the selected cloud drive.");
         SavePosition();
-        if (_currentPath is null) { _currentPath = path; FolderPath.Text = path; }
-        var listing = await _storage.ReadDirectoryAsync(path, token);
+        var cursor = append ? _continuation : null;
+        if (append && (cursor is null || _storage is not ICloudStoragePagingServices)) return;
+        if (_currentPath is null) { _currentPath = path; FolderPath.Text = path; _coverageIncomplete = true; }
+        CloudDirectoryListing listing;
+        try
+        {
+            listing = _storage is ICloudStoragePagingServices paging
+                ? await paging.ReadDirectoryPageAsync(path, cursor, token)
+                : await _storage.ReadDirectoryAsync(path, token);
+            if (!listing.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) throw new IOException("The returned folder changed. Refresh to retry.");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or Win32Exception)
+        {
+            _continuation = null; _listingStale = _coverageIncomplete = true;
+            ApplyFilter();
+            throw;
+        }
         token.ThrowIfCancellationRequested();
         _currentPath = listing.Path;
         FolderPath.Text = listing.Path;
-        _entries = listing.Entries.Select(entry => new CloudEntryRow(entry)).ToArray();
+        _entries = (append ? _entries : []).Concat(listing.Entries.Select(entry => new CloudEntryRow(entry)))
+            .DistinctBy(row => row.Entry.Path, StringComparer.Ordinal).ToArray();
+        _continuation = listing.Continuation;
+        _coverageIncomplete = (append && _coverageIncomplete) || !listing.PageComplete
+            || !listing.Complete && listing.Continuation is null;
+        _listingStale = false;
+        _listingWarnings = (append ? _listingWarnings : []).Concat(listing.PageComplete && listing.Continuation is not null ? [] : listing.Warnings)
+            .Distinct().Take(32).ToArray();
         var view = CollectionViewSource.GetDefaultView(_entries);
         foreach (var sort in _sorting) view.SortDescriptions.Add(sort);
         FileList.ItemsSource = view;
         ApplyFilter();
         if (_positions.TryGetValue(listing.Path, out var position))
         {
-            FileList.SelectedItem = _entries.FirstOrDefault(row => row.Entry.Path.Equals(position.SelectedPath, StringComparison.OrdinalIgnoreCase));
+            FileList.SelectedItem = _entries.FirstOrDefault(row => row.Entry.Path.Equals(position.SelectedPath, StringComparison.Ordinal));
             FileList.UpdateLayout();
             FindScrollViewer(FileList)?.ScrollToVerticalOffset(position.Offset);
         }
-        StatusText.Text = $"{listing.Entries.Count:N0} items" + (listing.Complete ? "" : " · Partial results; see Details");
+        StatusText.Text = $"{_entries.Count:N0} items loaded" + (_continuation is null ? "" : " · More items available; load more to search them")
+            + (_coverageIncomplete ? " · Some metadata unavailable; see Details" : "");
         DetailsText.Text = "Local data is reported by Windows for each file; folder totals and provider caches are excluded. File size is not cloud quota usage.\n"
-            + string.Join("\n", listing.Warnings);
+            + string.Join("\n", _listingWarnings);
         UpdateActions();
     });
 
@@ -139,7 +168,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         RootList.SelectedItem = RootList.Items.Cast<CloudRoot>().FirstOrDefault(root => root.Path.Equals(previous, StringComparison.OrdinalIgnoreCase));
         // No content enumeration until the user selects a folder or refreshes it.
         if (Root is null || _currentPath is { } current && !Within(current, Root.Path))
-        { _currentPath = null; FolderPath.Text = ""; _entries = []; FileList.ItemsSource = null; ApplyFilter(); }
+        { _currentPath = null; FolderPath.Text = ""; ClearListing(); ApplyFilter(); }
     }
 
     private void SavePosition()
@@ -164,7 +193,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         using var work = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
         _work = work; UpdateActions();
         try { await action(work.Token); }
-        catch (OperationCanceledException) { StatusText.Text = "Cancelled. Accepted online-only requests may still be processing."; }
+        catch (OperationCanceledException) { StatusText.Text = "Cancelled. Previously loaded items retained; accepted online-only requests remain active."; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or Win32Exception)
         {
             StatusText.Text = "Could not finish. Refresh the folder or use the provider’s controls in Explorer.";
@@ -183,7 +212,8 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (result.RequestsAccepted)
         {
             // Provider processing is asynchronous; old residency is no longer current.
-            _entries = []; FileList.ItemsSource = null; ApplyFilter();
+            SavePosition();
+            ClearListing(); _coverageIncomplete = _listingStale = true; ApplyFilter();
             EmptyText.Text = "Refresh to check the provider’s current local storage.";
         }
     });
@@ -196,13 +226,15 @@ public partial class CloudView : UserControl, IExtensionContextView
         FileList.IsEnabled = idle;
         CancelButton.Visibility = idle ? Visibility.Collapsed : Visibility.Visible;
         RefreshButton.IsEnabled = idle && _currentPath is not null && _storage is not null;
+        LoadMoreButton.Visibility = _continuation is null ? Visibility.Collapsed : Visibility.Visible;
+        LoadMoreButton.IsEnabled = idle && !_listingStale && _continuation is not null && _storage is ICloudStoragePagingServices;
         UpButton.IsEnabled = idle && Root is { } root && _currentPath is { } current && !current.Equals(root.Path, StringComparison.OrdinalIgnoreCase);
         string? target = Selected?.Entry.Path ?? _currentPath;
         SelectedPath.Text = target ?? "";
         OpenFolderButton.IsEnabled = idle && Selected is { Entry.IsDirectory: true };
         ExplorerButton.IsEnabled = idle && target is not null;
         ExploreButton.IsEnabled = idle && !_hostBusy && target is not null && (_host as IExtensionNavigationHost)?.Navigation is not null;
-        FreeButton.IsEnabled = idle && !_hostBusy && _storage is not null && Selected is { Entry.CanRequestOnlineOnly: true };
+        FreeButton.IsEnabled = idle && !_hostBusy && !_listingStale && _storage is not null && Selected is { Entry.CanRequestOnlineOnly: true };
         ActionHint.Text = Selected is { Entry.CanRequestOnlineOnly: false }
             ? "Use the provider’s controls in Explorer for this item. Deleting synced files can also delete their cloud copies."
             : "Free local space keeps cloud copies. Downloading again needs internet.";
@@ -216,7 +248,18 @@ public partial class CloudView : UserControl, IExtensionContextView
         string query = SearchBox.Text.Trim();
         if (FileList.ItemsSource is ICollectionView view) view.Filter = value => value is CloudEntryRow row && row.Name.Contains(query, StringComparison.OrdinalIgnoreCase);
         EmptyText.Visibility = FileList.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyText.Text = _currentPath is null ? "OneDrive · Google Drive · Dropbox · Proton Drive" : _entries.Count == 0 ? "This folder is empty." : "No matching items.";
+        SearchBox.ToolTip = _continuation is not null ? "Filter loaded items. Load more to search the remaining names." : "Filter names in the loaded folder";
+        EmptyText.Text = _currentPath is null ? "OneDrive · Google Drive · Dropbox · Proton Drive"
+            : _listingStale ? _entries.Count == 0 ? "Contents not checked. Refresh this folder to continue." : "Earlier items kept. Refresh this folder before continuing."
+            : _continuation is not null ? "No matching loaded items. Load more to search the remaining names."
+            : _coverageIncomplete ? "No matching readable items. Some contents are unavailable; refresh to retry."
+            : _entries.Count == 0 ? "This folder is empty." : "No matching items.";
+    }
+
+    private void ClearListing()
+    {
+        _entries = []; _continuation = null; _listingWarnings = [];
+        _coverageIncomplete = _listingStale = false; FileList.ItemsSource = null;
     }
 
     internal static bool Within(string path, string root)
@@ -230,7 +273,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     {
         if (_work is not null) return;
         SavePosition();
-        _currentPath = null; FolderPath.Text = ""; _entries = []; FileList.ItemsSource = null; ApplyFilter(); UpdateActions();
+        _currentPath = null; FolderPath.Text = ""; ClearListing(); ApplyFilter(); UpdateActions();
         if (Root is { } root) await (_pending = BrowseAsync(root.Path));
     }
     private void Add_Click(object sender, RoutedEventArgs e) { AddButton.ContextMenu.PlacementTarget = AddButton; AddButton.ContextMenu.IsOpen = true; }
@@ -248,6 +291,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     }));
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
     private async void Refresh_Click(object sender, RoutedEventArgs e) { if (_currentPath is { } path) await (_pending = BrowseAsync(path)); }
+    private async void LoadMore_Click(object sender, RoutedEventArgs e) => await (_pending = LoadMoreAsync());
     private async void Up_Click(object sender, RoutedEventArgs e) { if (_currentPath is { } path && Path.GetDirectoryName(path) is { } parent) await (_pending = BrowseAsync(parent)); }
     private void Search_Changed(object sender, TextChangedEventArgs e) => ApplyFilter();
     private void File_Changed(object sender, SelectionChangedEventArgs e) => UpdateActions();

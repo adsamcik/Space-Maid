@@ -102,6 +102,33 @@ public sealed partial class DesktopTests
             Assert.Single(list.Items); list.SelectedIndex = 0; Assert.False(free.IsEnabled);
             Assert.Equal("keep", File.ReadAllText(Path.Join(location, "original.txt")));
         }
+        // Loading another bounded page retains filtering, selection and old
+        // rows if the folder changes before continuation can be validated.
+        string pagedRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "Paged cloud")).FullName;
+        for (int i = 0; i < 5001; i++) File.WriteAllBytes(Path.Join(pagedRoot, $"file-{i:D4}.bin"), []);
+        Finish(Invoke("AddRootAsync", "OneDrive", pagedRoot));
+        var more = (Button)view.FindName("LoadMoreButton");
+        Assert.Equal(5000, list.Items.Count); Assert.True(more.IsVisible);
+        search.Text = "5000.bin";
+        Assert.Empty(list.Items);
+        Assert.Contains("loaded", ((TextBlock)view.FindName("EmptyText")).Text);
+        search.Text = "file-"; list.SelectedIndex = 23;
+        var selected = list.SelectedItem;
+        Finish(Invoke("LoadMoreAsync"));
+        Assert.Equal("file-", search.Text); Assert.Equal(5001, list.Items.Count);
+        Assert.Same(selected, list.SelectedItem); Assert.False(more.IsVisible);
+        search.Text = "5000.bin"; Assert.Single(list.Items);
+        search.Text = ""; Finish(Invoke("BrowseAsync", pagedRoot));
+        list.SelectedIndex = 23; selected = list.SelectedItem;
+        File.WriteAllText(Path.Join(pagedRoot, "new-file.bin"), "keep");
+        Directory.SetLastWriteTimeUtc(pagedRoot, DateTime.UtcNow.AddSeconds(1));
+        Finish(Invoke("LoadMoreAsync"));
+        Assert.Equal(5000, list.Items.Count); Assert.Same(selected, list.SelectedItem);
+        Assert.False(more.IsVisible);
+        Assert.Contains("refresh", ((TextBlock)view.FindName("DetailsText")).Text);
+        Finish(Invoke("BrowseAsync", pagedRoot));
+        Assert.True(more.IsVisible); Finish(Invoke("LoadMoreAsync"));
+        Assert.Equal(5002, list.Items.Count);
         Assert.True(window.OpenExtension("space-maid.apps"));
     }
 }

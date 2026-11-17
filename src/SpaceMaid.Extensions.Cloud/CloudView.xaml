@@ -37,6 +37,7 @@
                 <DockPanel Margin="0,0,0,8">
                     <Button x:Name="UpButton" Content="Up" Click="Up_Click" DockPanel.Dock="Left" Margin="0,0,8,0" IsEnabled="False"/>
                     <Button x:Name="RefreshButton" Content="Refresh" Click="Refresh_Click" DockPanel.Dock="Right" Margin="8,0,0,0" IsEnabled="False"/>
+                    <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" DockPanel.Dock="Right" Margin="8,0,0,0" Visibility="Collapsed" ToolTip="Load the next page without losing your filter or selection."/>
                     <TextBox x:Name="FolderPath" IsReadOnly="True" VerticalContentAlignment="Center" AutomationProperties.Name="Current cloud folder"/>
                 </DockPanel>
                 <Grid Grid.Row="1" Margin="0,0,0,8">

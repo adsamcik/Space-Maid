@@ -21,3 +21,9 @@ public interface ICloudStorageServices
     Task<CloudDirectoryListing> ReadDirectoryAsync(string path, CancellationToken token);
     Task<CloudStorageReviewResult> ReviewOnlineOnlyAsync(string path, CancellationToken token);
 }
+
+// Optional capability: older hosts and extensions retain their existing contract.
+public interface ICloudStoragePagingServices
+{
+    Task<CloudDirectoryListing> ReadDirectoryPageAsync(string path, CloudDirectoryContinuation? continuation, CancellationToken token);
+}
