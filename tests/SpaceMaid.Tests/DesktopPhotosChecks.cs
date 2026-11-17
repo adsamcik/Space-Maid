@@ -179,7 +179,20 @@ public sealed partial class DesktopTests
         ((RadioButton)photosView.FindName("DuplicatesTab")).IsChecked = true;
         PumpUntil(() => photoFiles.Items.Count == 2 && ((Image)photosView.FindName("SelectedPreview")).Source is not null, TimeSpan.FromSeconds(3));
         ((Button)photosView.FindName("RetainButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Assert.Contains("Review preference", ((TextBox)photosView.FindName("SelectionText")).Text);
+        var retainButton = (Button)photosView.FindName("RetainButton");
+        PumpUntil(() => retainButton.IsEnabled && (string)retainButton.Content == "Clear keep preference"
+            && ((TextBox)photosView.FindName("SelectionText")).Text.Contains("Review preference"), TimeSpan.FromSeconds(3));
+        var keptSelection = photoFiles.SelectedItem;
+        photoFiles.SelectedItem = photoFiles.Items.Cast<object>().First(item => !ReferenceEquals(item, keptSelection));
+        PumpUntil(() => (string)retainButton.Content == "Mark to keep", TimeSpan.FromSeconds(3));
+        photoFiles.SelectedItem = keptSelection;
+        PumpUntil(() => (string)retainButton.Content == "Clear keep preference"
+            && ((TextBox)photosView.FindName("SelectionText")).Text.Contains("Review preference"), TimeSpan.FromSeconds(3));
+        retainButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => retainButton.IsEnabled && (string)retainButton.Content == "Mark to keep"
+            && !((TextBox)photosView.FindName("SelectionText")).Text.Contains("Review preference"), TimeSpan.FromSeconds(3));
+        retainButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => retainButton.IsEnabled && (string)retainButton.Content == "Clear keep preference", TimeSpan.FromSeconds(3));
         Assert.True(((Expander)photosView.FindName("FileDetails")).IsExpanded);
         Assert.Equal(originalBytes, File.ReadAllBytes(originalPhoto)); Assert.Equal(originalBytes, File.ReadAllBytes(copyPhoto));
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-duplicates.png"), 1220, 940);

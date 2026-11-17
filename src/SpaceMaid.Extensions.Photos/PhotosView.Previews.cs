@@ -8,6 +8,7 @@ public partial class PhotosView
 {
     private CancellationTokenSource? _pageRequests;
     private long _selectionGeneration;
+    private bool _savingKeepPreference;
     private DispatcherOperation? _previewDispatch;
     private readonly Dictionary<PhotoDisplayRow, CancellationTokenSource> _previewRequests = [];
 
@@ -113,8 +114,10 @@ public partial class PhotosView
             SelectedNameText.Text = row.Row.Name; SelectedNameText.ToolTip = row.Row.Name;
             SelectedPathText.Text = row.Row.Path;
             SelectedSummaryText.Text = row.Row.SizeText + " · " + row.Row.TypeText + (row.Row.Width is int width && row.Row.Height is int height ? $"\n{width:N0} × {height:N0}" : "");
-            RetainButton.Visibility = _mode == PhotoMode.Duplicates ? Visibility.Visible : Visibility.Collapsed;
-            SelectionText.Text = row.Row.Detail + (row.Row.Hash is null ? "" : $"\nSHA-256 (default stream): {row.Row.Hash}") + (row.Row.GroupCount > 1 ? $"\n{row.Row.GroupCount:N0} distinct physical files in this group." : "");
+            RetainButton.Visibility = _mode == PhotoMode.Duplicates || row.Row.KeepPreferred ? Visibility.Visible : Visibility.Collapsed;
+            RetainButton.Content = row.Row.KeepPreferred ? "Clear keep preference" : "Mark to keep";
+            RetainButton.IsEnabled = !_savingKeepPreference;
+            SelectionText.Text = row.Row.KeepPreferenceText + row.Row.Detail + (row.Row.Hash is null ? "" : $"\nSHA-256 (default stream): {row.Row.Hash}") + (row.Row.GroupCount > 1 ? $"\n{row.Row.GroupCount:N0} distinct physical files in this group." : "");
             UpdateSelectedPreview(row); RevealButton.IsEnabled = true;
             await PreviewAsync(row);
             if (collectionId is long id && generation == _selectionGeneration && ReferenceEquals(FileList.SelectedItem, row) && ReferenceEquals(snapshot, row.Row))
@@ -134,12 +137,23 @@ public partial class PhotosView
         PreviewStatusText.Visibility = PreviewStatusText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         PreviewStatusText.ToolTip = row.PreviewStatus;
     }
-    private void Retain_Click(object sender, RoutedEventArgs e)
+    private async void Retain_Click(object sender, RoutedEventArgs e) => await Track(ToggleKeepPreferenceAsync());
+    private async Task ToggleKeepPreferenceAsync()
     {
-        if (FileList.SelectedItem is not PhotoDisplayRow row || _mode != PhotoMode.Duplicates) return;
-        SelectionText.Text = "Review preference: retain this physical copy and all its hard-link aliases.\n" + row.Row.Path + "\n\nOther locations remain untouched. Dependencies, alternate streams and links outside this collection still require review. Recovery is unknown.\n\n" + SelectionText.Text;
-        FileDetails.IsExpanded = true;
-        SetNotice("Marked to keep · No files changed");
+        if (_savingKeepPreference || FileList.SelectedItem is not PhotoDisplayRow row || Collection is not { } collection
+            || _mode != PhotoMode.Duplicates && !row.Row.KeepPreferred) return;
+        var snapshot = row.Row; var keep = !snapshot.KeepPreferred;
+        _savingKeepPreference = true; RetainButton.IsEnabled = false;
+        try
+        {
+            await Task.Run(() => _catalog.SetKeepPreference(collection.Id, snapshot, keep), _lifetime);
+            if (Collection?.Id == collection.Id && ReferenceEquals(FileList.SelectedItem, row)) FileDetails.IsExpanded = true;
+            SetNotice((keep ? "Keep preference saved: " : "Keep preference cleared: ") + snapshot.Name + " · No files changed");
+            await LoadPageAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { ShowFailure(error); }
+        finally { _savingKeepPreference = false; RetainButton.IsEnabled = true; }
     }
     private void Reveal_Click(object sender, RoutedEventArgs e)
     { if (FileList.SelectedItem is PhotoDisplayRow row) { try { _host.RevealLocation(row.Row.Path); } catch (Exception error) { ShowFailure(error); } } }

@@ -15,9 +15,11 @@ internal sealed record PhotoRow(string ObjectId, string Path, string Name, strin
     string? GroupLabel, long GroupCount)
 {
     public bool AnalysisCurrent { get; init; }
+    public bool KeepPreferred { get; init; }
+    public string KeepPreferenceText => KeepPreferred ? "Review preference: keep this physical copy and its hard-link aliases. No files are protected or changed.\n\n" : "";
     public string SizeText => PhotoFormatting.Bytes(DefaultBytes ?? LogicalBytes);
     public string TypeText => Format ?? Role;
-    public string GroupText => Hash is { Length: >= 12 } && GroupCount > 1 ? $"{Hash[..12]} · {GroupCount:N0} files" : GroupLabel?.StartsWith("Possible", StringComparison.Ordinal) == true ? PhotoKinds.Stem(Path) : "";
+    public string GroupText => (KeepPreferred ? "Keep · " : "") + (Hash is { Length: >= 12 } && GroupCount > 1 ? $"{Hash[..12]} · {GroupCount:N0} files" : GroupLabel?.StartsWith("Possible", StringComparison.Ordinal) == true ? PhotoKinds.Stem(Path) : "");
     public string Detail => $"{Path}\n\n{Role} · {TypeText}\nDefault stream: {(DefaultBytes is long n ? PhotoFormatting.Bytes(n) : "Unverified")}\nObserved logical size: {PhotoFormatting.Bytes(LogicalBytes)}\nAttributed allocation: {(AllocatedBytes is long a ? PhotoFormatting.Bytes(a) : "Unknown")}\nNative hard links: {(Links > 0 ? Links.ToString() : "Unknown")}\n{(Width is int w && Height is int h ? $"Dimensions: {w} × {h}\n" : "")}Orientation: {Orientation?.ToString() ?? "Unknown"}\nCapture time: {Captured ?? "Unknown"}\n{Status}\nLast content verification: {Verified ?? "Never"}\n{GroupLabel}";
 }
 internal sealed record PhotoPage(IReadOnlyList<PhotoRow> Rows, long Total, int Page);
@@ -103,6 +105,7 @@ internal sealed class PhotoCatalog : IDisposable
                 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, collection_id INTEGER NOT NULL REFERENCES collections(id),
                     kind TEXT NOT NULL, state TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0,
                     started TEXT NOT NULL, updated TEXT NOT NULL, message TEXT);
+                CREATE TABLE IF NOT EXISTS keep_preferences(object_id TEXT PRIMARY KEY REFERENCES objects(id), revision TEXT NOT NULL);
                 UPDATE jobs SET state='Interrupted', message='Interrupted work must be revalidated before resuming.' WHERE state='Running';
                 UPDATE collections SET status='Interrupted discovery · Refresh to validate coverage' WHERE status='Discovering';
                 PRAGMA user_version=1;
@@ -270,7 +273,8 @@ internal sealed class PhotoCatalog : IDisposable
                         CASE WHEN o.hash_revision=o.revision THEN o.hash END,o.verified,
                         COALESCE((SELECT GROUP_CONCAT(p.revision,'|') FROM locations s JOIN objects p ON p.id=s.object_id WHERE s.collection_id=l.collection_id AND s.missing=0 AND s.parent=l.parent AND s.stem=l.stem AND s.role='Edit sidecar'),''),
                         (SELECT COUNT(*) FROM objects p INDEXED BY object_hashes WHERE p.hash=o.hash AND p.hash_revision=p.revision AND p.default_bytes=o.default_bytes AND EXISTS(SELECT 1 FROM locations x WHERE x.object_id=p.id AND x.collection_id=l.collection_id AND x.missing=0)),
-                        COALESCE(o.content_revision=o.revision,0)
+                        COALESCE(o.content_revision=o.revision,0),
+                        EXISTS(SELECT 1 FROM keep_preferences k WHERE k.object_id=o.id AND k.revision=o.revision)
                     FROM selected l JOIN objects o ON o.id=l.object_id
                     ORDER BY l.page_sort {(sort == PhotoSort.Name ? "COLLATE NOCASE" : "")} {(descending ? "DESC" : "ASC")},l.path COLLATE BINARY,o.id;
                     """;
@@ -280,7 +284,7 @@ internal sealed class PhotoCatalog : IDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4), Long(reader, 5), Long(reader, 6), reader.GetString(7), reader.GetBoolean(8), (uint)reader.GetInt64(9), reader.GetString(10), String(reader, 11), Integer(reader, 12), Integer(reader, 13), Integer(reader, 14), String(reader, 15), String(reader, 16), String(reader, 17), reader.GetString(18),
-                    mode == PhotoMode.Duplicates ? "Equal default streams · Alternate streams and companion files are outside this comparison." : mode == PhotoMode.Families ? "Possible relationship · Matching basename and folder; does not establish edit fidelity or equivalence." : null, reader.GetInt64(19)) { AnalysisCurrent = reader.GetBoolean(20) });
+                    mode == PhotoMode.Duplicates ? "Equal default streams · Alternate streams and companion files are outside this comparison." : mode == PhotoMode.Families ? "Possible relationship · Matching basename and folder; does not establish edit fidelity or equivalence." : null, reader.GetInt64(19)) { AnalysisCurrent = reader.GetBoolean(20), KeepPreferred = reader.GetBoolean(21) });
                 }
                 token.ThrowIfCancellationRequested();
                 return new(rows, total, page);
@@ -371,6 +375,30 @@ internal sealed class PhotoCatalog : IDisposable
                 affected += command.ExecuteNonQuery();
             }
             token.ThrowIfCancellationRequested(); transaction.Commit(); return affected;
+        }
+    }
+    // Review preferences never authorize file operations. Bind them to the
+    // observed physical identity and revision, not to a reusable path.
+    public void SetKeepPreference(long collection, PhotoRow row, bool keep)
+    {
+        lock (_gate)
+        {
+            using var connection = Open(); using var command = connection.CreateCommand();
+            if (keep)
+            {
+                command.CommandText = """
+                    INSERT INTO keep_preferences(object_id,revision)
+                    SELECT o.id,o.revision FROM objects o WHERE o.id=$id AND o.revision=$revision
+                        AND EXISTS(SELECT 1 FROM locations l WHERE l.collection_id=$collection
+                            AND l.path=$path AND l.object_id=o.id AND l.missing=0)
+                    ON CONFLICT(object_id) DO UPDATE SET revision=excluded.revision;
+                    """;
+                Add(command, "$collection", collection); Add(command, "$path", row.Path);
+            }
+            else command.CommandText = "DELETE FROM keep_preferences WHERE object_id=$id AND revision=$revision";
+            Add(command, "$id", row.ObjectId); Add(command, "$revision", row.Revision);
+            if (command.ExecuteNonQuery() == 0 && keep)
+                throw new InvalidOperationException("This photo changed in the catalog. Refresh the collection before marking it to keep.");
         }
     }
     public string ReviewLocations(long collection, PhotoRow row, PhotoMode mode)
