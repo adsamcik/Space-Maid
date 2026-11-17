@@ -1,4 +1,6 @@
 using System.IO;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.IO;
@@ -10,6 +12,115 @@ namespace SpaceMaid.Tests;
 
 public sealed class CleanupRunStoreTests
 {
+    [Fact]
+    public void PositivelyMissingStoreCanBeReadWithoutCreatingEmptyReplacementState()
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "not-created");
+        var store = new CleanupRunStore(DiskAccess.Default, state);
+        Assert.Empty(store.LoadRunHeaders()); Assert.Empty(store.LoadRuns()); Assert.Empty(store.LoadDefinitions());
+        Assert.Null(store.LoadRun(Guid.NewGuid())); Assert.False(store.IsStopRequested(Guid.NewGuid()));
+        store.ClearStop(Guid.NewGuid());
+        Assert.False(Directory.Exists(state));
+    }
+
+    [Theory]
+    [InlineData("manifest")]
+    [InlineData("journal")]
+    [InlineData("index")]
+    [InlineData("definitions")]
+    [Trait("Stage", "System")]
+    public void DeniedCleanupDataRemainsUnreadableAndCannotBeReplacedWithDefaults(string deniedFile)
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(DiskAccess.Default, state); var run = Record(fixture.Path) with { State = CleanupRunState.Running };
+        store.SaveDefinition(run.Definition); store.SaveRun(run); var target = run.Targets[0].Location;
+        store.AppendReceipt(run.Id, new(target.Path, target.ProviderId, target.RuleId, CleanupOutcome.Uncertain,
+            "Mutation started; confirmation unknown", true, DateTimeOffset.UtcNow));
+        string path = deniedFile switch
+        {
+            "manifest" => Path.Join(state, "Runs", run.Id.ToString("N") + ".json"),
+            "journal" => Path.Join(state, "Runs", run.Id.ToString("N") + ".journal"),
+            "index" => Path.Join(state, "run-index.json"),
+            _ => Path.Join(state, "definitions.json")
+        };
+        byte[] original = File.ReadAllBytes(path);
+        var info = new FileInfo(path); var originalAcl = info.GetAccessControl(); var denied = info.GetAccessControl();
+        denied.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!,
+            FileSystemRights.ReadAttributes | FileSystemRights.ReadData, AccessControlType.Deny));
+        try
+        {
+            info.SetAccessControl(denied);
+            if (deniedFile == "definitions")
+            {
+                Assert.Throws<UnauthorizedAccessException>(() => store.LoadDefinitions());
+                Assert.Throws<UnauthorizedAccessException>(() => store.SaveDefinition(run.Definition with { Revision = 2 }));
+            }
+            else if (deniedFile == "index")
+            {
+                Assert.Throws<UnauthorizedAccessException>(() => store.LoadRunHeaders());
+                Assert.Throws<UnauthorizedAccessException>(() => store.SaveRun(Record(fixture.Path)));
+            }
+            else
+            {
+                Assert.Throws<UnauthorizedAccessException>(() => store.LoadRun(run.Id));
+                Assert.Throws<UnauthorizedAccessException>(() => store.SaveRun(run with { State = CleanupRunState.Completed }));
+                var recovery = store.LoadRunHeaders().Single(item => item.Id == run.Id);
+                Assert.NotNull(recovery.RecoveryError); Assert.True(recovery.HasUncertainOutcome);
+            }
+        }
+        finally
+        {
+            originalAcl.SetSecurityDescriptorBinaryForm(originalAcl.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+            info.SetAccessControl(originalAcl);
+        }
+        Assert.Equal(original, File.ReadAllBytes(path));
+        Assert.Equal(CleanupOutcome.Uncertain, Assert.Single(store.LoadRun(run.Id)!.Receipts).Outcome);
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public void DeniedRunDirectoryDoesNotBecomeEmptyHistoryOrPermitSavingOverUnknownData()
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(DiskAccess.Default, state); var run = Record(fixture.Path); store.SaveRun(run);
+        string index = Path.Join(state, "run-index.json"); byte[] originalIndex = File.ReadAllBytes(index);
+        File.WriteAllText(Path.Join(state, "run-index.dirty"), "rebuild needed");
+        var info = new DirectoryInfo(Path.Join(state, "Runs"));
+        var originalAcl = info.GetAccessControl(); var denied = info.GetAccessControl();
+        denied.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!,
+            FileSystemRights.ReadAttributes | FileSystemRights.ListDirectory, AccessControlType.Deny));
+        try
+        {
+            info.SetAccessControl(denied);
+            Assert.Throws<UnauthorizedAccessException>(() => store.LoadRunHeaders());
+            Assert.Throws<UnauthorizedAccessException>(() => store.LoadRuns());
+            Assert.Throws<UnauthorizedAccessException>(() => store.SaveRun(Record(fixture.Path)));
+            Assert.Equal(originalIndex, File.ReadAllBytes(index));
+        }
+        finally
+        {
+            originalAcl.SetSecurityDescriptorBinaryForm(originalAcl.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+            info.SetAccessControl(originalAcl);
+        }
+        Assert.Equal(run.Id, Assert.Single(store.LoadRunHeaders()).Id);
+    }
+
+    [Fact]
+    public void MissingManifestDoesNotAuthorizeReplacementOfItsRemainingAttemptJournal()
+    {
+        using var fixture = new TestDirectory(); string state = Path.Join(fixture.Path, "state");
+        var store = new CleanupRunStore(DiskAccess.Default, state); var run = Record(fixture.Path); store.SaveRun(run);
+        var target = run.Targets[0].Location;
+        store.AppendReceipt(run.Id, new(target.Path, target.ProviderId, target.RuleId, CleanupOutcome.Uncertain,
+            "Started", true, DateTimeOffset.UtcNow));
+        string journal = Path.Join(state, "Runs", run.Id.ToString("N") + ".journal");
+        byte[] original = File.ReadAllBytes(journal);
+        File.Delete(Path.ChangeExtension(journal, ".json"));
+        Assert.Throws<InvalidDataException>(() => store.LoadRun(run.Id));
+        Assert.Throws<InvalidDataException>(() => store.SaveRun(run));
+        Assert.Equal(original, File.ReadAllBytes(journal));
+    }
+
     [Fact]
     public void DamagedManifestIsVisibleWithoutBlockingHealthyDefinitionsHistoryOrReceiptPersistence()
     {

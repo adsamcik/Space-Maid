@@ -73,7 +73,8 @@ internal sealed class CleanupRunStore
     internal void AppendReceipt(Guid id, CleanupTargetReceipt receipt) => Locked(() =>
     {
         RequireId(id);
-        if (!_files.FileExists(Path.Join(_runsDirectory, id.ToString("N") + ".json")))
+        using var manifest = OpenOptionalRead(Path.Join(_runsDirectory, id.ToString("N") + ".json"));
+        if (manifest is null)
             throw new InvalidOperationException("Save the captured cleanup manifest before recording an attempt.");
         _files.AppendAllTextDurable(Path.Join(_runsDirectory, id.ToString("N") + ".journal"), JsonSerializer.Serialize(receipt, Json) + "\n");
         return true;
@@ -154,14 +155,15 @@ internal sealed class CleanupRunStore
     internal bool IsStopRequested(Guid id)
     {
         RequireId(id);
-        return _files.FileExists(Path.Join(_stopDirectory, id.ToString("N") + ".json"));
+        return IsPresent(Path.Join(_stopDirectory, id.ToString("N") + ".json"));
     }
 
     internal void ClearStop(Guid id) => Locked(() =>
     {
         RequireId(id);
         string path = Path.Join(_stopDirectory, id.ToString("N") + ".json");
-        if (_files.FileExists(path)) _files.DeleteFile(path);
+        try { _files.DeleteFile(path); }
+        catch (DirectoryNotFoundException) { }
         return true;
     });
 
@@ -209,8 +211,8 @@ internal sealed class CleanupRunStore
 
     private IReadOnlyList<CleanupDefinition> LoadDefinitionsCore()
     {
-        if (!_files.FileExists(_definitionsPath)) return [];
-        var document = Read<DefinitionFile>(_definitionsPath, MaximumDefinitionsBytes);
+        var document = ReadOptional<DefinitionFile>(_definitionsPath, MaximumDefinitionsBytes);
+        if (document is null) return [];
         if (document.Version != 1 || document.Definitions is null || document.Definitions.Length > 256 || document.Definitions.Any(item => item is null))
             throw new InvalidDataException("Saved cleanup definitions have an unsupported format.");
         var definitions = document.Definitions.Select(item => item.Validate()).ToArray();
@@ -221,9 +223,11 @@ internal sealed class CleanupRunStore
 
     private IReadOnlyList<CleanupRunRecord> LoadRunsCore()
     {
-        if (!_files.DirectoryExists(_runsDirectory)) return [];
+        string[] paths;
+        try { paths = _files.EnumerateFiles(_runsDirectory, "*.json").ToArray(); }
+        catch (DirectoryNotFoundException) { return []; }
         var records = new List<CleanupRunRecord>();
-        foreach (string path in _files.EnumerateFiles(_runsDirectory, "*.json"))
+        foreach (string path in paths)
         {
             if (!Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out Guid id)) continue;
             try
@@ -238,11 +242,11 @@ internal sealed class CleanupRunStore
 
     private IReadOnlyList<CleanupRunHeader> LoadRunHeadersCore()
     {
-        if (_unreadableRuns.Count > 0 || _files.FileExists(_indexDirtyPath) || !_files.FileExists(_indexPath))
-            return RebuildRunHeadersCore();
-        RunIndex index;
-        try { index = Read<RunIndex>(_indexPath, 64 * 1024 * 1024); }
+        bool dirty = IsPresent(_indexDirtyPath);
+        RunIndex? index;
+        try { index = ReadOptional<RunIndex>(_indexPath, 64 * 1024 * 1024); }
         catch (InvalidDataException) { return RebuildRunHeadersCore(); }
+        if (dirty || _unreadableRuns.Count > 0 || index is null) return RebuildRunHeadersCore();
         if (index.Version != 1 || index.Runs is null || index.Runs.Any(item => item is null || item.Id == Guid.Empty || item.RecoveryScopes is null || !Enum.IsDefined(item.State))
             || index.Runs.Select(item => item.Id).Distinct().Count() != index.Runs.Length)
             return RebuildRunHeadersCore();
@@ -254,11 +258,15 @@ internal sealed class CleanupRunStore
 
     private IReadOnlyList<CleanupRunHeader> RebuildRunHeadersCore()
     {
-        if (!_files.DirectoryExists(_runsDirectory)) return [];
         var rebuilt = new List<CleanupRunHeader>();
-        var ids = _files.EnumerateFiles(_runsDirectory, "*.json").Concat(_files.EnumerateFiles(_runsDirectory, "*.journal"))
-            .Select(path => Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out Guid id) ? id : Guid.Empty)
-            .Where(id => id != Guid.Empty).Distinct().ToArray();
+        Guid[] ids;
+        try
+        {
+            ids = _files.EnumerateFiles(_runsDirectory, "*.json").Concat(_files.EnumerateFiles(_runsDirectory, "*.journal"))
+                .Select(path => Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out Guid id) ? id : Guid.Empty)
+                .Where(id => id != Guid.Empty).Distinct().ToArray();
+        }
+        catch (DirectoryNotFoundException) { return []; }
         foreach (Guid id in ids)
         {
             string path = Path.Join(_runsDirectory, id.ToString("N") + ".json");
@@ -289,7 +297,7 @@ internal sealed class CleanupRunStore
             }
         }
         Write(_indexPath, new RunIndex(1, rebuilt.ToArray()));
-        if (_files.FileExists(_indexDirtyPath)) _files.DeleteFile(_indexDirtyPath);
+        _files.DeleteFile(_indexDirtyPath);
         return rebuilt.OrderByDescending(item => item.CreatedUtc).ToArray();
     }
 
@@ -312,13 +320,18 @@ internal sealed class CleanupRunStore
     {
         RequireId(id);
         string path = Path.Join(_runsDirectory, id.ToString("N") + ".json");
-        if (!_files.FileExists(path)) return null;
-        var record = Read<CleanupRunRecord>(path, 64 * 1024 * 1024);
-        ValidateRecord(record);
         string journalPath = Path.Join(_runsDirectory, id.ToString("N") + ".journal");
-        if (_files.FileExists(journalPath))
+        var record = ReadOptional<CleanupRunRecord>(path, 64 * 1024 * 1024);
+        if (record is null)
         {
-            using var input = _files.OpenRead(journalPath);
+            using var orphan = OpenOptionalRead(journalPath);
+            if (orphan is not null) throw new InvalidDataException("The cleanup manifest is missing; preserve its remaining attempt journal for recovery.");
+            return null;
+        }
+        ValidateRecord(record);
+        using var input = OpenOptionalRead(journalPath);
+        if (input is not null)
+        {
             if (input.Length > 64 * 1024 * 1024) throw new InvalidDataException("Cleanup attempt journal is too large.");
             using var reader = new StreamReader(input, Encoding.UTF8);
             var receipts = record.Receipts.ToDictionary(Key);
@@ -351,7 +364,7 @@ internal sealed class CleanupRunStore
         Write(_indexDirtyPath, new { record.Id });
         Write(Path.Join(_runsDirectory, record.Id.ToString("N") + ".json"), record);
         string journalPath = Path.Join(_runsDirectory, record.Id.ToString("N") + ".journal");
-        if (_files.FileExists(journalPath)) _files.DeleteFile(journalPath);
+        _files.DeleteFile(journalPath);
         index.Add(Header(record));
         Write(_indexPath, new RunIndex(1, index.ToArray()));
         _files.DeleteFile(_indexDirtyPath);
@@ -420,6 +433,33 @@ internal sealed class CleanupRunStore
     private T Read<T>(string path, long maximumBytes)
     {
         using var input = _files.OpenRead(path);
+        return Deserialize<T>(input, maximumBytes);
+    }
+
+    // Bool existence probes suppress access errors. Durable cleanup state may
+    // be absent only when opening/enumerating positively reports not-found.
+    private FileStream? OpenOptionalRead(string path)
+    {
+        try { return _files.OpenRead(path); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    private T? ReadOptional<T>(string path, long maximumBytes) where T : class
+    {
+        using var input = OpenOptionalRead(path);
+        return input is null ? null : Deserialize<T>(input, maximumBytes);
+    }
+
+    private bool IsPresent(string path)
+    {
+        try { _ = _files.GetAttributes(path); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
+    private static T Deserialize<T>(Stream input, long maximumBytes)
+    {
         if (input.Length > maximumBytes) throw new InvalidDataException("Cleanup data is too large to read safely.");
         try { return JsonSerializer.Deserialize<T>(input, Json) ?? throw new InvalidDataException("Cleanup data is empty."); }
         catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
