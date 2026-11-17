@@ -73,7 +73,9 @@
                                             <DataGridTextColumn Header="File or folder" Binding="{Binding DisplayPath}" ClipboardContentBinding="{Binding Path}" Width="*">
                                                 <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Path}"/></Style></DataGridTextColumn.ElementStyle>
                                             </DataGridTextColumn>
-                                            <DataGridTextColumn Header="Result" Binding="{Binding Reason}" Width="*"/>
+                                            <DataGridTextColumn Header="Result" Binding="{Binding Reason}" Width="*">
+                                                <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="ToolTip" Value="{Binding Reason}"/></Style></DataGridTextColumn.ElementStyle>
+                                            </DataGridTextColumn>
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </TabItem>

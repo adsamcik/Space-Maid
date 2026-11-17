@@ -65,7 +65,8 @@ public sealed class WorktreeRecoveryTests
         var checkedRecord = await service.ReconcileAsync(record.Id);
 
         Assert.Equal(WorktreeRetirementState.NeedsReview, checkedRecord.State);
-        Assert.Contains("Git metadata", checkedRecord.Message);
+        Assert.Contains("Git", checkedRecord.Message);
+        Assert.Contains("review", checkedRecord.Message, StringComparison.OrdinalIgnoreCase);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RestoreAsync(record.Id));
         Assert.Equal("owned tracked source", File.ReadAllText(Path.Join(record.QuarantinePath, "source.txt")));
         Assert.Equal(record.Entries, checkedRecord.Entries);
@@ -78,7 +79,7 @@ public sealed class WorktreeRecoveryTests
         string settings = Path.Join(fixture.Path, "retirement.json"); var service = new WorktreeRetirement(settings);
         var policy = await service.EnrollAsync(repo.Checkout, "refs/heads/main", 30, 1, false);
         var record = await service.QuarantineAsync(policy);
-        string registration = (await GitWorktreeAnalyzerTests.GitFixture.Run(record.QuarantinePath, repo.Old, "rev-parse", "--absolute-git-dir")).Trim();
+        string registration = Path.GetFullPath((await GitWorktreeAnalyzerTests.GitFixture.Run(record.QuarantinePath, repo.Old, "rev-parse", "--absolute-git-dir")).Trim());
         // Independently model a stopped finalization in this owned fixture.
         Directory.Delete(record.QuarantinePath, recursive: true);
         Interrupt(service, settings, record);

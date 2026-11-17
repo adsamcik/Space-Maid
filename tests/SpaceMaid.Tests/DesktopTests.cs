@@ -958,7 +958,10 @@ public sealed partial class DesktopTests
                 Assert.Equal(Assert.IsType<ExplorerRow>(finalFile.DataContext).Path, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 Assert.Collection(tree.ContextMenu.Items.Cast<MenuItem>(),
                     action => { Assert.Equal("Move to Recycle Bin", action.Header); Assert.True(action.IsEnabled); },
-                    action => { Assert.Equal("Delete permanently…", action.Header); Assert.True(action.IsEnabled); });
+                    action => { Assert.Equal("Delete permanently…", action.Header); Assert.True(action.IsEnabled); },
+                    // Wide-folder rows are synthetic; failed live inspection
+                    // must offer recovery rather than imply no cloud capability.
+                    action => { Assert.Equal("Cloud availability unavailable · Retry", action.Header); Assert.True(action.IsEnabled); });
                 tree.ContextMenu.IsOpen = false;
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
                 window.SetScanTarget(Path.GetPathRoot(fixture.Path)!);

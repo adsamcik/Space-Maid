@@ -95,7 +95,7 @@ public sealed partial class DesktopTests
                 if (failure == "timeout")
                 {
                     Assert.Contains("did not respond in time", status); Assert.DoesNotContain("Cancelled", status);
-                    Assert.Contains("deadline", ((TextBlock)view.FindName("DiagnosticText")).Text);
+                    Assert.Contains("deadline", ((TextBox)view.FindName("DiagnosticText")).Text);
                 }
                 else if (failure == "cancel")
                 {

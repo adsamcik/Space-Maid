@@ -59,3 +59,17 @@ All production disk operations use the configured DiskAccess as documented in fi
 Each work item uses a lightweight sparse Git worktree sharing repository objects. Workers inspect and implement only their assigned problem, write focused behavioral tests where warranted, review their diff, and commit locally. No worker may build, run tests, invoke package restore, delegate, or mutate personal data. Related-file work is sequenced or reconciled centrally.
 
 The coordinator integrates all completed work into main, preserves unrelated edits, obtains independent review, and then performs one bulk validation phase: DiskAccess audit, pinned Release build, focused affected unit tests, and proportionate existing desktop/system fixture checks. Rechecks after validation are restricted to concrete failures and their fixes. Compilation does not establish live provider, installer, Shell or physical filesystem behavior.
+
+## Implementation and verification
+
+All 33 work items were integrated locally on 2026-11-17. Each had one implementation agent and a small sparse worktree. Workers wrote tests and performed static review without building, restoring, running tests or executing native operations. Completed worktrees were removed only after checking all files and integration; local branch references remain.
+
+Independent review identified three additional correctness gaps in the implementation: suppressed cleanup-store probes, cross-instance worktree settings writes, and legacy update timestamp interpretation. All three were corrected and independently rechecked. Runtime failures also exposed missing explicit `InvalidDataException` recovery filters; the affected corruption/recovery cases now pass.
+
+- DiskAccess audit passed across 237 production C# files.
+- Pinned Release solution build and affected dependency rebuilds passed with no warnings or errors.
+- Bulk unit results and focused corrections verified 952 unique unit cases; the four affected classes passed 33/33 on recheck.
+- Native/System checks verified 107 cases. Five raw-NTFS/helper/tool checks were unavailable. One unchanged Cursor recycling fixture remained blocked by the existing activity guard matching Battle.net's `Agent.exe` as a Cursor owner; that protection was not weakened and no process was stopped.
+- The existing single-Application desktop harness passed. Rendered compact optimization receipts, saved-folder recovery and unavailable-photo states were visually inspected; screenshots are under `artifacts/ui`.
+
+Real sync-provider processing/space release and actual installer execution were not exercised. Registration-only Git damage still requires deliberate manual repair followed by recheck. Replacing already-loaded extension binaries or recovering from incomplete extension disposal can still require restart. These limits preserve the existing safety boundaries.

@@ -45,7 +45,7 @@ internal sealed record StartupScanningPreference(bool Dismissed, string? Error =
         }
     }
 
-    private static bool Expected(Exception error) => error is IOException or UnauthorizedAccessException
+    private static bool Expected(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException
         or JsonException or ArgumentException or NotSupportedException or System.Security.SecurityException;
     private sealed record Document(int Version, bool StandardScanningChosen);
 }

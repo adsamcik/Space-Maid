@@ -116,6 +116,7 @@ public sealed partial class DesktopTests
             Assert.Contains(receipts, row => row.Reason.Contains("Fixture locked file kept."));
             Assert.Contains("Cancelled", ((TextBlock)window.FindName("StatusText")).Text);
             Assert.False(run.IsEnabled);
+            Render(window, Path.Join(FindRepository(), "artifacts", "ui", "optimization-retained-results.png"), 840, 640);
 
             // A fresh preview supplies new authority, but does not replace receipts.
             preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

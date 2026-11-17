@@ -82,6 +82,9 @@ public sealed partial class DesktopTests
         Assert.False(Directory.Exists(savedPath));
         string preferencePath = Path.Join(fixture.Path, "app-folders.json");
         byte[] validPreferences = File.ReadAllBytes(preferencePath);
+        // Adding a folder on another drive intentionally changes scope.
+        // Establish a selection in that scope before testing failed refresh.
+        list.SelectedIndex = 0;
         var priorSelection = Assert.IsAssignableFrom<object>(list.SelectedItem);
         using (File.Open(preferencePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {

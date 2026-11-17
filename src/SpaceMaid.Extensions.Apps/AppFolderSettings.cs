@@ -76,7 +76,7 @@ internal sealed class AppFolderSettings(DiskAccess files, string path)
         return result.ToArray();
     }
 
-    private static bool Expected(Exception error) => error is IOException or UnauthorizedAccessException or JsonException
+    private static bool Expected(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
         or ArgumentException or NotSupportedException or System.Security.SecurityException;
     private sealed record Document(int Version, string[] Folders);
 }

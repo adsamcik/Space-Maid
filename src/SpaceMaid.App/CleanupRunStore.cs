@@ -301,7 +301,7 @@ internal sealed class CleanupRunStore
         return rebuilt.OrderByDescending(item => item.CreatedUtc).ToArray();
     }
 
-    private static bool RecoveryFailure(Exception error) => error is IOException or UnauthorizedAccessException
+    private static bool RecoveryFailure(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException
         or ArgumentException or InvalidOperationException or JsonException or NotSupportedException;
 
     private CleanupRunRecord? LoadRunCore(Guid id)

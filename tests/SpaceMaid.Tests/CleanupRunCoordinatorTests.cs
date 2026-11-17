@@ -106,6 +106,7 @@ public sealed class CleanupRunCoordinatorTests
             scan, DeveloperOpportunityFixture.Find(scan), default);
         store.SaveRun(prepared.Record);
         string journal = Path.Join(data, "Runs", prepared.Record.Id.ToString("N") + ".journal");
+        byte[] originalManifest = File.ReadAllBytes(Path.ChangeExtension(journal, ".json"));
         FileStream? readLease = null, manifestLease = null;
         if (!afterFirstTarget) Directory.CreateDirectory(journal);
         try
@@ -126,10 +127,28 @@ public sealed class CleanupRunCoordinatorTests
                 manifestLease!.Dispose(); manifestLease = null; readLease!.Dispose(); readLease = null;
                 store.RecoverInterruptedRuns();
             }
-            var stopped = store.LoadRun(prepared.Record.Id)!;
-            Assert.Equal(CleanupRunState.Stopped, stopped.State);
-            Assert.True(CleanupRunOwnership.IsAlive(stopped));
-            Assert.Equal(afterFirstTarget ? 1 : 0, stopped.Receipts.Count(item => item.Outcome == CleanupOutcome.PermanentlyDeleted));
+            if (!afterFirstTarget)
+            {
+                // An unreadable journal must not be silently ignored. This
+                // empty fixture blocker predates execution and contains no
+                // attempt data; remove it to model repairing that obstruction.
+                Assert.Throws<UnauthorizedAccessException>(() => store.LoadRun(prepared.Record.Id));
+                var recovery = Assert.Single(store.LoadRunHeaders(), item => item.Id == prepared.Record.Id);
+                Assert.Equal(CleanupRunState.NeedsAttention, recovery.State);
+                Assert.NotNull(recovery.RecoveryError);
+                Directory.Delete(journal);
+            }
+            var retained = store.LoadRun(prepared.Record.Id)!;
+            Assert.Equal(afterFirstTarget ? CleanupRunState.Stopped : CleanupRunState.Review, retained.State);
+            if (afterFirstTarget) Assert.True(CleanupRunOwnership.IsAlive(retained));
+            else
+            {
+                // Reading the obstructed journal refuses approval before a
+                // worker is claimed; the original review remains untouched.
+                Assert.Null(retained.ApprovalClaimId);
+                Assert.Equal(originalManifest, File.ReadAllBytes(Path.ChangeExtension(journal, ".json")));
+            }
+            Assert.Equal(afterFirstTarget ? 1 : 0, retained.Receipts.Count(item => item.Outcome == CleanupOutcome.PermanentlyDeleted));
             Assert.Equal(afterFirstTarget ? 1 : 2, prepared.Record.Targets.Count(item => Directory.Exists(item.Location.Path)));
         }
         finally { manifestLease?.Dispose(); readLease?.Dispose(); }

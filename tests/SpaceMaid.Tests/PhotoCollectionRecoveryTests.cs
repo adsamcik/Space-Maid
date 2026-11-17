@@ -60,7 +60,7 @@ public sealed class PhotoCollectionRecoveryTests
             Observe(original, collection, new(Path.Join(fixture.Path, "photo.jpg"), "id", "revision", 3, 3, null, 1, true, "Observed", "Viewing image", "PHOTO"));
             original.SetKeepPreference(collection, Row(original, collection), true);
         }
-        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Join(database, "photos.db") }.ToString()))
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Join(database, "photos.db"), Pooling = false }.ToString()))
         {
             connection.Open(); using var command = connection.CreateCommand();
             command.CommandText = "ALTER TABLE collections DROP COLUMN root_version; DROP TABLE collection_sequence;"; command.ExecuteNonQuery();
