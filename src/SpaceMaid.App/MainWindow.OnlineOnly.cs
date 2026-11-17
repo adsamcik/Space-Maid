@@ -31,8 +31,9 @@ public partial class MainWindow
             log.Record("online-only-prepared", new { plan.Path, plan.Provider, plan.EligibleCount, plan.SkippedCount, plan.LocalBytes, plan.Warnings });
             if (plan.EligibleCount == 0)
             {
-                StatusText.Text = "No eligible synced local files were found. Unsynced, local-only and already online-only files were skipped.";
-                return new(StatusText.Text, false);
+                outcome = OnlineOnlyPresentation.NoEligible(plan);
+                StatusText.Text = OnlineOnlyPresentation.Status(outcome);
+                return outcome;
             }
             if (new OnlineOnlyWindow(plan) { Owner = this }.ShowDialog() != true || _closing || work.IsCancellationRequested)
             {
@@ -47,10 +48,10 @@ public partial class MainWindow
             });
             var result = await Operations.MakeOnlineOnlyAsync(plan, progress, work.Token);
             // Capture the provider receipt before any follow-up work can fail.
-            outcome = OnlineOnlyPresentation.Completed(result);
+            outcome = OnlineOnlyPresentation.CompletedWithPreparation(result, plan);
             log.Record("online-only-result", result);
             if (_closing) return outcome;
-            string note = outcome.Message;
+            string note = OnlineOnlyPresentation.Status(outcome);
             if (scan is null)
             {
                 if (_snapshot is not null && result.Requested > 0) MarkScanStale(note + " Recheck to update sizes.");
@@ -80,10 +81,10 @@ public partial class MainWindow
                     outcome = OnlineOnlyPresentation.RefreshFailed(outcome, ex, rescan);
                     if (_snapshot is not null)
                     {
-                        MarkScanStale(outcome.Message, affected.Length > 0 ? affected : null);
+                        MarkScanStale(OnlineOnlyPresentation.Status(outcome), affected.Length > 0 ? affected : null);
                         if (rescan) OfferFullInventoryRescan(_snapshot);
                     }
-                    else StatusText.Text = outcome.Message;
+                    else StatusText.Text = OnlineOnlyPresentation.Status(outcome);
                     return outcome;
                 }
                 string message = ex is OperationCanceledException ? "Online-only operation cancelled." : $"Online-only operation could not finish: {ex.Message}";

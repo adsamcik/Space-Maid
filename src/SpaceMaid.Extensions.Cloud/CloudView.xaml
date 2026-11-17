@@ -70,7 +70,7 @@
                 <Button x:Name="FreeButton" Content="Free local space…" Click="Free_Click" IsEnabled="False" ToolTip="Review synced files to make online-only. Cloud copies stay."/>
             </WrapPanel>
             <TextBlock x:Name="ActionHint" Text="Local space only. Cloud quota and files outside these folders are managed in the provider’s app." FontSize="12" Opacity="0.75" TextWrapping="Wrap" Margin="0,7,0,0"/>
-            <Expander Header="Details" FontSize="12" Margin="0,6,0,0"><TextBlock x:Name="DetailsText" Text="Browsing reads metadata. File size is not cloud quota usage; local data excludes folder totals and provider caches. Freeing local space requires an installed provider with Windows online-only support." TextWrapping="Wrap" Margin="0,5,0,0" MaxHeight="95"/></Expander>
+            <Expander Header="Details" FontSize="12" Margin="0,6,0,0"><ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="DetailsText" Text="Browsing reads metadata. File size is not cloud quota usage; local data excludes folder totals and provider caches. Freeing local space requires an installed provider with Windows online-only support." TextWrapping="Wrap" Margin="0,5,0,0"/></ScrollViewer></Expander>
         </StackPanel>
     </Grid>
 </UserControl>

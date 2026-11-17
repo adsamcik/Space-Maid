@@ -13,6 +13,7 @@ public sealed record CloudStorageReviewResult(string Message, bool RequestsAccep
 {
     public OnlineOnlyResult? Receipt { get; init; }
     public bool RefreshIncomplete { get; init; }
+    public string Details { get; init; } = "";
 }
 
 public interface ICloudStorageServices

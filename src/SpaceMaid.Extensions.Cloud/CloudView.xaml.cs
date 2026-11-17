@@ -179,6 +179,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         if (_storage is null || Selected is not { Entry.CanRequestOnlineOnly: true } row) return;
         var result = await _storage.ReviewOnlineOnlyAsync(row.Entry.Path, token);
         StatusText.Text = result.Message;
+        DetailsText.Text = result.Details;
         if (result.RequestsAccepted)
         {
             // Provider processing is asynchronous; old residency is no longer current.
