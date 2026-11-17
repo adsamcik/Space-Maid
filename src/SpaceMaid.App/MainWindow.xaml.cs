@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private string? _scanLogPath;
     private readonly Task _classificationReady = Task.Run(FileTypeClassifier.Prepare);
     internal string LogDirectory { get; set; } = AppData.File("Logs");
+    internal string StartupPreferencePath { get; set; } = AppData.File("startup-standard-choice.json");
     internal FileOperations Operations { get; set; }
 
     public MainWindow()
@@ -45,8 +46,15 @@ public partial class MainWindow : Window
         _ = RefreshDriveChoicesAsync();
         if (!Elevation.IsAdministrator)
         {
-            var startup = new StartupWindow { Owner = this };
-            if (startup.ShowDialog() == true) await RequestElevationAsync();
+            var choice = StartupScanningPreference.Load(StartupPreferencePath, Operations.Files);
+            if (choice.ShouldOffer)
+            {
+                var startup = new StartupWindow { Owner = this };
+                if (startup.ShowDialog() == true) await RequestElevationAsync();
+                else choice = StartupScanningPreference.RememberStandard(StartupPreferencePath, Operations.Files);
+            }
+            if (choice.Error is not null)
+                StatusText.Text = "Continuing with standard scanning. The startup choice could not be saved or read; Enable fast scanning remains available. " + choice.Error;
         }
         if (!_closing) await InitializeExtensionsAsync();
         if (!_closing) InitializeUpdates();

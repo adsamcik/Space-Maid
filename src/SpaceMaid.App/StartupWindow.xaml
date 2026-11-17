@@ -7,6 +7,7 @@
     <StackPanel Margin="20">
         <TextBlock Text="Enable fast scanning?" FontSize="21" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock Text="Only the read-only scanner needs administrator access." TextWrapping="Wrap" Margin="0,10,0,20" Opacity="0.75" ToolTip="Space Maid and extensions stay unelevated. You can continue with standard scanning if you decline." />
+        <TextBlock Text="Continuing without admin remembers your choice. You can enable fast scanning later." TextWrapping="Wrap" Margin="0,0,0,16" Opacity="0.75" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Continue without admin" IsDefault="True" IsCancel="True" Click="Continue_Click" Margin="0,0,10,0" />
             <Button Content="Enable fast scanning" Click="Enable_Click" Style="{DynamicResource AccentButtonStyle}" Padding="16,9" />

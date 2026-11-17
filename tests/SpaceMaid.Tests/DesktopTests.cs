@@ -86,6 +86,7 @@ public sealed partial class DesktopTests
                 window.OptimizationSettingsPath = Path.Join(fixture.Path, "optimization-settings.json");
                 window.WorktreeLifecycleSettingsPath = Path.Join(fixture.Path, "managed-worktrees.json");
                 window.UpdateSettingsPath = Path.Join(fixture.Path, "update-settings.json");
+                window.StartupPreferencePath = Path.Join(fixture.Path, "startup-standard-choice.json");
                 window.Operations = new(recycleBins: new(_ => "fixture-volume", _ => (0, 0), (_, _) => throw new InvalidOperationException("Unexpected empty-bin call.")));
                 var extensionFiles = window.Operations.Files;
                 window.LoadBuildCleanupSettings();
@@ -108,6 +109,11 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                if (!Elevation.IsAdministrator)
+                {
+                    Assert.True(StartupScanningPreference.Load(window.StartupPreferencePath, window.Operations.Files).Dismissed);
+                    Assert.True(((Button)window.FindName("ElevateButton")).IsEnabled);
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "icons")
                 {
                     BeginWorkflow("Windows 10 icon fallback");
@@ -825,7 +831,7 @@ public sealed partial class DesktopTests
                     VerifyUpdatesUi(window, theme);
                 }
 #pragma warning restore WPF0001
-                Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 305);
+                Render(startup, Path.Join(artifactRoot, "artifacts", "ui", "startup.png"), 570, 355);
                 ((RadioButton)window.FindName("ExploreTab")).IsChecked = true;
                 Render(window, Path.Join(artifactRoot, "artifacts", "ui", "explorer-compact.png"), 1020, 790);
                 Assert.InRange(window.ActualWidth, 1019, 1021);
