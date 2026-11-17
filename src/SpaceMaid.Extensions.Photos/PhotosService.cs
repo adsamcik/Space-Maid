@@ -137,15 +137,19 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
 
     internal async Task AnalyzeCoreAsync(PhotoCollection collection, IExtensionJobContext context)
     {
-        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, hashed = 0, failures = 0, metadataUnavailable = 0, bytes = 0;
+        var job = catalog.StartJob(collection.Id, "Analysis"); long count = 0, hashed = 0, reusedHashes = 0, reusedMetadata = 0, failures = 0, metadataUnavailable = 0, bytes = 0;
         var watch = Stopwatch.StartNew(); long lastCheckpointMs = 0;
         void CheckpointProgress()
         {
             if (watch.ElapsedMilliseconds - lastCheckpointMs < 1000) return;
-            catalog.JobState(job, "Running", count + hashed); lastCheckpointMs = watch.ElapsedMilliseconds;
+            catalog.JobState(job, "Running", count + hashed + reusedHashes); lastCheckpointMs = watch.ElapsedMilliseconds;
         }
         try
         {
+            string? toolVersion = null;
+            try { toolVersion = await host.Tools.ExifToolVersionAsync(context.Cancellation); }
+            catch (Exception error) when (error is not OperationCanceledException || !context.Cancellation.IsCancellationRequested)
+            { host.Log("photos-metadata-version-unavailable", new { Error = error.GetType().Name }); }
             string? after = null;
             while (true)
             {
@@ -157,6 +161,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                     await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
                     var leases = new List<(PhotoRow Row, NativeMediaFile File)>(16);
                     var updates = new List<PhotoAnalysisUpdate>(16);
+                    long chunkMetadataReused = 0;
                     try
                     {
                         foreach (var row in chunk)
@@ -173,8 +178,14 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                         }
                         if (leases.Count > 0)
                         {
+                            // Reuse rich metadata only after a live source lease and
+                            // current tool-version check. Sidecars are separate
+                            // physical inputs, never evidence about edited pixels.
+                            bool CanReuseMetadata((PhotoRow Row, NativeMediaFile File) pair) => pair.File.Revision.Key == pair.Row.Revision
+                                && pair.Row.MetadataCurrent && !string.IsNullOrWhiteSpace(toolVersion) && pair.Row.MetadataToolVersion == toolVersion;
+                            var paths = leases.Where(pair => !CanReuseMetadata(pair)).Select(pair => pair.Row.Path).ToArray();
                             IReadOnlyList<MediaToolMetadata> metadata;
-                            try { metadata = await host.Tools.ReadExifMetadataAsync(leases.Select(x => x.Row.Path).ToArray(), context.Cancellation); }
+                            try { metadata = paths.Length == 0 ? [] : await host.Tools.ReadExifMetadataAsync(paths, context.Cancellation); }
                             catch (Exception error) when (error is not OperationCanceledException || !context.Cancellation.IsCancellationRequested)
                             {
                                 host.Log("photos-metadata-unavailable", new { Error = error.GetType().Name });
@@ -186,18 +197,24 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                                 try
                                 {
                                     pair.File.VerifyUnchanged();
-                                    var details = metadata.FirstOrDefault(x => string.Equals(x.Path, pair.Row.Path, StringComparison.Ordinal));
+                                    var reuse = CanReuseMetadata(pair);
+                                    var details = reuse ? new MediaToolMetadata(pair.Row.Path, pair.Row.Format, pair.Row.Width, pair.Row.Height,
+                                        pair.Row.Orientation, pair.Row.Captured, toolVersion!)
+                                        : metadata.FirstOrDefault(x => string.Equals(x.Path, pair.Row.Path, StringComparison.Ordinal));
+                                    if (reuse) chunkMetadataReused++;
                                     // Optional rich metadata does not determine whether
                                     // the default streams can be safely compared.
                                     if (details is null || details.Error is not null) metadataUnavailable++;
                                     updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, pair.File.Revision, details is { Error: null } ? details : null, null,
-                                        details is { Error: null } ? "Metadata verified · Default stream not compared" : "Default size verified · ExifTool metadata unavailable"));
+                                        details is { Error: null } ? "Metadata verified · Retained unchanged content evidence where available" : "Default size verified · ExifTool metadata unavailable"));
                                 }
                                 catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception)
                                 { updates.Add(new(pair.Row.ObjectId, pair.Row.Revision, null, null, null, "Unresolved · File changed during metadata analysis")); failures++; }
                             }
                         }
-                        failures += updates.Count - catalog.StoreAnalysisBatch(updates, context.Cancellation);
+                        int stored = catalog.StoreAnalysisBatch(updates, context.Cancellation);
+                        failures += updates.Count - stored;
+                        if (stored == updates.Count) reusedMetadata += chunkMetadataReused;
                         count += chunk.Length; CheckpointProgress();
                         context.Report(new("Inspecting metadata", count, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved content · {metadataUnavailable:N0} without rich metadata"));
                     }
@@ -217,7 +234,7 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                     await context.CheckpointAsync(); context.Cancellation.ThrowIfCancellationRequested();
                     var leases = new List<NativeMediaFile>(16);
                     var updates = new List<PhotoAnalysisUpdate>(16);
-                    long chunkHashed = 0;
+                    long chunkHashed = 0, chunkReused = 0;
                     try
                     {
                         foreach (var row in chunk)
@@ -229,15 +246,17 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                                 lease = NativeMediaFile.Open(row.Path, true, host.Files);
                                 if (lease.Revision.Identity != row.ObjectId || lease.Revision.Key != row.Revision)
                                     throw new IOException("The candidate changed after metadata inspection.");
-                                var hash = await HashAsync(lease, context, read =>
+                                var hash = row.Hash ?? await HashAsync(lease, context, read =>
                                 {
                                     bytes += read;
                                     if (update.ElapsedMilliseconds < 1000) return;
-                                    context.Report(new("Comparing full default streams", hashed + chunkHashed, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved")); update.Restart();
+                                    context.Report(new("Comparing full default streams", hashed + reusedHashes + chunkHashed + chunkReused, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved")); update.Restart();
                                 });
                                 lease.VerifyUnchanged();
-                                updates.Add(new(row.ObjectId, row.Revision, lease.Revision, null, hash, "Default stream verified", true));
-                                leases.Add(lease); lease = null; chunkHashed++;
+                                updates.Add(new(row.ObjectId, row.Revision, lease.Revision, null, hash,
+                                    row.Hash is null ? "Default stream verified" : "Default stream verified · Reused unchanged content", true));
+                                leases.Add(lease); lease = null;
+                                if (row.Hash is null) chunkHashed++; else chunkReused++;
                             }
                             catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
                             { updates.Add(new(row.ObjectId, row.Revision, null, null, null, "Unresolved · Default stream could not be stably verified")); failures++; }
@@ -246,8 +265,8 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
                         // Keep successful source leases stable until the bounded
                         // transaction publishes every result in this chunk.
                         failures += updates.Count - catalog.StoreAnalysisBatch(updates, context.Cancellation);
-                        hashed += chunkHashed; CheckpointProgress();
-                        context.Report(new("Comparing full default streams", hashed, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
+                        hashed += chunkHashed; reusedHashes += chunkReused; CheckpointProgress();
+                        context.Report(new("Comparing full default streams", hashed + reusedHashes, BytesRead: bytes, Message: $"{failures:N0} unavailable or unresolved"));
                     }
                     finally { foreach (var lease in leases) lease.Dispose(); }
                 }
@@ -255,13 +274,13 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
             }
             string? limitation = metadataUnavailable > 0 ? $"Rich metadata unavailable for {metadataUnavailable:N0} objects; content comparison does not depend on ExifTool." : null;
             string? message = failures > 0 ? $"{failures:N0} unavailable or unresolved content checks." + (limitation is null ? "" : " " + limitation) : limitation;
-            catalog.JobState(job, failures > 0 ? "NeedsAttention" : metadataUnavailable > 0 ? "CompletedWithMetadataLimitations" : "Completed", count + hashed, message);
-            host.Log("photos-analysis", new { collection.Id, Inspected = count, Hashed = hashed, BytesRead = bytes, Failures = failures, MetadataUnavailable = metadataUnavailable, ElapsedMs = watch.ElapsedMilliseconds });
-            context.Report(new("Analysis complete", count, BytesRead: bytes, Message: $"{hashed:N0} candidates hashed · {failures:N0} unavailable or unresolved content · {metadataUnavailable:N0} without rich metadata", NeedsAttention: failures > 0));
+            catalog.JobState(job, failures > 0 ? "NeedsAttention" : metadataUnavailable > 0 ? "CompletedWithMetadataLimitations" : "Completed", count + hashed + reusedHashes, message);
+            host.Log("photos-analysis", new { collection.Id, Inspected = count, Hashed = hashed, ReusedHashes = reusedHashes, ReusedMetadata = reusedMetadata, BytesRead = bytes, Failures = failures, MetadataUnavailable = metadataUnavailable, ElapsedMs = watch.ElapsedMilliseconds });
+            context.Report(new("Analysis complete", count, BytesRead: bytes, Message: $"{hashed:N0} candidates hashed · {reusedHashes:N0} unchanged comparisons reused · {failures:N0} unavailable or unresolved content · {metadataUnavailable:N0} without rich metadata", NeedsAttention: failures > 0));
         }
         catch (Exception error)
         {
-            catalog.JobState(job, error is OperationCanceledException ? "Interrupted" : "Failed", count + hashed, "Analyze revalidates inputs before continuing.");
+            catalog.JobState(job, error is OperationCanceledException ? "Interrupted" : "Failed", count + hashed + reusedHashes, "Analyze revalidates inputs before continuing.");
             throw;
         }
     }

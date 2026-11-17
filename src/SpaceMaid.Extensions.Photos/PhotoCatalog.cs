@@ -15,6 +15,8 @@ internal sealed record PhotoRow(string ObjectId, string Path, string Name, strin
     string? GroupLabel, long GroupCount)
 {
     public bool AnalysisCurrent { get; init; }
+    public bool MetadataCurrent { get; init; }
+    public string? MetadataToolVersion { get; init; }
     public bool KeepPreferred { get; init; }
     public string KeepPreferenceText => KeepPreferred ? "Review preference: keep this physical copy and its hard-link aliases. No files are protected or changed.\n\n" : "";
     public string SizeText => PhotoFormatting.Bytes(DefaultBytes ?? LogicalBytes);
@@ -303,7 +305,9 @@ internal sealed class PhotoCatalog : IDisposable
         SELECT o.id,
             (SELECT MIN(l.path) FROM locations l WHERE l.object_id=o.id AND l.collection_id=$collection AND l.missing=0),
             o.revision,o.logical_bytes,o.allocated_bytes,o.default_bytes,o.links,o.available,o.status,
-            (SELECT l.role FROM locations l WHERE l.object_id=o.id AND l.collection_id=$collection AND l.missing=0 ORDER BY l.path COLLATE BINARY LIMIT 1)
+            (SELECT l.role FROM locations l WHERE l.object_id=o.id AND l.collection_id=$collection AND l.missing=0 ORDER BY l.path COLLATE BINARY LIMIT 1),
+            CASE WHEN o.hash_revision=o.revision THEN o.hash END,o.verified,
+            COALESCE(o.metadata_revision=o.revision,0),o.tool_version,o.format,o.width,o.height,o.orientation,o.captured
         FROM objects o WHERE o.id>$after
             AND EXISTS(SELECT 1 FROM locations l WHERE l.object_id=o.id AND l.collection_id=$collection AND l.missing=0)
             {(candidatesOnly ? """
@@ -332,7 +336,9 @@ internal sealed class PhotoCatalog : IDisposable
                 while (reader.Read())
                 {
                     token.ThrowIfCancellationRequested();
-                    rows.Add(new(reader.GetString(0), reader.GetString(1), Path.GetFileName(reader.GetString(1)), reader.GetString(9), reader.GetInt64(3), Long(reader, 4), Long(reader, 5), reader.GetString(2), reader.GetBoolean(7), (uint)reader.GetInt64(6), reader.GetString(8), null, null, null, null, null, null, null, "", null, 0));
+                    rows.Add(new(reader.GetString(0), reader.GetString(1), Path.GetFileName(reader.GetString(1)), reader.GetString(9), reader.GetInt64(3), Long(reader, 4), Long(reader, 5), reader.GetString(2), reader.GetBoolean(7), (uint)reader.GetInt64(6), reader.GetString(8),
+                        String(reader, 14), Integer(reader, 15), Integer(reader, 16), Integer(reader, 17), String(reader, 18), String(reader, 10), String(reader, 11), "", null, 0)
+                    { MetadataCurrent = reader.GetBoolean(12), MetadataToolVersion = String(reader, 13) });
                 }
                 token.ThrowIfCancellationRequested(); return rows;
             }
@@ -368,14 +374,16 @@ internal sealed class PhotoCatalog : IDisposable
                     command.CommandText = """
                         UPDATE objects SET revision=$revision,default_bytes=$length,links=$links,available=$available,status=$status,
                             format=$format,width=$width,height=$height,orientation=$orientation,captured=$captured,
-                            metadata_revision=$metadata_revision,content_revision=$revision,tool_version=$tool_version,hash=$hash,hash_revision=$hash_revision,
+                            metadata_revision=$metadata_revision,content_revision=$revision,tool_version=$tool_version,
+                            hash=CASE WHEN $hash IS NOT NULL THEN $hash WHEN revision=$revision AND hash_revision=revision THEN hash END,
+                            hash_revision=CASE WHEN $hash IS NOT NULL OR (revision=$revision AND hash_revision=revision) THEN $revision END,
                             verified=$verified WHERE id=$id AND ($expected IS NULL OR revision=$expected);
                         """;
                     var metadata = update.Metadata;
                     Add(command, "$revision", revision.Key); Add(command, "$length", revision.Length); Add(command, "$links", revision.Links); Add(command, "$available", revision.ContentAvailable ? 1 : 0);
                     Add(command, "$format", metadata?.Format); Add(command, "$width", metadata?.Width); Add(command, "$height", metadata?.Height); Add(command, "$orientation", metadata?.Orientation); Add(command, "$captured", metadata?.CaptureTime);
                     Add(command, "$metadata_revision", metadata is { Error: null } ? revision.Key : null); Add(command, "$tool_version", metadata?.ToolVersion);
-                    Add(command, "$hash", update.Hash); Add(command, "$hash_revision", update.Hash is null ? null : revision.Key); Add(command, "$verified", verified);
+                    Add(command, "$hash", update.Hash); Add(command, "$verified", verified);
                 }
                 Add(command, "$id", update.ObjectId); Add(command, "$expected", update.ExpectedRevision); Add(command, "$status", update.Status);
                 affected += command.ExecuteNonQuery();
