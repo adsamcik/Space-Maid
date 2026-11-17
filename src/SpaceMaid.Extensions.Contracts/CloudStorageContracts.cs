@@ -9,7 +9,11 @@ public interface ICloudStorageHost
     ICloudStorageServices? CloudStorage { get; }
 }
 
-public sealed record CloudStorageReviewResult(string Message, bool RequestsAccepted);
+public sealed record CloudStorageReviewResult(string Message, bool RequestsAccepted)
+{
+    public OnlineOnlyResult? Receipt { get; init; }
+    public bool RefreshIncomplete { get; init; }
+}
 
 public interface ICloudStorageServices
 {

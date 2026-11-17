@@ -7,12 +7,21 @@ public sealed record ScanRecheckRequest(string Path, bool Recursive = true);
 
 public static class ScanRechecker
 {
+    private const string FullRescanKey = "SpaceMaid.ScanRechecker.FullRescanRequired";
+
+    // Preserve existing exception types for callers while publishing recovery
+    // semantics independently of diagnostic wording.
+    public static bool RequiresFullRescan(Exception error) => error.Data[FullRescanKey] is true;
+
+    private static T FullRescanRequired<T>(T error) where T : Exception
+    { error.Data[FullRescanKey] = true; return error; }
+
     internal sealed record Replacement(string Path, bool Recursive, ScanSnapshot Fresh);
 
     public static async Task<ScanSnapshot> RefreshAsync(ScanSnapshot scan, IEnumerable<ScanRecheckRequest> requests,
         CancellationToken token = default, Action<string, object>? diagnostic = null, INtfsLayoutSource? layoutSource = null)
     {
-        if (!scan.HasAllocationData) throw new InvalidOperationException("This scan has no stable file identities. A full rescan is required.");
+        if (!scan.HasAllocationData) throw FullRescanRequired(new InvalidOperationException("This scan has no stable file identities. A full rescan is required."));
         var scanner = new DiskAccess(() => layoutSource);
         var replacements = new List<Replacement>();
         var pending = new Queue<ScanRecheckRequest>(requests);
@@ -24,7 +33,7 @@ public static class ScanRechecker
             string? parent = Path.GetDirectoryName(path);
             if (scan.FindEntry(path) is null && (parent is null || scan.FindEntry(parent) is null)
                 && !replacements.Any(other => parent?.Equals(other.Path, StringComparison.Ordinal) == true))
-                throw new InvalidOperationException("The recheck location is outside the known scan. A full rescan is required.");
+                throw FullRescanRequired(new InvalidOperationException("The recheck location is outside the known scan. A full rescan is required."));
             if (!visited.Add(path)) continue;
             diagnostic?.Invoke("recheck-read-start", new { Path = path, request.Recursive });
             var fresh = await scanner.ReadDirectoryAsync(path, request.Recursive, token, scan.IncludesAllDataStreams,
@@ -103,7 +112,7 @@ public static class ScanRechecker
                 var old = scan.Entry(link);
                 if (!old.IsDirectory) throw new IOException("A recheck location is no longer a folder.");
                 if (link == -1 && scan.Records[old.FileIndex].Identity != fresh.Records[fresh.RootIndex].Identity)
-                    throw new IOException("The scanned root was replaced. A full rescan is required.");
+                    throw FullRescanRequired(new IOException("The scanned root was replaced. A full rescan is required."));
                 if (link >= 0) removed[link] = true;
                 var liveIds = fresh.Children(fresh.RootIndex).Select(next => fresh.Records[fresh.Entry(next).FileIndex].Identity).ToHashSet();
                 bool rootUnreadable = unreadable.Contains(fresh.Records[fresh.RootIndex].Identity)
@@ -258,7 +267,7 @@ public static class ScanRechecker
         }
         int expectedWarnings = builder.WarningCount;
         var result = builder.Build(scan.RootPath, scan.Backend, scan.Metrics.Acquisition, GC.GetTotalAllocatedBytes(false), token);
-        if (result.WarningCount > expectedWarnings) throw new IOException("The recheck could not preserve namespace accounting. A full rescan is required.");
+        if (result.WarningCount > expectedWarnings) throw FullRescanRequired(new IOException("The recheck could not preserve namespace accounting. A full rescan is required."));
         return new(result.RootPath, result.Backend, result.Records, result.Links, result.NameArena, result.RootIndex,
             result.FirstLinks, result.ChildHeads, result.NextLinks, result.DirectoryLogical, result.DirectoryAllocated,
             scan.IncludesAllDataStreams, true, false, result.Warnings, scan.Metrics, result.EntryFlags, result.WarningCount, result.DirectoryCount, result.FallbackReason)

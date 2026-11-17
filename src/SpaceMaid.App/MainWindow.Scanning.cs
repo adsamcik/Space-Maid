@@ -19,7 +19,9 @@ public partial class MainWindow
 
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
-        if (_editingPath) await NavigatePathAsync(PathEditor.Text, forceScan: true);
+        if (_fullRescanRecovery is { } recovery && ReferenceEquals(_snapshot, recovery) && !_editingPath)
+            await NavigatePathAsync(recovery.RootPath, forceScan: true);
+        else if (_editingPath) await NavigatePathAsync(PathEditor.Text, forceScan: true);
         else await ScanCurrentPathAsync();
     }
 

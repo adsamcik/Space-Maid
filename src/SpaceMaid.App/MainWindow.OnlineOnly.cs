@@ -20,6 +20,7 @@ public partial class MainWindow
         using var log = StartActionLog("make-online-only", path);
         _work = work; SetBusy(true);
         bool started = false;
+        ScanRecheckRequest[] affected = [];
         var outcome = new CloudStorageReviewResult("No requests were sent.", false);
         try
         {
@@ -45,11 +46,11 @@ public partial class MainWindow
                 if (!_closing && ReferenceEquals(_work, work)) StatusText.Text = $"Requesting online-only: {update.Processed:N0} / {update.Total:N0} · {update.Skipped:N0} skipped";
             });
             var result = await Operations.MakeOnlineOnlyAsync(plan, progress, work.Token);
+            // Capture the provider receipt before any follow-up work can fail.
+            outcome = OnlineOnlyPresentation.Completed(result);
             log.Record("online-only-result", result);
-            if (_closing) return new("Requests may still be processing. Recheck the folder.", result.Requested > 0);
-            string note = $"{result.Requested:N0} online-only requests accepted · {result.ConfirmedOnlineOnly:N0} confirmed online-only · {result.Skipped:N0} skipped"
-                + (result.Cancelled ? " · Cancelled; earlier requests remain active." : ". The provider may still be processing requests.");
-            outcome = new(note, result.Requested > 0);
+            if (_closing) return outcome;
+            string note = outcome.Message;
             if (scan is null)
             {
                 if (_snapshot is not null && result.Requested > 0) MarkScanStale(note + " Recheck to update sizes.");
@@ -57,9 +58,14 @@ public partial class MainWindow
                 return outcome;
             }
             string folder = scan.Entry(link).IsDirectory ? plan.Path : Path.GetDirectoryName(plan.Path)!;
+            affected = [new(folder, scan.Entry(link).IsDirectory)];
+            // No submitted request means no provider mutation to refresh.
+            if (result.Requested == 0) { StatusText.Text = note; return outcome; }
             if (result.Cancelled)
-            { MarkScanStale(note + " Recheck the folder to update sizes.", [new(folder, scan.Entry(link).IsDirectory)]); return outcome; }
-            await RefreshAffectedAsync(scan, [new(folder, scan.Entry(link).IsDirectory)], note, work.Token, log);
+            { MarkScanStale(note + " Recheck the folder to update sizes.", affected); return outcome; }
+            await RefreshAffectedAsync(scan, affected, note, work.Token, log);
+            if (_scanStale && !StatusText.Text.StartsWith(note, StringComparison.Ordinal))
+                MarkScanStale(note + " " + StatusText.Text);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or OverflowException or Win32Exception
             or UnauthorizedAccessException or InvalidOperationException or ArgumentException or OperationCanceledException
@@ -68,9 +74,21 @@ public partial class MainWindow
             log.Record("online-only-failed", new { Error = ex.ToString(), started });
             if (!_closing)
             {
+                if (outcome.Receipt is not null)
+                {
+                    bool rescan = ScanRechecker.RequiresFullRescan(ex);
+                    outcome = OnlineOnlyPresentation.RefreshFailed(outcome, ex, rescan);
+                    if (_snapshot is not null)
+                    {
+                        MarkScanStale(outcome.Message, affected.Length > 0 ? affected : null);
+                        if (rescan) OfferFullInventoryRescan(_snapshot);
+                    }
+                    else StatusText.Text = outcome.Message;
+                    return outcome;
+                }
                 string message = ex is OperationCanceledException ? "Online-only operation cancelled." : $"Online-only operation could not finish: {ex.Message}";
                 outcome = new(message, started);
-                if (started) MarkScanStale(message + " Recheck the folder; accepted requests may still be processing."); else StatusText.Text = message;
+                if (started && _snapshot is not null) MarkScanStale(message + " Recheck the folder; accepted requests may still be processing."); else StatusText.Text = message;
             }
         }
         finally { _work = null; if (!_closing) { ShowActionLogError(log); SetBusy(false); } }

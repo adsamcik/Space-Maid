@@ -66,6 +66,7 @@ public partial class MainWindow : Window
 
     private void ClearResults()
     {
+        ClearFullInventoryRescan();
         ClearExplorer();
         ClearPreliminary();
         _detectionElapsed = _presentationElapsed = TimeSpan.Zero;
