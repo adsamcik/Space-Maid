@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
 using Microsoft.Win32;
 
 namespace SpaceMaid.Extensions.Agents;
@@ -23,6 +24,8 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     private Window? _owner;
     private bool _recycling, _changingSource;
     private bool _inspectionCurrent;
+    private string? _lastCleanupDetails;
+    private string? _reviewProblem;
     private int _observedAge = 30;
     private readonly Dictionary<int, string> _homes = [];
     internal Func<IReadOnlyList<AgentHome>, int, CancellationToken, Task<AgentHistorySnapshot>> Inspector { get; set; }
@@ -107,7 +110,7 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
         foreach (var item in snapshot.Items)
             if (selected.Contains((item.Home.Tool, item.Path, item.Identity))) HistoryList.SelectedItems.Add(item);
         StatusText.Text = $"{snapshot.Items.Count:N0} {(snapshot.Items.Count == 1 ? "item" : "items")} last changed at least {age:N0} days ago";
-        DiagnosticText.Text = string.Join(Environment.NewLine, snapshot.Warnings);
+        ShowDiagnostics(string.Join(Environment.NewLine, snapshot.Warnings));
         if (snapshot.Warnings.Count > 0) StatusText.Text += " · Some paths were kept or not inspected; see details";
     });
     private async void Review_Click(object sender, RoutedEventArgs e) => await ReviewCleanupAsync();
@@ -118,14 +121,35 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
         return RunAsync(async token =>
         {
             StatusText.Text = "Rechecking selected items and related session activity…";
-            var plan = await Preparer(selected, _observedAge, token); token.ThrowIfCancellationRequested();
+            AgentHistoryPlan plan;
+            try { plan = await Preparer(selected, _observedAge, token); token.ThrowIfCancellationRequested(); }
+            catch (Exception error) when (AgentHistoryCleanup.Expected(error))
+            {
+                _reviewProblem = "No cleanup started.\n" + AgentHistoryCleanup.DescribeFailure(error)
+                    + "\nInspect history, deselect the affected item, then review the intended subset again.";
+                throw;
+            }
             var preview = new AgentHistoryPreview(plan) { Owner = Window.GetWindow(this) };
             if (preview.ShowDialog() != true) { StatusText.Text = "Cleanup cancelled. No files moved."; return; }
             token.ThrowIfCancellationRequested(); _recycling = true; AttachOwner();
             _inspectionCurrent = false;
             StatusText.Text = "Moving the confirmed items to the Recycle Bin…";
             var result = await Executor(plan, new WindowInteropHelper(Window.GetWindow(this)).Handle, token);
-            HistoryList.ItemsSource = null; StatusText.Text = result.Message;
+            var scroll = HistoryScroll(HistoryList);
+            double vertical = scroll?.VerticalOffset ?? 0, horizontal = scroll?.HorizontalOffset ?? 0;
+            var sorts = HistoryList.Items.SortDescriptions.ToArray();
+            var selectedIdentities = HistoryList.SelectedItems.Cast<AgentHistoryItem>().Select(item => (item.Path, item.Identity)).ToHashSet();
+            var receipts = result.Receipts.ToDictionary(receipt => (receipt.Item.Path, receipt.Item.Identity));
+            var rows = HistoryList.Items.Cast<AgentHistoryItem>().Select(item => receipts.TryGetValue((item.Path, item.Identity), out var receipt)
+                ? item with { CleanupStatus = receipt.Status } : item).ToArray();
+            HistoryList.ItemsSource = rows;
+            foreach (var sort in sorts) HistoryList.Items.SortDescriptions.Add(sort);
+            foreach (var item in rows.Where(item => selectedIdentities.Contains((item.Path, item.Identity)))) HistoryList.SelectedItems.Add(item);
+            HistoryList.UpdateLayout(); scroll?.ScrollToVerticalOffset(vertical); scroll?.ScrollToHorizontalOffset(horizontal);
+            _lastCleanupDetails = result.Message + (result.Details.Length == 0 ? "" : "\n" + result.Details);
+            _reviewProblem = null;
+            ShowDiagnostics("");
+            StatusText.Text = result.Message + RetainedResultsNote();
         });
     }
     private async Task RunAsync(Func<CancellationToken, Task> action)
@@ -149,14 +173,31 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
             catch (Exception error) when (AgentHistoryCleanup.Expected(error))
             {
                 _inspectionCurrent = false;
-                DiagnosticText.Text = error.Message;
-                StatusText.Text = (_recycling ? "Recycling stopped or could not be confirmed. Inspect the files again before retrying."
-                    : error is OperationCanceledException ? "Cancelled. No cleanup started." : error.Message) + RetainedResultsNote();
+                string problem = AgentHistoryCleanup.DescribeFailure(error);
+                bool untouched = AgentHistoryCleanup.FailedBeforeExecution(error);
+                if (_recycling && untouched) _reviewProblem = "No cleanup started.\n" + problem;
+                else if (_recycling) _lastCleanupDetails = "Recycling outcome could not be confirmed.\n" + problem;
+                ShowDiagnostics(problem);
+                StatusText.Text = (untouched ? "No cleanup started. " + problem + " Inspect history and review a new selection."
+                    : _recycling ? "Recycling stopped or could not be confirmed. Inspect the files again before retrying."
+                    : error is OperationCanceledException ? "Cancelled. No cleanup started." : problem) + RetainedResultsNote();
             }
         }
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
     private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateSelection();
+    private void ShowDiagnostics(string current) => DiagnosticText.Text = string.Join("\n\n", new[]
+    {
+        current, _reviewProblem is null ? null : "Previous review\n" + _reviewProblem,
+        _lastCleanupDetails is null ? null : "Last cleanup attempt\n" + _lastCleanupDetails
+    }.Where(value => !string.IsNullOrEmpty(value)));
+    private static ScrollViewer? HistoryScroll(DependencyObject element)
+    {
+        if (element is ScrollViewer viewer) return viewer;
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++)
+            if (HistoryScroll(VisualTreeHelper.GetChild(element, index)) is { } child) return child;
+        return null;
+    }
     private string RetainedResultsNote() => !_inspectionCurrent && HistoryList.ItemsSource is not null
         ? " Previous inspection retained · Out of date. Inspect history before cleanup." : "";
     private void UpdateSelection()

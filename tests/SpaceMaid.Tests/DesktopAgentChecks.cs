@@ -59,10 +59,15 @@ public sealed partial class DesktopTests
             return Completed(preparer, Activator.CreateInstance(assembly.GetType("SpaceMaid.Extensions.Agents.AgentHistoryPlan")!, [values[0], values[1]])!);
         });
         SetDelegate("Inspector", values => { inspections++; inspectedHomes = values[0]; return Completed(inspector, snapshot); });
-        SetDelegate("Executor", _ =>
+        SetDelegate("Executor", values =>
         {
             executions++;
             var result = Activator.CreateInstance(assembly.GetType("SpaceMaid.Extensions.Agents.AgentHistoryResult")!, [1, "Owned fixture cleanup completed."])!;
+            var item = ((System.Collections.IEnumerable)values[0]!.GetType().GetProperty("Items")!.GetValue(values[0])!).Cast<object>().Single();
+            var receiptType = assembly.GetType("SpaceMaid.Extensions.Agents.AgentHistoryReceipt")!;
+            var receipts = Array.CreateInstance(receiptType, 1);
+            receipts.SetValue(Activator.CreateInstance(receiptType, [item, Enum.Parse(assembly.GetType("SpaceMaid.Extensions.Agents.AgentHistoryOutcome")!, "Recycled"), "Owned confirmed receipt."]), 0);
+            result.GetType().GetProperty("Receipts")!.SetValue(result, receipts);
             return Completed(executor, result);
         });
         Task Invoke(string name) => (Task)type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, null)!;
@@ -90,6 +95,16 @@ public sealed partial class DesktopTests
             SetDelegate("Inspector", values => { inspections++; inspectedHomes = values[0]; return Completed(inspector, snapshot); });
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
             Assert.Same(selected, Assert.Single(list.SelectedItems.Cast<object>())); Assert.True(review.IsEnabled);
+            var retainedPreparer = (Delegate)preparer.GetValue(view)!;
+            SetDelegate("Preparer", _ => throw new InvalidOperationException("Owned changed history item · " + transcript));
+            var failedReview = Invoke("ReviewCleanupAsync"); PumpUntil(() => failedReview.IsCompleted, TimeSpan.FromSeconds(3)); failedReview.GetAwaiter().GetResult();
+            Assert.Equal(2, list.Items.Count); Assert.Same(selected, Assert.Single(list.SelectedItems.Cast<object>()));
+            Assert.False(review.IsEnabled); Assert.Equal(0, executions);
+            Assert.Contains(transcript, ((TextBox)view.FindName("DiagnosticText")).Text);
+            Assert.Contains("No cleanup started", ((TextBox)view.FindName("DiagnosticText")).Text);
+            preparer.SetValue(view, retainedPreparer);
+            inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+            Assert.Same(selected, Assert.Single(list.SelectedItems.Cast<object>())); Assert.True(review.IsEnabled);
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
             {
@@ -103,11 +118,22 @@ public sealed partial class DesktopTests
             Preview(confirm: false); Assert.Equal(0, executions);
             list.SelectedItem = selected; expectedPath = transcript;
             Preview(confirm: false); Assert.Equal(0, executions); Assert.Single(list.SelectedItems);
-            Preview(confirm: true); Assert.Equal(1, executions); Assert.Empty(list.Items);
+            Preview(confirm: true); Assert.Equal(1, executions); Assert.Equal(2, list.Items.Count);
+            Assert.False(review.IsEnabled); Assert.Single(list.SelectedItems);
+            Assert.Contains("Confirmed", (string)list.SelectedItem.GetType().GetProperty("CleanupStatus")!.GetValue(list.SelectedItem)!);
+            Assert.Contains(transcript, ((TextBox)view.FindName("DiagnosticText")).Text);
             Assert.Contains("cleanup completed", ((TextBlock)view.FindName("StatusText")).Text);
+            Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "agents-cleanup-retained-receipts.png"), 1050, 720);
             Assert.True(File.Exists(transcript)); // The desktop executor is deliberately inert.
+            inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+            SetDelegate("Preparer", _ => throw new InvalidOperationException("Owned changed history item · " + transcript));
+            failedReview = Invoke("ReviewCleanupAsync"); PumpUntil(() => failedReview.IsCompleted, TimeSpan.FromSeconds(3)); failedReview.GetAwaiter().GetResult();
+            Assert.Equal(1, executions); Assert.False(review.IsEnabled);
+            Assert.Contains("No cleanup started", ((TextBox)view.FindName("DiagnosticText")).Text);
+            Assert.Contains("Owned confirmed receipt", ((TextBox)view.FindName("DiagnosticText")).Text);
+            preparer.SetValue(view, retainedPreparer);
             var tools = (ComboBox)view.FindName("ToolPicker"); var customHome = (TextBox)view.FindName("HomeBox");
-            tools.SelectedIndex = 6; Assert.Equal("", customHome.Text); Assert.Empty(list.Items); Assert.False(review.IsEnabled);
+            tools.SelectedIndex = 6; Assert.Equal("", customHome.Text); Assert.Equal(2, list.Items.Count); Assert.False(review.IsEnabled);
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
             var standardHomes = ((System.Collections.IEnumerable)inspectedHomes!).Cast<object>().ToArray();
             Assert.True(standardHomes.Length > 1);
@@ -120,7 +146,8 @@ public sealed partial class DesktopTests
             ((TextBox)view.FindName("AgeBox")).Text = "0";
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
             Assert.Contains("1 through 3650", ((TextBlock)view.FindName("StatusText")).Text);
-            Assert.Equal(4, inspections);
+            Assert.Equal(6, inspections);
+            Assert.Contains("Last cleanup attempt", ((TextBox)view.FindName("DiagnosticText")).Text);
 
             void Preview(bool confirm)
             {

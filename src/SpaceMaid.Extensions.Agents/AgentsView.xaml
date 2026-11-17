@@ -33,6 +33,7 @@
                 <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="130" />
                 <DataGridTextColumn Header="Last changed" Binding="{Binding LastChanged, StringFormat={}{0:g}}" Width="145" />
                 <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="105" />
+                <DataGridTextColumn Header="Last cleanup" Binding="{Binding CleanupStatus}" Width="2*" MinWidth="145" />
             </DataGrid.Columns>
         </DataGrid>
         <StackPanel Grid.Row="4" Margin="0,10,0,0">

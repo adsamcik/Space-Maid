@@ -18,6 +18,8 @@ internal sealed record AgentHome(AgentTool Tool, string Path)
 internal sealed record AgentHistoryItem(AgentHome Home, string Path, string Kind, AgentFileIdentity Identity,
     CursorChatSnapshot? Folder = null, AgentSessionEvidence? SessionEvidence = null)
 {
+    // A display-only receipt; it never changes the captured cleanup identity.
+    public string CleanupStatus { get; init; } = "";
     public string Tool => Home.ToolName;
     public string Name => System.IO.Path.GetFileName(Path);
     public long Bytes => Folder?.LogicalBytes ?? Identity.Length;
@@ -33,7 +35,21 @@ internal sealed record AgentHistoryPlan(IReadOnlyList<AgentHistoryItem> Items, i
 {
     public string Summary => $"{Items.Count:N0} {(Items.Count == 1 ? "item" : "items")} · {AgentHistoryCleanup.Size(Items.Sum(item => item.Bytes))} observed";
 }
-internal sealed record AgentHistoryResult(int Recycled, string Message);
+internal enum AgentHistoryOutcome { Recycled, Kept, Uncertain, NotProcessed }
+internal sealed record AgentHistoryReceipt(AgentHistoryItem Item, AgentHistoryOutcome Outcome, string Message)
+{
+    public string Status => Outcome switch
+    {
+        AgentHistoryOutcome.Recycled => "Recycled · Confirmed", AgentHistoryOutcome.Kept => "Kept · Recheck needed",
+        AgentHistoryOutcome.Uncertain => "Uncertain · Recheck", _ => "Not processed"
+    };
+}
+internal sealed record AgentHistoryResult(int Recycled, string Message)
+{
+    public IReadOnlyList<AgentHistoryReceipt> Receipts { get; init; } = [];
+    public string Details => string.Join(Environment.NewLine, Receipts.Select(receipt =>
+        receipt.Status + " · " + receipt.Item.Path + Environment.NewLine + receipt.Message));
+}
 
 // Fixed known file layouts only. Discovery reads names and native metadata,
 // never transcripts, databases, credentials, process environments or memory.
@@ -185,11 +201,15 @@ internal static partial class AgentHistoryCleanup
             .OrderBy(item => item.Kind == "Task write leftover" ? 0 : 1).ToArray();
         foreach (var item in items)
         {
-            token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner);
-            Validate(files, item, olderThanDays, DateTime.UtcNow);
-            if (item.Folder is not null) { using var folderLease = CursorChatCleanup.Lease(files, item, token); CursorChatCleanup.Validate(files, item, olderThanDays, token); continue; }
-            using var lease = AgentFileTarget.Lease(files, item);
-            Validate(files, item, olderThanDays, DateTime.UtcNow);
+            try
+            {
+                token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner);
+                Validate(files, item, olderThanDays, DateTime.UtcNow);
+                if (item.Folder is not null) { using var folderLease = CursorChatCleanup.Lease(files, item, token); CursorChatCleanup.Validate(files, item, olderThanDays, token); continue; }
+                using var lease = AgentFileTarget.Lease(files, item);
+                Validate(files, item, olderThanDays, DateTime.UtcNow);
+            }
+            catch (Exception error) when (Expected(error)) { SetItemContext(error, item); throw; }
         }
         return new(Array.AsReadOnly(items), olderThanDays);
     }
@@ -223,29 +243,59 @@ internal static partial class AgentHistoryCleanup
         await Task.Run(() =>
         {
             foreach (var item in plan.Items)
-            { token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(files, item, plan.OlderThanDays, DateTime.UtcNow); }
+            {
+                try { token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(files, item, plan.OlderThanDays, DateTime.UtcNow); }
+                catch (Exception error) when (Expected(error)) { SetItemContext(error, item); throw; }
+            }
         }, token).ConfigureAwait(false);
         int completed = 0;
         var removed = new HashSet<string>(StringComparer.Ordinal);
+        var receipts = new List<AgentHistoryReceipt>();
+        AgentHistoryItem? current = null; bool attempted = false;
         try
         {
             foreach (var original in plan.Items)
             {
+                current = original; attempted = false;
                 var item = original.SessionEvidence is { } evidence
                     ? original with { SessionEvidence = evidence.AfterOwnRemovals(files, original, removed, token) } : original;
                 token.ThrowIfCancellationRequested(); AgentOwnerProtection.RequireStopped(item.Home.Tool, runningOwner); Validate(files, item, plan.OlderThanDays, DateTime.UtcNow);
+                attempted = true;
                 bool moved = recycle is null ? item.Folder is not null ? await CursorChatCleanup.RecycleAsync(files, item, owner, token, plan.OlderThanDays)
                     : await AgentFileRecycler.RecycleAsync(files, item, owner, token)
                     : await recycle(item, owner, token);
-                if (!moved) return new(completed, $"Stopped after {completed:N0} confirmed files. The last file may have moved; inspect again before retrying.");
+                if (!moved) return Stopped("Windows did not confirm recycling this item.");
                 completed++;
                 removed.Add(item.Path);
+                receipts.Add(new(original, AgentHistoryOutcome.Recycled, "Windows confirmed this item in the Recycle Bin. It still occupies space until the bin is emptied."));
             }
-            return new(completed, $"Moved {completed:N0} items to the Recycle Bin. They still occupy space until the bin is emptied. Separate app indexes and related files were kept.");
+            return new(completed, $"Moved {completed:N0} items to the Recycle Bin. They still occupy space until the bin is emptied. Separate app indexes and related files were kept.")
+                { Receipts = Array.AsReadOnly(receipts.ToArray()) };
         }
         catch (Exception error) when (Expected(error))
-        { return new(completed, $"Stopped after {completed:N0} confirmed files. {error.Message} The last file may have moved; inspect again before retrying."); }
+        { return Stopped(error.Message); }
+
+        AgentHistoryResult Stopped(string reason)
+        {
+            if (current is not null) receipts.Add(new(current, attempted ? AgentHistoryOutcome.Uncertain : AgentHistoryOutcome.Kept, reason));
+            foreach (var item in plan.Items.Skip(receipts.Count))
+                receipts.Add(new(item, AgentHistoryOutcome.NotProcessed, "Stopped before this item; no recycling request was sent for it."));
+            string detail = current is null ? reason : current.Path + ": " + reason;
+            return new(completed, $"Stopped after {completed:N0} confirmed files. {detail} "
+                + (attempted ? "The last file may have moved; inspect again before retrying." : "No recycling request was sent for this item; inspect again before a new review."))
+                { Receipts = Array.AsReadOnly(receipts.ToArray()) };
+        }
     }
+
+    private const string ItemPathKey = "SpaceMaid.AgentHistory.ItemPath";
+    private static void SetItemContext(Exception error, AgentHistoryItem item)
+    {
+        error.Data[ItemPathKey] = item.Path;
+        error.Data[ItemPathKey + ".BeforeExecution"] = true;
+    }
+    internal static bool FailedBeforeExecution(Exception error) => Equals(error.Data[ItemPathKey + ".BeforeExecution"], true);
+    internal static string DescribeFailure(Exception error) => error.Data[ItemPathKey] is string path
+        ? path + ": " + error.Message : error.Message;
 
     private static bool OldEnough(long lastWriteFileTime, int days, DateTime utcNow)
         => lastWriteFileTime > 0 && DateTime.FromFileTimeUtc(lastWriteFileTime) <= utcNow.AddDays(-days);

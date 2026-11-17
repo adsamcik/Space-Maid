@@ -59,8 +59,10 @@ public sealed class AgentHistoryCleanupTests
         var items = AgentHistoryCleanup.Inspect([home], 30, Now, default).Items;
         var plan = AgentHistoryCleanup.Prepare(items, 30, default);
         File.AppendAllText(changed, "changed"); int calls = 0;
-        await Assert.ThrowsAsync<InvalidOperationException>(() => AgentHistoryCleanup.ExecuteAsync(plan, 0, default,
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => AgentHistoryCleanup.ExecuteAsync(plan, 0, default,
             (_, _, _) => { calls++; return Task.FromResult(true); }));
+        Assert.Contains(changed, AgentHistoryCleanup.DescribeFailure(error));
+        Assert.True(AgentHistoryCleanup.FailedBeforeExecution(error));
         Assert.Equal(0, calls); Assert.All(items, item => Assert.True(File.Exists(item.Path)));
     }
 
@@ -99,7 +101,9 @@ public sealed class AgentHistoryCleanupTests
         string path = Write(home, "archived_sessions/rollout-old.jsonl");
         var item = AgentHistoryCleanup.Inspect([home], 30, Now, default).Items.Single();
         using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-        Assert.Throws<Win32Exception>(() => AgentHistoryCleanup.Prepare([item], 30, default));
+        var error = Assert.Throws<Win32Exception>(() => AgentHistoryCleanup.Prepare([item], 30, default));
+        Assert.Contains(path, AgentHistoryCleanup.DescribeFailure(error));
+        Assert.True(AgentHistoryCleanup.FailedBeforeExecution(error));
     }
 
     [Fact]
@@ -112,7 +116,41 @@ public sealed class AgentHistoryCleanupTests
         var result = await AgentHistoryCleanup.ExecuteAsync(plan, 42, default, (item, owner, _) =>
         { Assert.Equal(42, owner); calls.Add(item.Path); return Task.FromResult(false); });
         Assert.Equal(0, result.Recycled); Assert.Single(calls); Assert.Contains("may have moved", result.Message);
+        Assert.Equal(new[] { AgentHistoryOutcome.Uncertain, AgentHistoryOutcome.NotProcessed }, result.Receipts.Select(item => item.Outcome));
+        Assert.Contains(calls[0], result.Details);
         Assert.All(items, item => Assert.True(File.Exists(item.Path)));
+    }
+
+    [Fact]
+    public async Task PartialOutcomeRetainsEveryConfirmedUncertainAndUntouchedItem()
+    {
+        using var fixture = new TestDirectory(); var home = new AgentHome(AgentTool.Codex, fixture.Path);
+        foreach (string name in new[] { "first", "second", "third" }) Write(home, "archived_sessions/rollout-" + name + ".jsonl");
+        var plan = AgentHistoryCleanup.Prepare(AgentHistoryCleanup.Inspect([home], 30, Now, default).Items, 30, default);
+        int calls = 0;
+        var result = await AgentHistoryCleanup.ExecuteAsync(plan, 0, default, (_, _, _) => Task.FromResult(++calls == 1));
+        Assert.Equal(2, calls); Assert.Equal(1, result.Recycled);
+        Assert.Equal(new[] { AgentHistoryOutcome.Recycled, AgentHistoryOutcome.Uncertain, AgentHistoryOutcome.NotProcessed }, result.Receipts.Select(item => item.Outcome));
+        Assert.Equal(plan.Items.Select(item => item.Path), result.Receipts.Select(receipt => receipt.Item.Path));
+        Assert.All(plan.Items, item => Assert.True(File.Exists(item.Path))); // Inert callbacks establish receipt behavior, not Shell recycling.
+    }
+
+    [Fact]
+    public async Task ItemChangedBetweenRequestsIsIdentifiedAsKeptAndStopsRemainingWork()
+    {
+        using var fixture = new TestDirectory(); var home = new AgentHome(AgentTool.Codex, fixture.Path);
+        foreach (string name in new[] { "first", "second", "third" }) Write(home, "archived_sessions/rollout-" + name + ".jsonl");
+        var plan = AgentHistoryCleanup.Prepare(AgentHistoryCleanup.Inspect([home], 30, Now, default).Items, 30, default);
+        int calls = 0;
+        var result = await AgentHistoryCleanup.ExecuteAsync(plan, 0, default, (_, _, _) =>
+        {
+            calls++; File.AppendAllText(plan.Items[1].Path, "changed after whole-set validation"); return Task.FromResult(true);
+        });
+        Assert.Equal(1, calls); Assert.Equal(1, result.Recycled);
+        Assert.Equal(new[] { AgentHistoryOutcome.Recycled, AgentHistoryOutcome.Kept, AgentHistoryOutcome.NotProcessed }, result.Receipts.Select(item => item.Outcome));
+        Assert.Contains(plan.Items[1].Path, result.Message);
+        Assert.DoesNotContain("may have moved", result.Message);
+        Assert.All(plan.Items, item => Assert.True(File.Exists(item.Path)));
     }
 
     [Fact]
