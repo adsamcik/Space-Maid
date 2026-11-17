@@ -218,6 +218,42 @@ public sealed class OpenCodeSessionCleanupTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => OpenCodeSessions.InspectAsync(stalledClient, Connection, 30, default, TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(2)));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task DeadlineAndCallerCancellationKeepTheSubmissionOutcomeDistinct(bool submitted, bool callerCancelled)
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var handler = new Handler(request =>
+        {
+            bool stopHere = submitted ? request.Method == HttpMethod.Delete : request.RequestUri!.AbsolutePath == "/global/health";
+            if (!stopHere) return Standard(request);
+            if (callerCancelled) cancellation.Cancel();
+            // Emit transport cancellation at the exact phase, independent of
+            // machine timing. WholeBodyDeadlineAndResponseBoundsFailClosed
+            // separately establishes the actual bounded-body timeout.
+            throw new OperationCanceledException(callerCancelled ? cancellation.Token : new CancellationToken(true));
+        });
+        using var client = new HttpClient(handler);
+        var result = await OpenCodeSessions.ExecuteAsync(client, Connection, new(Server, Selected, 30), cancellation.Token);
+        Assert.False(result.Deleted); Assert.Equal(submitted, result.Attempted);
+        Assert.Contains(callerCancelled ? "cancelled" : "deadline", result.Message);
+        Assert.DoesNotContain("cancelled or timed out", result.Message);
+        if (submitted)
+        {
+            Assert.Contains("may have reached OpenCode", result.Message);
+            Assert.DoesNotContain("No deletion started", result.Message);
+            Assert.Single(handler.Requests, request => request.Method == HttpMethod.Delete);
+        }
+        else
+        {
+            Assert.Contains("No deletion started", result.Message);
+            Assert.DoesNotContain(handler.Requests, request => request.Method != HttpMethod.Get);
+        }
+    }
+
     [Fact]
     public async Task UnsupportedServerVersionAndCancellationNeverSendDeletion()
     {

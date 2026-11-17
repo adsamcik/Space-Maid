@@ -111,9 +111,10 @@ public partial class OpenCodeSessionsView : UserControl
             try { await action(work.Token); }
             catch (Exception error) when (OpenCodeSessions.Expected(error))
             {
-                _inspectionCurrent = false; DiagnosticText.Text = OpenCodeSessions.SafeError(error);
-                StatusText.Text = (_deleting ? "The deletion result is uncertain. Inspect again before retrying."
-                    : error is OperationCanceledException ? "Cancelled. No deletion started."
+                _inspectionCurrent = false; DiagnosticText.Text = OpenCodeSessions.SafeOperationError(error, work.Token);
+                StatusText.Text = (_deleting ? "The deletion result is uncertain. Inspect again before retrying. " + DiagnosticText.Text
+                    : error is OperationCanceledException ? work.IsCancellationRequested ? "Cancelled. No deletion started."
+                        : "OpenCode did not respond in time. No deletion started. Check that the local server is running and inspect sessions again."
                     : "Local OpenCode inspection failed. " + OpenCodeSessions.SafeError(error)) + RetainedResultsNote();
             }
         }

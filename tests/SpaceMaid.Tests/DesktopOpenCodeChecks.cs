@@ -80,14 +80,29 @@ public sealed partial class DesktopTests
             list.SelectedItem = busy; Assert.False(review.IsEnabled);
             var blocked = Invoke("ReviewCleanupAsync"); Assert.True(blocked.IsCompletedSuccessfully); Assert.Equal(0, preparations);
             list.SelectedItem = idle; Assert.True(review.IsEnabled);
-            foreach (var failure in new Exception[] { new IOException("Owned inspection outage"), new OperationCanceledException() })
+            foreach (string failure in new[] { "outage", "timeout", "cancel" })
             {
-                SetDelegate("Inspector", _ => throw failure);
+                SetDelegate("Inspector", values =>
+                {
+                    if (failure == "outage") throw new IOException("Owned inspection outage");
+                    if (failure == "cancel") ((Button)view.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    throw new OperationCanceledException((CancellationToken)values[2]!);
+                });
                 inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
                 Assert.Equal(2, list.Items.Count); Assert.Same(idle, list.SelectedItem); Assert.False(review.IsEnabled);
-                Assert.Contains("Out of date", ((TextBlock)view.FindName("StatusText")).Text);
+                string status = ((TextBlock)view.FindName("StatusText")).Text;
+                Assert.Contains("Out of date", status);
+                if (failure == "timeout")
+                {
+                    Assert.Contains("did not respond in time", status); Assert.DoesNotContain("Cancelled", status);
+                    Assert.Contains("deadline", ((TextBlock)view.FindName("DiagnosticText")).Text);
+                }
+                else if (failure == "cancel")
+                {
+                    Assert.Contains("Cancelled. No deletion started", status); Assert.DoesNotContain("did not respond in time", status);
+                }
                 blocked = Invoke("ReviewCleanupAsync"); Assert.True(blocked.IsCompletedSuccessfully); Assert.Equal(0, preparations);
-                if (failure is IOException) Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "opencode-retained-results.png"), 1050, 720);
+                if (failure == "outage") Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "opencode-retained-results.png"), 1050, 720);
             }
             SetDelegate("Inspector", _ => { inspections++; return Completed(inspector, snapshot); });
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();

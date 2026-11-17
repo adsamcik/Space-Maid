@@ -99,8 +99,8 @@ internal static class OpenCodeSessions
         catch (Exception error) when (Expected(error))
         {
             return new(false, attempted, attempted
-                ? "The deletion request may have reached OpenCode. Its result could not be verified; inspect again before retrying. " + SafeError(error)
-                : "No deletion started. " + SafeError(error));
+                ? "The deletion request may have reached OpenCode. Its result could not be verified; inspect again before retrying. " + SafeOperationError(error, token)
+                : "No deletion started. " + SafeOperationError(error, token));
         }
     }
 
@@ -269,6 +269,9 @@ internal static class OpenCodeSessions
     }
     internal static bool Expected(Exception error) => error is IOException or InvalidDataException or HttpRequestException
         or JsonException or OperationCanceledException or InvalidOperationException or ArgumentException;
+    internal static string SafeOperationError(Exception error, CancellationToken callerToken) => error is OperationCanceledException
+        ? callerToken.IsCancellationRequested ? "The wait was cancelled." : "OpenCode did not respond within the request deadline. Check that the local server is running and inspect sessions again."
+        : SafeError(error);
     internal static string SafeError(Exception error) => error is HttpRequestException request && request.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
         ? "The local server rejected authentication. Check its password and default opencode username."
         : error is JsonException ? "OpenCode returned invalid JSON; cleanup is unavailable."
