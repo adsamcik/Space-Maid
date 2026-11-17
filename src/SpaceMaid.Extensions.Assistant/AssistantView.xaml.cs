@@ -28,7 +28,8 @@ public partial class AssistantView : UserControl
     private Task? _active;
     private long _version;
     private string? _root;
-    private bool _initialized, _closed, _busy;
+    private bool _initialized, _closed, _busy, _hasCompletedSuggestions, _suggestionsCurrent;
+    private string? _contextNotice;
     private readonly Func<string, string, IChatClient> _createClient;
 
     internal AssistantView(IExtensionHost host, CancellationToken lifetime, Func<string, string, IChatClient>? createClient = null)
@@ -61,7 +62,7 @@ public partial class AssistantView : UserControl
         // when the same view remains open under a new Windows appearance.
         Unloaded += (_, _) => Dispatcher.InvokeAsync(() =>
         {
-            if (!IsLoaded) Invalidate();
+            if (!IsLoaded) RevokeAuthority();
         }, System.Windows.Threading.DispatcherPriority.ContextIdle);
     }
 
@@ -94,6 +95,7 @@ public partial class AssistantView : UserControl
     {
         var picker = new OpenFolderDialog { Title = "Choose a folder included in the current scan", Multiselect = false };
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
+        if (!string.Equals(_root, picker.FolderName, StringComparison.OrdinalIgnoreCase)) Invalidate();
         _root = picker.FolderName; FolderText.Text = _root;
         await StartAsync(RefreshSummaryAsync);
     }
@@ -103,7 +105,13 @@ public partial class AssistantView : UserControl
         Invalidate(); StatusText.Text = "Exclusions changed. Refresh to continue."; UpdateActions();
     }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await StartAsync(RefreshSummaryAsync);
-    private async void Run_Click(object sender, RoutedEventArgs e) => await StartAsync(InvestigateAsync);
+    private async void Run_Click(object sender, RoutedEventArgs e) => await StartAsync(async token =>
+    {
+        // Recovery refreshes only read-only evidence. Old suggestions never
+        // regain authority merely because a new session was opened.
+        if (_session is null) await RefreshSummaryAsync(token);
+        await InvestigateAsync(token);
+    });
     private async Task StartAsync(Func<CancellationToken, Task> action, bool bounded = true)
     {
         if (_closed || _busy) return;
@@ -112,18 +120,19 @@ public partial class AssistantView : UserControl
         _work = work; _busy = true; UpdateActions();
         try { _active = action(work.Token); await _active; }
         catch (OperationCanceledException)
-        { if (!_closed) StatusText.Text = "Stopped."; }
+        { RevokeAuthority(); if (!_closed) StatusText.Text = StoppedMessage; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException
             or JsonException or System.ComponentModel.Win32Exception or NotSupportedException or TimeoutException or AggregateException)
         {
-            Invalidate();
-            if (!_closed) StatusText.Text = error.Message;
+            bool cancelled = work.IsCancellationRequested;
+            RevokeAuthority();
+            if (!_closed) StatusText.Text = cancelled ? StoppedMessage : error.Message + " Refresh to retry.";
         }
         finally { _work = null; _active = null; _busy = false; if (!_closed) UpdateActions(); }
     }
     internal async Task RefreshSummaryAsync(CancellationToken token)
     {
-        Invalidate(cancel: false);
+        RevokeAuthority(cancel: false);
         if (_root is null || _host.Inventory is not IInventoryEvidence evidence) throw new InvalidOperationException("Scan and choose a folder before opening the assistant.");
         string[] excluded = ExclusionsBox.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         long version = _version;
@@ -135,7 +144,8 @@ public partial class AssistantView : UserControl
             if (_closed || version != _version) return;
             _session = session; session = null!;
             ShowEvidence(summary);
-            EmptyText.Text = "No suggestions yet.";
+            if (!_hasCompletedSuggestions) EmptyText.Text = "No suggestions yet.";
+            _contextNotice = _hasCompletedSuggestions ? "Earlier suggestions · Find suggestions again to review the refreshed evidence." : null;
             StatusText.Text = summary.Coverage.Complete ? "Ready."
                 : summary.Coverage.WarningCount > 0 || summary.Coverage.RetainsEarlierMetadata
                     ? "Scan incomplete or out of date. Rescan this folder, then refresh."
@@ -147,7 +157,9 @@ public partial class AssistantView : UserControl
     {
         var session = _session ?? throw new InvalidOperationException("Refresh the selected folder summary first.");
         if (EnabledBox.IsChecked != true || string.IsNullOrEmpty(ModelPathBox.Text)) throw new InvalidOperationException("Enable the assistant and choose a local GGUF model.");
-        SuggestionList.ItemsSource = null; EmptyText.Visibility = Visibility.Visible;
+        _suggestionsCurrent = false;
+        _contextNotice = _hasCompletedSuggestions ? "Showing earlier suggestions while the investigation runs." : null;
+        UpdateActions();
         long version = _version;
         string worker = Path.Join(Path.GetDirectoryName(typeof(AssistantExtension).Assembly.Location)!, "Worker", "SpaceMaid.ModelWorker.exe");
         using var client = _createClient(worker, ModelPathBox.Text);
@@ -156,7 +168,11 @@ public partial class AssistantView : UserControl
         token.ThrowIfCancellationRequested();
         if (_closed || version != _version) return;
         // Native/model process is disposed on return, before human review.
-        SuggestionList.ItemsSource = result.Suggestions.Select(item => new SuggestionRow(item)).ToArray();
+        var selected = SuggestionList.SelectedItems.Cast<SuggestionRow>().Select(row => (row.Path, row.Item.Entry.Identity)).ToHashSet();
+        var rows = result.Suggestions.Select(item => new SuggestionRow(item)).ToArray();
+        SuggestionList.ItemsSource = rows;
+        foreach (var row in rows.Where(row => selected.Contains((row.Path, row.Item.Entry.Identity)))) SuggestionList.SelectedItems.Add(row);
+        _hasCompletedSuggestions = _suggestionsCurrent = true; _contextNotice = null;
         EmptyText.Visibility = result.Suggestions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyText.Text = result.UntrustedNote.Length > 0 ? "AI note (unverified): " + result.UntrustedNote : "No suggestions found.";
         ShowEvidence(result.Summary);
@@ -166,37 +182,51 @@ public partial class AssistantView : UserControl
         + $"\nSource: {summary.Coverage.Backend} · Observed {summary.Coverage.ScannedAtUtc.ToLocalTime():g}";
     private async void Review_Click(object sender, RoutedEventArgs e) => await StartAsync(async token =>
     {
-        if (_session is not { } session || _host is not IExtensionEvidenceReview review) throw new InvalidOperationException("Host cleanup review is unavailable.");
+        if (!_suggestionsCurrent || _session is not { } session || _host is not IExtensionEvidenceReview review) throw new InvalidOperationException("Refresh and find suggestions before reviewing cleanup.");
         var ids = SuggestionList.SelectedItems.Cast<SuggestionRow>().Select(row => row.Item.Entry.Id).ToArray();
         var result = await review.ReviewEvidenceAsync(session, ids, token);
-        Invalidate(cancel: false); StatusText.Text = result.Message + " Refresh to continue.";
+        RevokeAuthority(cancel: false); StatusText.Text = result.Message + " Refresh to continue.";
     }, bounded: false);
     private async void Open_Click(object sender, RoutedEventArgs e)
     {
-        if (_session is not { } session || SuggestionList.SelectedItem is not SuggestionRow row) return;
+        if (!_suggestionsCurrent || _session is not { } session || SuggestionList.SelectedItem is not SuggestionRow row) return;
         try { var entry = await session.DetailsAsync(row.Item.Entry.Id, _lifetime); _host.RevealLocation(entry.Path); }
-        catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException) { Invalidate(); StatusText.Text = error.Message; }
+        catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException) { RevokeAuthority(); StatusText.Text = error.Message + " Refresh to continue."; }
     }
     private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateActions();
-    private void Cancel_Click(object sender, RoutedEventArgs e) { Invalidate(); StatusText.Text = "Stopping…"; }
+    private void Cancel_Click(object sender, RoutedEventArgs e) { RevokeAuthority(); StatusText.Text = "Stopping… Previous results are retained."; }
     private void Invalidate(bool cancel = true)
     {
-        _version++; if (cancel) _work?.Cancel();
-        _session?.Dispose(); _session = null;
+        RevokeAuthority(cancel);
+        _hasCompletedSuggestions = false; _contextNotice = null;
         SuggestionList.ItemsSource = null; EmptyText.Visibility = Visibility.Visible; EvidenceText.Text = "";
         EmptyText.Text = _root is null ? "Choose a scanned folder to begin." : "Refresh to find suggestions.";
         UpdateActions();
     }
+    private void RevokeAuthority(bool cancel = true)
+    {
+        _version++; if (cancel) _work?.Cancel();
+        _session?.Dispose(); _session = null; _suggestionsCurrent = false;
+        _contextNotice = HasRetainedContext ? "Previous results · Refresh before using them for cleanup." : null;
+        UpdateActions();
+    }
+    private bool HasRetainedContext => _hasCompletedSuggestions || EvidenceText.Text.Length > 0;
+    private string StoppedMessage => "Stopped. Refresh to continue." + (HasRetainedContext ? " Previous results are retained." : "");
     private void UpdateActions()
     {
         if (!_initialized) return;
         ModelButton.IsEnabled = FolderButton.IsEnabled = ExclusionsBox.IsEnabled = QuestionBox.IsEnabled = !_busy;
         RefreshButton.IsEnabled = !_busy && _root is not null;
-        RunButton.IsEnabled = !_busy && EnabledBox.IsChecked == true && _session is not null && !string.IsNullOrEmpty(ModelPathBox.Text);
+        bool retry = _session is null && HasRetainedContext;
+        RunButton.Content = retry ? "Refresh and retry" : "Find suggestions";
+        RunButton.ToolTip = retry ? "Refresh this folder's evidence, then retry the retained question. Previous suggestions remain for reference until replaced." : "Investigate the current folder evidence with the local model.";
+        RunButton.IsEnabled = !_busy && EnabledBox.IsChecked == true && _root is not null && (_session is not null || retry) && !string.IsNullOrEmpty(ModelPathBox.Text);
         CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
         ProgressStrip.Visibility = _busy ? Visibility.Visible : Visibility.Hidden;
-        OpenButton.IsEnabled = !_busy && _session is not null && SuggestionList.SelectedItem is SuggestionRow;
-        ReviewButton.IsEnabled = !_busy && _session is not null && _host is IExtensionEvidenceReview && SuggestionList.SelectedItems.Count > 0
+        ContextText.Text = _contextNotice ?? "";
+        ContextText.Visibility = _contextNotice is null ? Visibility.Collapsed : Visibility.Visible;
+        OpenButton.IsEnabled = !_busy && _suggestionsCurrent && _session is not null && SuggestionList.SelectedItem is SuggestionRow;
+        ReviewButton.IsEnabled = !_busy && _suggestionsCurrent && _session is not null && _host is IExtensionEvidenceReview && SuggestionList.SelectedItems.Count > 0
             && SuggestionList.SelectedItems.Cast<SuggestionRow>().All(row => row.Item.Entry.IsDirectory);
     }
     internal async Task ShutdownAsync()

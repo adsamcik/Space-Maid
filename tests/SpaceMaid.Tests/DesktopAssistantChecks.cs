@@ -32,8 +32,12 @@ public sealed partial class DesktopTests
         var host = new AssistantUiHost(fixture.Path, scanTask.GetAwaiter().GetResult());
         ScriptedChatClient? client = null;
         bool waitForCancellation = false;
+        bool failInvestigation = false;
+        TaskCompletionSource<string>? lateReply = null;
         var view = new AssistantView(host, default, (_, _) => client = new ScriptedChatClient(async (messages, _, token) =>
         {
+            if (failInvestigation) throw new IOException("Fixture model unavailable.");
+            if (lateReply is not null) return await lateReply.Task; // Deliberately ignores cancellation to exercise late completion.
             if (waitForCancellation) await Task.Delay(Timeout.Infinite, token);
             using var facts = JsonDocument.Parse(messages[1].Text);
             var items = facts.RootElement.GetProperty("firstChildren").GetProperty("items");
@@ -70,9 +74,59 @@ public sealed partial class DesktopTests
             ((Button)view.FindName("OpenButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => host.Revealed is not null, TimeSpan.FromSeconds(2));
             Assert.StartsWith(content, host.Revealed);
+            var retainedRows = list.ItemsSource;
+            var retainedSelection = list.SelectedItem;
+            string retainedEvidence = ((TextBlock)view.FindName("EvidenceText")).Text;
+            string retainedQuestion = ((TextBox)view.FindName("QuestionBox")).Text;
+            failInvestigation = true;
+            ((Button)view.FindName("RunButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => client!.Disposed && !((Button)view.FindName("CancelButton")).IsVisible, TimeSpan.FromSeconds(3));
+            Assert.Same(retainedRows, list.ItemsSource); Assert.Same(retainedSelection, list.SelectedItem);
+            Assert.Equal(retainedEvidence, ((TextBlock)view.FindName("EvidenceText")).Text);
+            Assert.Equal(retainedQuestion, ((TextBox)view.FindName("QuestionBox")).Text);
+            Assert.False(((Button)view.FindName("ReviewButton")).IsEnabled);
+            Assert.False(((Button)view.FindName("OpenButton")).IsEnabled);
+            Assert.Equal("Refresh and retry", ((Button)view.FindName("RunButton")).Content);
+            Assert.Contains("Previous results", ((TextBlock)view.FindName("ContextText")).Text);
+            Assert.Contains("Fixture model unavailable", ((TextBlock)view.FindName("StatusText")).Text);
+
+            // A failed refresh retains display; a successful one cannot turn old
+            // session IDs into current review authority.
+            host.InventoryAvailable = false;
+            ((Button)view.FindName("RefreshButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => !((Button)view.FindName("CancelButton")).IsVisible, TimeSpan.FromSeconds(3));
+            Assert.Same(retainedRows, list.ItemsSource); Assert.Same(retainedSelection, list.SelectedItem);
+            Assert.Equal(retainedEvidence, ((TextBlock)view.FindName("EvidenceText")).Text);
+            host.InventoryAvailable = true;
+            refresh = view.RefreshSummaryAsync(default); PumpUntil(() => refresh.IsCompleted, TimeSpan.FromSeconds(3)); refresh.GetAwaiter().GetResult();
+            Assert.Same(retainedRows, list.ItemsSource);
+            Assert.False(((Button)view.FindName("ReviewButton")).IsEnabled);
+            Assert.False(((Button)view.FindName("OpenButton")).IsEnabled);
+            string refreshedEvidence = ((TextBlock)view.FindName("EvidenceText")).Text;
+
+            // Even a client that completes after Cancel cannot republish or
+            // make the historical suggestions actionable.
+            failInvestigation = false; lateReply = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ((Button)view.FindName("RunButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => client!.Calls.Count > 0 && ((Button)view.FindName("CancelButton")).IsVisible, TimeSpan.FromSeconds(3));
+            ((Button)view.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Same(retainedRows, list.ItemsSource); Assert.Same(retainedSelection, list.SelectedItem);
+            lateReply.SetResult("{\"kind\":\"done\",\"message\":\"Late result must not replace retained context\"}");
+            PumpUntil(() => client!.Disposed && !((Button)view.FindName("CancelButton")).IsVisible, TimeSpan.FromSeconds(3));
+            Assert.Same(retainedRows, list.ItemsSource); Assert.Same(retainedSelection, list.SelectedItem);
+            Assert.Equal(refreshedEvidence, ((TextBlock)view.FindName("EvidenceText")).Text);
+            Assert.DoesNotContain("Late result", ((TextBlock)view.FindName("EmptyText")).Text);
+            Assert.False(((Button)view.FindName("ReviewButton")).IsEnabled); Assert.Equal(0, host.Reviews);
+            lateReply = null;
+            ((Button)view.FindName("RunButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => client!.Disposed && ((Button)view.FindName("ReviewButton")).IsEnabled, TimeSpan.FromSeconds(3));
+            Assert.Equal(3, list.Items.Count); Assert.NotNull(list.SelectedItem);
+            Assert.Equal(retainedQuestion, ((TextBox)view.FindName("QuestionBox")).Text);
+            Assert.Equal(Visibility.Collapsed, ((TextBlock)view.FindName("ContextText")).Visibility);
+            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "assistant-recovered-context.png"), 740, 600);
             ((Button)view.FindName("ReviewButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => host.Reviews == 1 && !((Button)view.FindName("CancelButton")).IsVisible, TimeSpan.FromSeconds(3));
-            Assert.Empty(list.Items); Assert.False(((Button)view.FindName("ReviewButton")).IsEnabled);
+            Assert.Equal(3, list.Items.Count); Assert.False(((Button)view.FindName("ReviewButton")).IsEnabled);
             Assert.Equal(4, Directory.GetFiles(content, "*", SearchOption.AllDirectories).Length);
             refresh = view.RefreshSummaryAsync(default); PumpUntil(() => refresh.IsCompleted, TimeSpan.FromSeconds(3)); refresh.GetAwaiter().GetResult();
             ((TextBox)view.FindName("ExclusionsBox")).Text = Path.Join(content, "Personal photos");
@@ -141,7 +195,8 @@ public sealed partial class DesktopTests
     {
         private readonly ExtensionJobs _jobs = new((_, _) => { });
         internal AssistantUiHost(string root, ScanSnapshot scan)
-        { DataDirectory = Path.Join(root, "settings"); Inventory = new ExtensionInventory(() => scan, () => false, _jobs.BeginDiscovery); }
+        { DataDirectory = Path.Join(root, "settings"); Inventory = new ExtensionInventory(() => InventoryAvailable ? scan : null, () => false, _jobs.BeginDiscovery); }
+        internal bool InventoryAvailable { get; set; } = true;
         public string DataDirectory { get; }
         public string CacheDirectory => DataDirectory;
         public IInventoryReader Inventory { get; }
