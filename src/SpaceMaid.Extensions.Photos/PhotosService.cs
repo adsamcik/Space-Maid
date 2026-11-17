@@ -107,8 +107,11 @@ internal sealed class PhotosService(IExtensionHost host, PhotoCatalog catalog)
         {
             state = error is OperationCanceledException ? "Interrupted" : "Failed";
             complete = false;
-            catalog.EndDiscovery(collection.Id, generation, false, error is OperationCanceledException ? "Interrupted discovery · Refresh to validate coverage" : "Discovery failed · Older locations retained");
-            catalog.JobState(job, state, count, "Discovery did not complete.");
+            var detail = error is OperationCanceledException
+                ? "Discovery was interrupted. Earlier locations remain indexed; Refresh to validate current coverage."
+                : "Discovery could not read every location: " + error.Message;
+            catalog.EndDiscovery(collection.Id, generation, false, error is OperationCanceledException ? "Interrupted discovery · Refresh to validate coverage" : "Discovery failed · Older locations retained", detail);
+            catalog.JobState(job, state, count, detail);
             throw;
         }
         finally

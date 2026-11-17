@@ -44,6 +44,7 @@ public sealed partial class DesktopTests
         Assert.NotNull(((Image)photosView.FindName("LibraryIllustration")).Source);
         setStage("discovering and analyzing owned photos through the loaded extension and real tool broker");
         PumpUntil(() => !string.IsNullOrEmpty(((TextBlock)photosView.FindName("ToolText")).Text), TimeSpan.FromSeconds(10));
+        CheckPhotoDiscoveryUnavailableEmpty(window, photosView, fixture, artifactRoot, setStage);
         string photoFolder = Directory.CreateDirectory(Path.Join(fixture.Path, "photo-review")).FullName;
         string originalPhoto = Path.Join(photoFolder, "original.png"), copyPhoto = Path.Join(photoFolder, "copy.png");
         var sample = BitmapSource.Create(200, 100, 96, 96, PixelFormats.Bgra32, null,
@@ -132,6 +133,7 @@ public sealed partial class DesktopTests
         updateEmpty.Invoke(photosView, [collectionValue, contentIncomplete]);
         updateCoverage.Invoke(photosView, [collectionValue, contentIncomplete]);
         Assert.Equal("Analyze photos", ((Button)photosView.FindName("EmptyActionButton")).Content);
+        Assert.Equal("Comparison incomplete", ((TextBlock)photosView.FindName("EmptyTitle")).Text);
         Assert.Equal("Needs attention", ((TextBlock)photosView.FindName("FreshnessText")).Text);
         var analyzePhotos = (Button)photosView.FindName("AnalyzeButton");
         ((Button)photosView.FindName("EmptyActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -287,5 +289,40 @@ public sealed partial class DesktopTests
             var value = display.GetType().GetProperty("Row")!.GetValue(display)!;
             return (string)value.GetType().GetProperty("Name")!.GetValue(value)!;
         }
+    }
+
+    private static void CheckPhotoDiscoveryUnavailableEmpty(MainWindow window, FrameworkElement photosView, TestDirectory fixture,
+        string artifactRoot, Action<string> setStage)
+    {
+        setStage("distinguishing unavailable photo discovery from a successfully empty folder");
+        string root = Directory.CreateDirectory(Path.Join(fixture.Path, "unavailable-photo-review")).FullName;
+        string disconnected = root + "-disconnected";
+        var add = (Task)photosView.GetType().GetMethod("AddFolderAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(photosView, [root])!;
+        PumpUntil(() => add.IsCompleted, TimeSpan.FromSeconds(10)); add.GetAwaiter().GetResult();
+        var title = (TextBlock)photosView.FindName("EmptyTitle");
+        var refresh = (Button)photosView.FindName("RefreshButton");
+        var action = (Button)photosView.FindName("EmptyActionButton");
+        Assert.Equal("No photos found", title.Text);
+        Directory.Move(root, disconnected);
+        try
+        {
+            refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => refresh.IsEnabled && (title.Text == "Folder could not be fully checked" || title.Text == "Discovery incomplete"), TimeSpan.FromSeconds(10));
+            foreach (var mode in new[] { "FamiliesTab", "DuplicatesTab", "BrowseTab" })
+            {
+                ((RadioButton)photosView.FindName(mode)).IsChecked = true;
+                var page = (Task)photosView.GetType().GetMethod("LoadPageAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(photosView, null)!;
+                PumpUntil(() => page.IsCompleted, TimeSpan.FromSeconds(3)); page.GetAwaiter().GetResult();
+                Assert.Equal("Refresh", action.Content);
+                Assert.True(title.Text is "Folder could not be fully checked" or "Discovery incomplete", title.Text);
+                Assert.DoesNotContain("No supported photo", ((TextBlock)photosView.FindName("EmptyText")).Text);
+                Assert.Equal(Visibility.Visible, ((TextBlock)photosView.FindName("FreshnessText")).Visibility);
+            }
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-unavailable-empty.png"), 1220, 940);
+        }
+        finally { Directory.Move(disconnected, root); }
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => refresh.IsEnabled && title.Text == "No photos found", TimeSpan.FromSeconds(10));
+        Assert.Equal(Visibility.Collapsed, ((TextBlock)photosView.FindName("FreshnessText")).Visibility);
     }
 }

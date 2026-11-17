@@ -79,12 +79,16 @@ public partial class PhotosView : UserControl
             SetEmpty("No photo folders", "", EmptyAction.Add, "Add folder");
         else if (_discovering)
             SetEmpty("Finding photos…", "", EmptyAction.Browse, "Browse photos");
+        else if (PhotoDiscoveryRecovery.For(collection, lastJob) is { } recovery)
+            SetEmpty(recovery.Title, recovery.Message, EmptyAction.Refresh, "Refresh");
         else if (_mode == PhotoMode.Families)
             SetEmpty("No related files found", "", EmptyAction.Browse, "Browse photos");
         else if (_mode == PhotoMode.Duplicates && collection.Count > 0)
         {
             var analyzed = lastJob?.ContentComparisonComplete == true;
-            SetEmpty("No verified duplicates", analyzed ? lastJob!.Message ?? "" : "Analyze photos to compare file contents.",
+            var interrupted = lastJob is { Kind: "Analysis", State: "Interrupted" or "Failed" or "NeedsAttention" };
+            SetEmpty(interrupted ? "Comparison incomplete" : "No verified duplicates",
+                analyzed ? lastJob!.Message ?? "" : interrupted ? (lastJob!.Message ?? "Some file contents could not be verified.") + " Analyze photos to retry the comparison." : "Analyze photos to compare file contents.",
                 analyzed ? EmptyAction.Browse : EmptyAction.Analyze, analyzed ? "Browse photos" : "Analyze photos");
         }
         else SetEmpty("No photos found", "No supported photo filenames in this folder.", EmptyAction.Refresh, "Refresh");
@@ -100,11 +104,11 @@ public partial class PhotosView : UserControl
     }
     private void UpdateCoverageNotice(PhotoCollection collection, PhotoJobStatus? lastJob)
     {
-        FreshnessText.Text = _discovering ? "Preliminary" : collection.Status.StartsWith("Incomplete", StringComparison.Ordinal) ? "Incomplete" :
+        FreshnessText.Text = _discovering ? "Preliminary" : PhotoDiscoveryRecovery.For(collection, lastJob)?.Badge ?? (
             collection.Status.Contains("Interrupted", StringComparison.OrdinalIgnoreCase) || lastJob?.State == "Interrupted" ? "Interrupted" :
             collection.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) || lastJob?.State is "Failed" or "NeedsAttention" ? "Needs attention" :
             lastJob?.MetadataLimited == true ? "Metadata limited" :
-            collection.Status == "Not discovered" ? "Not discovered" : "";
+            collection.Status == "Not discovered" ? "Not discovered" : "");
         FreshnessText.Visibility = FreshnessText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         FreshnessText.ToolTip = collection.Status + (lastJob is null ? "" : "\n" + lastJob.Summary) + (collection.Coverage is null ? "" : "\n" + collection.Coverage);
     }
