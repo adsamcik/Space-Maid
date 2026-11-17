@@ -31,10 +31,12 @@
             </RadioButton>
         </StackPanel>
         <StackPanel x:Name="FolderPanel" Grid.Row="2" Visibility="Collapsed" Margin="0,14,0,0">
+            <TextBlock x:Name="DestinationHint" TextWrapping="Wrap" Margin="0,0,0,8" />
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <TextBox x:Name="FolderPath" VerticalContentAlignment="Center" Padding="10,6" MinHeight="38" AutomationProperties.Name="Portable destination folder" />
                 <Button Grid.Column="1" Content="Browse…" Click="OnBrowse" Margin="8,0,0,0" Padding="12,6" />
             </Grid>
+            <TextBlock x:Name="PreservationText" TextWrapping="Wrap" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
             <StackPanel x:Name="RuntimePanel" Orientation="Horizontal" Visibility="Collapsed" Margin="0,8,0,0">
                 <TextBlock Text=".NET 10 Desktop Runtime needed" VerticalAlignment="Center" Opacity="0.75" />
                 <Button Content="Download" Click="OnDownloadRuntime" Padding="8,2" Margin="8,0,0,0" />

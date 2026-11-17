@@ -33,7 +33,9 @@ public sealed class InstallerWindowTests
                     foreach (string? version in new[] { null, "0.1.0-alpha.2", setupVersion, "99.0.0" })
                     {
                         InstalledApplication? current = version is null ? null : new(folder, Velopack.SemanticVersion.Parse(version));
-                        var window = new InstallerWindow(() => current) { ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
+                        using var destinationFixture = new TestDirectory();
+                        string defaultDestination = Path.Join(destinationFixture.Path, "SpaceMaid");
+                        var window = new InstallerWindow(() => current, defaultDestination) { ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
                         try
                         {
                             window.Show();
@@ -46,7 +48,12 @@ public sealed class InstallerWindowTests
                             Assert.Equal(expected, action.Content);
                             Assert.Equal(((TextBlock)window.FindName("InstallModeTitle")).Text, System.Windows.Automation.AutomationProperties.GetName(install));
                             Assert.Equal("Portable folder", System.Windows.Automation.AutomationProperties.GetName(portable));
-                            Assert.Equal(Visibility.Collapsed, folders.Visibility);
+                            Assert.Equal(current is null ? Visibility.Visible : Visibility.Collapsed, folders.Visibility);
+                            if (current is null)
+                            {
+                                Assert.Equal(defaultDestination, path.Text);
+                                Assert.Equal("Application destination folder", System.Windows.Automation.AutomationProperties.GetName(path));
+                            }
                             Assert.Equal(current?.Folder ?? "", ((TextBlock)window.FindName("InstalledFolderLabel")).Text);
                             Capture(window, Path.Join(repository, "artifacts", "installer-update", $"{expected.Split(' ')[0]}-{theme}.png"));
                             portable.IsChecked = true;
@@ -68,6 +75,7 @@ public sealed class InstallerWindowTests
                         finally { window.Close(); }
                     }
                 }
+                CheckPreservationRecovery(repository);
             }
             catch (Exception error) { failure = error; }
             finally { app?.Shutdown(); }
@@ -76,6 +84,40 @@ public sealed class InstallerWindowTests
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "Installer window inspection timed out.");
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private static void CheckPreservationRecovery(string repository)
+    {
+        using var fixture = new TestDirectory();
+        string original = Directory.CreateDirectory(Path.Join(fixture.Path, "SpaceMaid")).FullName;
+        string settings = Path.Join(original, "settings.json");
+        File.WriteAllText(settings, "keep original settings");
+        var window = new InstallerWindow(() => null, original)
+        { ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
+        try
+        {
+            window.Show();
+            var path = (TextBox)window.FindName("FolderPath");
+            var portable = (RadioButton)window.FindName("PortableMode");
+            var install = (RadioButton)window.FindName("InstallMode");
+            var preservation = (TextBlock)window.FindName("PreservationText");
+            Assert.Equal(Visibility.Visible, ((FrameworkElement)window.FindName("FolderPanel")).Visibility);
+            Assert.Equal(original + " App", path.Text);
+            Assert.Equal(Visibility.Visible, preservation.Visibility);
+            Assert.Contains(original, preservation.Text);
+            string chosen = Path.Join(fixture.Path, "My application folder");
+            path.Text = chosen;
+            portable.IsChecked = true;
+            Assert.Equal(Visibility.Collapsed, preservation.Visibility);
+            path.Text = Path.Join(fixture.Path, "My portable folder");
+            install.IsChecked = true;
+            Assert.Equal(chosen, path.Text);
+            Assert.Equal("Application destination folder", System.Windows.Automation.AutomationProperties.GetName(path));
+            Assert.Equal("keep original settings", File.ReadAllText(settings));
+            Assert.Single(Directory.EnumerateFileSystemEntries(original));
+            Capture(window, Path.Join(repository, "artifacts", "installer-update", "Existing-data-recovery.png"));
+        }
+        finally { window.Close(); }
     }
 
     private static string FindRepository()

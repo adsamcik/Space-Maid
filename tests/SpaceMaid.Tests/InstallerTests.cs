@@ -204,6 +204,62 @@ public sealed class InstallerTests
         Assert.Throws<IOException>(() => PortableInstaller.ValidateDestination("Portable"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LegacyDataAndDamagedInstallationsHaveAnIndependentEmptyDestination(bool damagedInstallation)
+    {
+        using var fixture = new TestDirectory();
+        string original = damagedInstallation ? CreateInstallation(fixture.Path, "SpaceMaid", "0.1.0")
+            : Directory.CreateDirectory(Path.Join(fixture.Path, "SpaceMaid")).FullName;
+        if (damagedInstallation) File.WriteAllText(Path.Join(original, "current", "sq.version"), "damaged metadata");
+        byte[] settings = [1, 2, 3, 4], catalog = [5, 6, 7, 8];
+        File.WriteAllBytes(Path.Join(original, "settings.json"), settings);
+        File.WriteAllBytes(Path.Join(original, "photos.sqlite"), catalog);
+        string[] originalNames = Directory.EnumerateFileSystemEntries(original).Order(StringComparer.Ordinal).ToArray();
+        Assert.Null(InstallationDiscovery.Read(original));
+
+        var choice = InstallationDiscovery.NewDestination(original);
+
+        Assert.Equal(original, choice.PreservedFolder);
+        Assert.NotEqual(original, choice.Folder);
+        Assert.Equal(choice.Folder, PortableInstaller.ValidateDestination(choice.Folder));
+        var command = InstallationDiscovery.InstallCommand(@"C:\Setup files\Setup.exe", choice.Folder);
+        Assert.Equal(new[] { "--installto", choice.Folder }, command.ArgumentList);
+        Assert.True(command.UseShellExecute);
+        Assert.False(Directory.Exists(choice.Folder));
+        Assert.Equal(originalNames, Directory.EnumerateFileSystemEntries(original).Order(StringComparer.Ordinal));
+        Assert.Equal(settings, File.ReadAllBytes(Path.Join(original, "settings.json")));
+        Assert.Equal(catalog, File.ReadAllBytes(Path.Join(original, "photos.sqlite")));
+        Assert.Throws<IOException>(() => PortableInstaller.ValidateDestination(original));
+    }
+
+    [Fact]
+    public void RecoveryDestinationIsNotOverwrittenIfItAlsoContainsExistingFiles()
+    {
+        using var fixture = new TestDirectory();
+        string original = Directory.CreateDirectory(Path.Join(fixture.Path, "SpaceMaid")).FullName;
+        File.WriteAllText(Path.Join(original, "settings.json"), "original");
+        var choice = InstallationDiscovery.NewDestination(original);
+        Directory.CreateDirectory(choice.Folder);
+        string keep = Path.Join(choice.Folder, "keep.txt");
+        File.WriteAllText(keep, "keep");
+
+        Assert.Throws<IOException>(() => PortableInstaller.ValidateDestination(choice.Folder));
+        Assert.Equal("keep", File.ReadAllText(keep));
+        Assert.Equal("original", File.ReadAllText(Path.Join(original, "settings.json")));
+    }
+
+    [Fact]
+    public void EmptyOrAbsentDefaultDestinationNeedsNoRecovery()
+    {
+        using var fixture = new TestDirectory();
+        string destination = Path.Join(fixture.Path, "SpaceMaid");
+        Assert.Equal((destination, (string?)null), InstallationDiscovery.NewDestination(destination));
+        Directory.CreateDirectory(destination);
+        Assert.Equal((destination, (string?)null), InstallationDiscovery.NewDestination(destination));
+    }
+
     private static MemoryStream CreateArchive(params (string Name, string Contents)[] additional)
     {
         var stream = new MemoryStream();

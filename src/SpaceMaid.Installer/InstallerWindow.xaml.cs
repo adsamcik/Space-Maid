@@ -13,6 +13,9 @@ public partial class InstallerWindow : Window
 {
     private readonly InstallerPayloads _payloads = new(Assembly.GetExecutingAssembly());
     private readonly Func<InstalledApplication?> _findInstallation;
+    private string _normalDestination = "", _portableDestination = "";
+    private string? _preservedFolder, _destinationError;
+    private bool _showingPortable;
     private InstalledApplication? _installation;
     private CancellationTokenSource? _cancellation;
     private bool _nativeInstall;
@@ -21,13 +24,20 @@ public partial class InstallerWindow : Window
 
     public InstallerWindow() : this(InstallationDiscovery.Find) { }
 
-    internal InstallerWindow(Func<InstalledApplication?> findInstallation)
+    internal InstallerWindow(Func<InstalledApplication?> findInstallation) : this(findInstallation, InstallationDiscovery.DefaultFolder) { }
+
+    internal InstallerWindow(Func<InstalledApplication?> findInstallation, string defaultFolder)
     {
         _findInstallation = findInstallation;
+        _normalDestination = defaultFolder;
+        _portableDestination = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Space Maid");
+        try { (_normalDestination, _preservedFolder) = InstallationDiscovery.NewDestination(defaultFolder); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException)
+        { _destinationError = "The default location could not be checked. Choose an accessible empty application folder. " + error.Message; }
         InitializeComponent();
         _installation = _findInstallation();
         VersionLabel.Text = _payloads.Version;
-        FolderPath.Text = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Space Maid");
+        FolderPath.Text = _normalDestination;
         RuntimePanel.Visibility = DesktopRuntime.IsAvailable() ? Visibility.Collapsed : Visibility.Visible;
         RefreshChoice();
     }
@@ -41,8 +51,22 @@ public partial class InstallerWindow : Window
     private void RefreshChoice()
     {
         bool portable = PortableMode.IsChecked == true;
+        if (FolderPath is not null && FolderPath.Text.Length > 0)
+        {
+            if (_showingPortable) _portableDestination = FolderPath.Text;
+            else _normalDestination = FolderPath.Text;
+        }
+        _showingPortable = portable;
         bool update = _installation?.NeedsUpdate(_payloads.Version) == true;
-        FolderPanel.Visibility = portable ? Visibility.Visible : Visibility.Collapsed;
+        FolderPanel.Visibility = portable || _installation is null ? Visibility.Visible : Visibility.Collapsed;
+        FolderPath.Text = portable ? _portableDestination : _normalDestination;
+        System.Windows.Automation.AutomationProperties.SetName(FolderPath, portable ? "Portable destination folder" : "Application destination folder");
+        RuntimePanel.Visibility = portable && !DesktopRuntime.IsAvailable() ? Visibility.Visible : Visibility.Collapsed;
+        DestinationHint.Text = portable ? "Choose an empty folder. Portable settings stay with this app."
+            : "Choose an empty application folder. Existing settings and catalogs keep their current location.";
+        PreservationText.Text = _preservedFolder is null ? ""
+            : "Existing files were found at " + _preservedFolder + ". They will stay there. Install the app in a separate empty folder; existing settings and catalogs remain available where readable.";
+        PreservationText.Visibility = !portable && _installation is null && _preservedFolder is not null ? Visibility.Visible : Visibility.Collapsed;
         InstallModeTitle.Text = _installation is null ? "Install for me" : update ? "Update Space Maid" : "Open Space Maid";
         System.Windows.Automation.AutomationProperties.SetName(InstallMode, InstallModeTitle.Text);
         InstallModeDescription.Text = _installation is null ? "Start menu · Update checks"
@@ -55,7 +79,7 @@ public partial class InstallerWindow : Window
         bool needsPayload = portable || _installation is null || update;
         ActionButton.IsEnabled = !needsPayload || _payloads.IsAvailable;
         Status.Text = needsPayload && !_payloads.IsAvailable
-            ? "This build has no installation files. Download Setup from GitHub Releases." : "";
+            ? "This build has no installation files. Download Setup from GitHub Releases." : !portable && _installation is null ? _destinationError ?? "" : "";
     }
 
     private void OnBrowse(object sender, RoutedEventArgs e)
@@ -73,6 +97,7 @@ public partial class InstallerWindow : Window
             return;
         }
         bool portable = PortableMode.IsChecked == true;
+        string destination = FolderPath.Text;
         InstalledApplication? installation = _installation;
         if (!portable)
         {
@@ -97,10 +122,13 @@ public partial class InstallerWindow : Window
         Status.Text = portable ? "Preparing portable app…" : installation is null ? "Preparing installation…" : "Preparing update…";
         try
         {
+            // Fail before extracting a payload as well as immediately before the
+            // native handoff. An occupied or unreadable folder is never repaired
+            // by overwriting it, even when discovery rejected its installation.
+            if (!portable && installation is null) destination = PortableInstaller.ValidateDestination(destination);
             var progress = new Progress<double>(value => Progress.Value = value * 100);
             if (portable)
             {
-                string destination = FolderPath.Text;
                 _portableFolder = await Task.Run(async () =>
                 {
                     using Stream payload = _payloads.OpenPortable();
@@ -121,24 +149,19 @@ public partial class InstallerWindow : Window
                 if (_findInstallation() != installation)
                     throw new IOException("The installation changed. Close Setup and try again.");
                 // Native Setup replaces its entire destination. Never use it on existing data.
-                if (installation is null) PortableInstaller.ValidateDestination(InstallationDiscovery.DefaultFolder);
+                if (installation is null) PortableInstaller.ValidateDestination(destination);
                 // Once Setup applies changes, its own dialog owns cancellation and rollback.
                 _nativeInstall = true;
                 CancelButton.IsEnabled = false;
                 Status.Text = installation is null ? "Installing…" : "Updating…";
                 ProcessStartInfo command = installation?.UpdateCommand(setup.Path)
-                    ?? new ProcessStartInfo(setup.Path) { UseShellExecute = true };
-                if (installation is null)
-                {
-                    command.ArgumentList.Add("--installto");
-                    command.ArgumentList.Add(InstallationDiscovery.DefaultFolder);
-                }
+                    ?? InstallationDiscovery.InstallCommand(setup.Path, destination);
                 using Process process = Process.Start(command)
                     ?? throw new IOException("Setup could not start. Try running Setup again.");
                 await process.WaitForExitAsync();
                 _nativeInstall = false;
                 if (process.ExitCode != 0) throw new IOException(installation is null ? "Installation did not finish. Try again." : "Update did not finish. Try again.");
-                InstalledApplication? installed = InstallationDiscovery.Read(installation?.Folder ?? InstallationDiscovery.DefaultFolder);
+                InstalledApplication? installed = InstallationDiscovery.Read(installation?.Folder ?? destination);
                 if (installed is null || installed.Version != Velopack.SemanticVersion.Parse(_payloads.Version))
                     throw new IOException("Setup did not finish. Close Space Maid and try again.");
                 if (installation is not null && !TryOpen(Path.Join(installed.Folder, "current", "SpaceMaid.App.exe"))) return;

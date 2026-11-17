@@ -26,6 +26,31 @@ internal static class InstallationDiscovery
 {
     internal static string DefaultFolder => Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceMaid");
 
+    // A failed installation probe is never permission to replace an occupied
+    // folder. Keep legacy data and unverified binaries in place and let Setup
+    // install its verified payload separately. Normal app data keeps its existing
+    // location independently of the selected application destination.
+    internal static (string Folder, string? PreservedFolder) NewDestination(string defaultFolder)
+    {
+        string target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(defaultFolder));
+        SafeDirectories.EnsureNoReparseAncestors(target);
+        FileAttributes attributes;
+        try { attributes = DiskAccess.Default.GetAttributes(target); }
+        catch (FileNotFoundException) { return (target, null); }
+        catch (DirectoryNotFoundException) { return (target, null); }
+        bool occupied = (attributes & FileAttributes.Directory) == 0
+            || DiskAccess.Default.EnumerateFileSystemEntries(target).Any();
+        return occupied ? (target + " App", target) : (target, null);
+    }
+
+    internal static ProcessStartInfo InstallCommand(string setup, string destination)
+    {
+        var command = new ProcessStartInfo(setup) { UseShellExecute = true };
+        command.ArgumentList.Add("--installto");
+        command.ArgumentList.Add(destination);
+        return command;
+    }
+
     internal static InstalledApplication? Find() => Find(RegisteredFolders().Append(DefaultFolder));
 
     // Probe only this product's registration and its default location, never the user's drives.
