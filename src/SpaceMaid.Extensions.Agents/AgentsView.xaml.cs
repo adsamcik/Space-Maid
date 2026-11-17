@@ -22,6 +22,7 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     private Task? _operation;
     private Window? _owner;
     private bool _recycling, _changingSource;
+    private bool _inspectionCurrent;
     private int _observedAge = 30;
     private readonly Dictionary<int, string> _homes = [];
     internal Func<IReadOnlyList<AgentHome>, int, CancellationToken, Task<AgentHistorySnapshot>> Inspector { get; set; }
@@ -72,8 +73,9 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     private void Invalidate()
     {
         if (HistoryList is null) return;
-        _work?.Cancel(); HistoryList.ItemsSource = null; ReviewButton.IsEnabled = false;
-        StatusText.Text = "Source changed. Inspect history to refresh the list.";
+        _work?.Cancel(); _inspectionCurrent = false; ReviewButton.IsEnabled = false;
+        StatusText.Text = "Source changed. Inspect history to refresh the list." + RetainedResultsNote();
+        UpdateSelection();
     }
     private void Browse_Click(object sender, RoutedEventArgs e)
     {
@@ -96,10 +98,14 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     private async void Inspect_Click(object sender, RoutedEventArgs e) => await InspectAsync();
     internal Task InspectAsync() => RunAsync(async token =>
     {
+        _inspectionCurrent = false; UpdateSelection();
         var sources = CurrentHomes(); int age = CurrentAge();
-        HistoryList.ItemsSource = null; StatusText.Text = "Inspecting agent file metadata…";
+        StatusText.Text = "Inspecting agent file metadata…" + RetainedResultsNote();
         var snapshot = await Inspector(sources, age, token); token.ThrowIfCancellationRequested();
-        _observedAge = age; HistoryList.ItemsSource = snapshot.Items;
+        var selected = HistoryList.SelectedItems.Cast<AgentHistoryItem>().Select(item => (item.Home.Tool, item.Path, item.Identity)).ToHashSet();
+        _observedAge = age; _inspectionCurrent = true; HistoryList.ItemsSource = snapshot.Items;
+        foreach (var item in snapshot.Items)
+            if (selected.Contains((item.Home.Tool, item.Path, item.Identity))) HistoryList.SelectedItems.Add(item);
         StatusText.Text = $"{snapshot.Items.Count:N0} {(snapshot.Items.Count == 1 ? "item" : "items")} last changed at least {age:N0} days ago";
         DiagnosticText.Text = string.Join(Environment.NewLine, snapshot.Warnings);
         if (snapshot.Warnings.Count > 0) StatusText.Text += " · Some paths were kept or not inspected; see details";
@@ -108,7 +114,7 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
     internal Task ReviewCleanupAsync()
     {
         var selected = HistoryList.SelectedItems.Cast<AgentHistoryItem>().ToArray();
-        if (selected.Length == 0) return Task.CompletedTask;
+        if (!_inspectionCurrent || selected.Length == 0) return Task.CompletedTask;
         return RunAsync(async token =>
         {
             StatusText.Text = "Rechecking selected items and related session activity…";
@@ -116,6 +122,7 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
             var preview = new AgentHistoryPreview(plan) { Owner = Window.GetWindow(this) };
             if (preview.ShowDialog() != true) { StatusText.Text = "Cleanup cancelled. No files moved."; return; }
             token.ThrowIfCancellationRequested(); _recycling = true; AttachOwner();
+            _inspectionCurrent = false;
             StatusText.Text = "Moving the confirmed items to the Recycle Bin…";
             var result = await Executor(plan, new WindowInteropHelper(Window.GetWindow(this)).Handle, token);
             HistoryList.ItemsSource = null; StatusText.Text = result.Message;
@@ -141,22 +148,27 @@ public partial class AgentsView : UserControl, SpaceMaid.Extensions.Contracts.IO
             try { await action(work.Token); }
             catch (Exception error) when (AgentHistoryCleanup.Expected(error))
             {
+                _inspectionCurrent = false;
                 DiagnosticText.Text = error.Message;
-                StatusText.Text = _recycling ? "Recycling stopped or could not be confirmed. Inspect the files again before retrying."
-                    : error is OperationCanceledException ? "Cancelled. No cleanup started." : error.Message;
+                StatusText.Text = (_recycling ? "Recycling stopped or could not be confirmed. Inspect the files again before retrying."
+                    : error is OperationCanceledException ? "Cancelled. No cleanup started." : error.Message) + RetainedResultsNote();
             }
         }
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
     private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateSelection();
+    private string RetainedResultsNote() => !_inspectionCurrent && HistoryList.ItemsSource is not null
+        ? " Previous inspection retained · Out of date. Inspect history before cleanup." : "";
     private void UpdateSelection()
     {
         if (DetailsText is null || ReviewButton is null) return;
         var selected = HistoryList.SelectedItems.Cast<AgentHistoryItem>().ToArray();
-        ReviewButton.IsEnabled = _work is null && selected.Length is > 0 and <= 500;
+        ReviewButton.IsEnabled = _work is null && _inspectionCurrent && selected.Length is > 0 and <= 500;
         DetailsText.Text = selected.Length == 1 ? selected[0].Scope + " · " + selected[0].Path : selected.Length > 0
             ? $"{selected.Length:N0} items selected · {AgentHistoryCleanup.Size(selected.Sum(item => item.Bytes))} observed · Review at most 500 at once"
             : "Choose files to review. Age identifies candidates; it does not prove they are unused.";
+        if (!_inspectionCurrent && HistoryList.ItemsSource is not null)
+            DetailsText.Text = "Previous inspection · Out of date. Inspect history to enable cleanup.\n" + DetailsText.Text;
     }
     internal async Task ShutdownAsync()
     { _work?.Cancel(); if (_operation is { } operation) await operation; await OpenCodeView.ShutdownAsync(); DetachOwner(); }

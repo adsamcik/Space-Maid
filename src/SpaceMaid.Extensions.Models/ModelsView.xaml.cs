@@ -7,6 +7,7 @@ namespace SpaceMaid.Extensions.Models;
 
 public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModelRemovalWorkflow
 {
+    private const string LocalInspectionDetails = "Local Ollama only: 127.0.0.1:11434. No proxy, redirects or remote host settings are used. Sizes can include shared model data.";
     private readonly CancellationToken _lifetime;
     private CancellationTokenSource? _work;
     public bool IsOptimizationBusy => _work is not null;
@@ -17,6 +18,7 @@ public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModel
     }
     private Task? _operation;
     private bool _deleting;
+    private bool _inspectionCurrent;
     private OllamaSnapshot? _snapshot;
     internal Func<CancellationToken, Task<OllamaSnapshot>> Inspector { get; set; } = OllamaCleanup.InspectAsync;
     internal Func<OllamaModel, CancellationToken, Task<OllamaCleanupPlan>> Preparer { get; set; } = OllamaCleanup.PrepareAsync;
@@ -27,25 +29,26 @@ public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModel
     {
         _lifetime = lifetime;
         InitializeComponent();
-        DiagnosticText.Text = "Local Ollama only: 127.0.0.1:11434. No proxy, redirects or remote host settings are used. Sizes can include shared model data.";
+        DiagnosticText.Text = LocalInspectionDetails;
         Unloaded += (_, _) => _work?.Cancel();
     }
     private async void Inspect_Click(object sender, RoutedEventArgs e) => await InspectAsync();
     internal Task InspectAsync() => RunAsync(async token =>
     {
-        string? selectedName = (ModelList.SelectedItem as OllamaModel)?.Name;
-        _snapshot = null; Filter();
-        StatusText.Text = "Inspecting local Ollama…";
+        _inspectionCurrent = false; UpdateSelection();
+        StatusText.Text = "Inspecting local Ollama…" + RetainedResultsNote();
         var snapshot = await Inspector(token);
         token.ThrowIfCancellationRequested();
-        _snapshot = snapshot; Filter();
+        string? selectedName = (ModelList.SelectedItem as OllamaModel)?.Name;
+        _snapshot = snapshot; _inspectionCurrent = true; Filter();
         ModelList.SelectedItem = ModelList.Items.Cast<OllamaModel>().FirstOrDefault(model => model.Name == selectedName);
+        DiagnosticText.Text = LocalInspectionDetails;
         StatusText.Text = $"Local Ollama · {snapshot.Models.Count:N0} models · Inspected {snapshot.ObservedAt.LocalDateTime:HH:mm:ss}";
     });
     private async void Review_Click(object sender, RoutedEventArgs e) => await ReviewCleanupAsync();
     internal Task ReviewCleanupAsync()
     {
-        if (ModelList.SelectedItem is not OllamaModel { CanDelete: true } selected) return Task.CompletedTask;
+        if (!_inspectionCurrent || ModelList.SelectedItem is not OllamaModel { CanDelete: true } selected) return Task.CompletedTask;
         return RunAsync(async token =>
         {
             StatusText.Text = "Checking the selected model and loaded state…";
@@ -56,11 +59,11 @@ public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModel
             { StatusText.Text = "Cleanup cancelled. No deletion started."; return; }
             token.ThrowIfCancellationRequested();
             _deleting = true; CancelButton.Content = "Stop waiting";
+            _inspectionCurrent = false;
             StatusText.Text = "Removing the confirmed model… Stopping the wait may not stop Ollama's deletion.";
-            _snapshot = null; Filter();
             var result = await Executor(plan, token);
-            _snapshot = result.Snapshot; Filter();
-            StatusText.Text = result.Message;
+            if (result.Snapshot is { } fresh) { _snapshot = fresh; _inspectionCurrent = true; Filter(); }
+            StatusText.Text = result.Message + RetainedResultsNote();
         });
     }
     public async Task<ModelRemovalResult> ReviewModelRemovalAsync(ModelRemovalRequest model, Window owner, CancellationToken token)
@@ -79,9 +82,11 @@ public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModel
             { outcome = new(false, false, "Removal cancelled."); return; }
             linked.Token.ThrowIfCancellationRequested();
             _deleting = true;
+            _inspectionCurrent = false;
             attempted = true;
             var result = await Executor(plan, linked.Token);
-            _snapshot = null; Filter();
+            if (result.Snapshot is { } fresh) { _snapshot = fresh; _inspectionCurrent = true; Filter(); }
+            StatusText.Text = result.Message + RetainedResultsNote();
             outcome = new(result.Deleted, result.Attempted, result.Message);
         });
         return outcome ?? new(false, attempted, StatusText.Text);
@@ -106,11 +111,11 @@ public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModel
         try { await work(token); }
         catch (Exception error) when (OllamaCleanup.Expected(error))
         {
-            _snapshot = null; Filter(); DiagnosticText.Text = error.Message;
-            StatusText.Text = _deleting ? "Deletion may have reached Ollama. Inspect again before retrying."
+            _inspectionCurrent = false; DiagnosticText.Text = error.Message;
+            StatusText.Text = (_deleting ? "Deletion may have reached Ollama. Inspect again before retrying."
                 : error is OperationCanceledException ? token.IsCancellationRequested ? "Operation cancelled. No deletion started." : "Ollama did not respond in time. Retry inspection."
                 : error is InvalidOperationException or InvalidDataException ? error.Message
-                : "Local Ollama could not be inspected. Check Ollama is running and retry.";
+                : "Local Ollama could not be inspected. Check Ollama is running and retry.") + RetainedResultsNote();
         }
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
@@ -126,14 +131,18 @@ public partial class ModelsView : UserControl, IOptimizationWorkflowView, IModel
         ModelList.SelectedItem = ModelList.Items.Cast<OllamaModel>().FirstOrDefault(model => model.Name == selected);
     }
     private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateSelection();
+    private string RetainedResultsNote() => !_inspectionCurrent && _snapshot is not null
+        ? " Previous inspection retained · Out of date. Inspect again before cleanup." : "";
     private void UpdateSelection()
     {
         if (DetailsText is null) return;
         var selected = ModelList.SelectedItem as OllamaModel;
-        ReviewButton.IsEnabled = _work is null && selected?.CanDelete == true;
+        ReviewButton.IsEnabled = _work is null && _inspectionCurrent && selected?.CanDelete == true;
         DetailsText.Text = selected is null ? "Choose a model to review cleanup. Loaded models are kept."
             : selected.Loaded ? "This model, or another tag sharing its data, is loaded. Finish sessions using it before cleanup."
             : "Remove this model through local Ollama after preview and confirmation. Keep offline or local-only models; observed size is not guaranteed savings.";
+        if (!_inspectionCurrent && _snapshot is not null)
+            DetailsText.Text = "Previous inspection · Out of date. Inspect local Ollama to enable cleanup.\n" + DetailsText.Text;
     }
     internal async Task ShutdownAsync()
     { _work?.Cancel(); if (_operation is { } operation) await operation; }

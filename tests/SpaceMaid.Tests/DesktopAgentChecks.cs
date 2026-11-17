@@ -78,6 +78,18 @@ public sealed partial class DesktopTests
             Assert.Equal(1, inspections); Assert.Equal(2, list.Items.Count); Assert.Empty(list.SelectedItems);
             object selected = list.Items.Cast<object>().Single(item => (string)item.GetType().GetProperty("Path")!.GetValue(item)! == transcript);
             list.SelectedItem = selected; Assert.True(review.IsEnabled);
+            foreach (var failure in new Exception[] { new IOException("Owned inspection outage"), new OperationCanceledException() })
+            {
+                SetDelegate("Inspector", _ => throw failure);
+                inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+                Assert.Equal(2, list.Items.Count); Assert.Same(selected, Assert.Single(list.SelectedItems.Cast<object>())); Assert.False(review.IsEnabled);
+                Assert.Contains("Out of date", ((TextBlock)view.FindName("StatusText")).Text);
+                var blocked = Invoke("ReviewCleanupAsync"); Assert.True(blocked.IsCompletedSuccessfully); Assert.Equal(0, executions);
+                if (failure is IOException) Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "agents-retained-results.png"), 1050, 720);
+            }
+            SetDelegate("Inspector", values => { inspections++; inspectedHomes = values[0]; return Completed(inspector, snapshot); });
+            inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+            Assert.Same(selected, Assert.Single(list.SelectedItems.Cast<object>())); Assert.True(review.IsEnabled);
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
             {
@@ -108,7 +120,7 @@ public sealed partial class DesktopTests
             ((TextBox)view.FindName("AgeBox")).Text = "0";
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
             Assert.Contains("1 through 3650", ((TextBlock)view.FindName("StatusText")).Text);
-            Assert.Equal(3, inspections);
+            Assert.Equal(4, inspections);
 
             void Preview(bool confirm)
             {

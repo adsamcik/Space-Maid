@@ -74,6 +74,30 @@ public sealed partial class DesktopTests
             Assert.False(review.IsEnabled);
             var selected = list.Items.Cast<object>().Single(model => model.GetType().GetProperty("Loaded")!.GetValue(model) is false);
             list.SelectedItem = selected; Assert.True(review.IsEnabled);
+            var search = (TextBox)view.FindName("SearchBox"); search.Text = "research";
+            foreach (var failure in new Exception[] { new IOException("Owned inspection outage"), new OperationCanceledException() })
+            {
+                SetDelegate("Inspector", _ => throw failure);
+                task = Invoke("InspectAsync"); PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(3)); task.GetAwaiter().GetResult();
+                Assert.Single(list.Items); Assert.Same(selected, list.SelectedItem); Assert.Equal("research", search.Text);
+                Assert.False(review.IsEnabled); Assert.Contains("Out of date", ((TextBlock)view.FindName("StatusText")).Text);
+                var blocked = Invoke("ReviewCleanupAsync"); Assert.True(blocked.IsCompletedSuccessfully); Assert.Equal(0, preparations);
+                if (failure is IOException) Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "models-retained-results.png"), 1050, 720);
+            }
+            SetDelegate("Inspector", _ => { inspections++; return Completed(inspector, snapshot); });
+            task = Invoke("InspectAsync"); PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(3)); task.GetAwaiter().GetResult();
+            Assert.Same(selected, list.SelectedItem); Assert.True(review.IsEnabled); search.Text = "";
+            var pendingType = typeof(TaskCompletionSource<>).MakeGenericType(snapshot.GetType());
+            var pending = Activator.CreateInstance(pendingType)!;
+            SetDelegate("Inspector", _ => pendingType.GetProperty("Task")!.GetValue(pending)!);
+            task = Invoke("InspectAsync"); Assert.False(task.IsCompleted); Assert.Equal(2, list.Items.Count); Assert.Same(selected, list.SelectedItem);
+            var active = list.Items.Cast<object>().Single(model => model.GetType().GetProperty("Loaded")!.GetValue(model) is true);
+            list.SelectedItem = active; Assert.False(review.IsEnabled);
+            pendingType.GetMethod("SetResult")!.Invoke(pending, [snapshot]);
+            PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(3)); task.GetAwaiter().GetResult();
+            Assert.Same(active, list.SelectedItem); Assert.False(review.IsEnabled);
+            list.SelectedItem = selected; Assert.True(review.IsEnabled);
+            SetDelegate("Inspector", _ => { inspections++; return Completed(inspector, snapshot); });
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
             {

@@ -14,6 +14,7 @@ public partial class OpenCodeSessionsView : UserControl
     private OpenCodeSessionSnapshot? _snapshot;
     private int _observedAge = 30;
     private bool _deleting;
+    private bool _inspectionCurrent;
     private Window? _owner;
     internal Func<OpenCodeConnection, int, CancellationToken, Task<OpenCodeSessionSnapshot>> Inspector { get; set; } = OpenCodeSessions.InspectAsync;
     internal Func<OpenCodeConnection, OpenCodeSessionSnapshot, OpenCodeSession, int, CancellationToken, Task<OpenCodeSessionPlan>> Preparer { get; set; } = OpenCodeSessions.PrepareAsync;
@@ -42,8 +43,9 @@ public partial class OpenCodeSessionsView : UserControl
     private void Invalidate()
     {
         if (SessionList is null) return;
-        _work?.Cancel(); _snapshot = null; SessionList.ItemsSource = null; ReviewButton.IsEnabled = false;
-        StatusText.Text = "Settings changed. Inspect sessions to refresh the list.";
+        _work?.Cancel(); _inspectionCurrent = false; ReviewButton.IsEnabled = false;
+        StatusText.Text = "Settings changed. Inspect sessions to refresh the list." + RetainedResultsNote();
+        UpdateSelection();
     }
     private int CurrentAge()
     {
@@ -55,17 +57,20 @@ public partial class OpenCodeSessionsView : UserControl
     private async void Inspect_Click(object sender, RoutedEventArgs e) => await InspectAsync();
     internal Task InspectAsync() => RunAsync(async token =>
     {
+        _inspectionCurrent = false; UpdateSelection();
         var connection = CurrentConnection(); int age = CurrentAge();
-        _snapshot = null; SessionList.ItemsSource = null; StatusText.Text = "Inspecting local OpenCode session state…";
+        StatusText.Text = "Inspecting local OpenCode session state…" + RetainedResultsNote();
         var snapshot = await Inspector(connection, age, token); token.ThrowIfCancellationRequested();
-        _snapshot = snapshot; _observedAge = age; SessionList.ItemsSource = snapshot.Sessions;
+        string? selectedId = (SessionList.SelectedItem as OpenCodeSession)?.Id;
+        _snapshot = snapshot; _observedAge = age; _inspectionCurrent = true; SessionList.ItemsSource = snapshot.Sessions;
+        SessionList.SelectedItem = snapshot.Sessions.FirstOrDefault(session => session.Id == selectedId);
         StatusText.Text = $"{snapshot.Sessions.Count:N0} sessions in {snapshot.Server.Directory} · {snapshot.Sessions.Count(session => session.CanDelete):N0} old, idle and standalone";
         DiagnosticText.Text = $"OpenCode {snapshot.Server.Version}{Environment.NewLine}Project: {snapshot.Server.Directory}{Environment.NewLine}State: {snapshot.Server.StateDirectory}";
     });
     private async void Review_Click(object sender, RoutedEventArgs e) => await ReviewCleanupAsync();
     internal Task ReviewCleanupAsync()
     {
-        if (_snapshot is not { } snapshot || SessionList.SelectedItem is not OpenCodeSession { CanDelete: true } selected)
+        if (!_inspectionCurrent || _snapshot is not { } snapshot || SessionList.SelectedItem is not OpenCodeSession { CanDelete: true } selected)
             return Task.CompletedTask;
         return RunAsync(async token =>
         {
@@ -75,10 +80,15 @@ public partial class OpenCodeSessionsView : UserControl
             var preview = new OpenCodeSessionPreview(plan) { Owner = Window.GetWindow(this) };
             if (preview.ShowDialog() != true) { StatusText.Text = "Cleanup cancelled. No deletion started."; return; }
             token.ThrowIfCancellationRequested(); _deleting = true; AttachOwner(); CancelButton.Content = "Stop waiting";
-            _snapshot = null; SessionList.ItemsSource = null;
+            _inspectionCurrent = false;
             StatusText.Text = "Requesting session deletion… Stopping the wait may not stop OpenCode's deletion.";
             var result = await Executor(connection, plan, token);
-            StatusText.Text = result.Message;
+            if (result.Deleted)
+            {
+                _snapshot = snapshot with { Sessions = snapshot.Sessions.Where(session => session.Id != selected.Id).ToArray() };
+                SessionList.ItemsSource = _snapshot.Sessions;
+            }
+            StatusText.Text = result.Message + RetainedResultsNote();
         });
     }
     private async Task RunAsync(Func<CancellationToken, Task> action)
@@ -101,26 +111,30 @@ public partial class OpenCodeSessionsView : UserControl
             try { await action(work.Token); }
             catch (Exception error) when (OpenCodeSessions.Expected(error))
             {
-                _snapshot = null; SessionList.ItemsSource = null; DiagnosticText.Text = OpenCodeSessions.SafeError(error);
-                StatusText.Text = _deleting ? "The deletion result is uncertain. Inspect again before retrying."
+                _inspectionCurrent = false; DiagnosticText.Text = OpenCodeSessions.SafeError(error);
+                StatusText.Text = (_deleting ? "The deletion result is uncertain. Inspect again before retrying."
                     : error is OperationCanceledException ? "Cancelled. No deletion started."
-                    : "Local OpenCode inspection failed. " + OpenCodeSessions.SafeError(error);
+                    : "Local OpenCode inspection failed. " + OpenCodeSessions.SafeError(error)) + RetainedResultsNote();
             }
         }
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => _work?.Cancel();
     private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateSelection();
+    private string RetainedResultsNote() => !_inspectionCurrent && _snapshot is not null
+        ? " Previous inspection retained · Out of date. Inspect sessions before cleanup." : "";
     private void UpdateSelection()
     {
         if (DetailsText is null || ReviewButton is null) return;
         var selected = SessionList.SelectedItem as OpenCodeSession;
-        ReviewButton.IsEnabled = _work is null && selected?.CanDelete == true;
+        ReviewButton.IsEnabled = _work is null && _inspectionCurrent && selected?.CanDelete == true;
         DetailsText.Text = selected is null ? "Only old idle standalone sessions without sharing or managed workspaces can be removed. Disk recovery is unknown."
             : selected.CanDelete ? selected.Id + " · " + selected.Directory
             : selected.Shared ? "Shared sessions are kept because OpenCode may remove their remote share during deletion."
             : selected.ManagedWorkspace ? "Workspace-managed sessions are kept; review them in OpenCode."
             : selected.ParentId is not null ? "Child sessions are kept with their parent to preserve active work and recovery context."
             : !selected.OldEnough ? "This session has recent activity and is kept." : "This session is busy or retrying and is kept.";
+        if (!_inspectionCurrent && _snapshot is not null)
+            DetailsText.Text = "Previous inspection · Out of date. Inspect sessions to enable cleanup.\n" + DetailsText.Text;
     }
     internal async Task ShutdownAsync()
     {

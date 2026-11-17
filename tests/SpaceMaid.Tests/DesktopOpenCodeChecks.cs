@@ -80,6 +80,18 @@ public sealed partial class DesktopTests
             list.SelectedItem = busy; Assert.False(review.IsEnabled);
             var blocked = Invoke("ReviewCleanupAsync"); Assert.True(blocked.IsCompletedSuccessfully); Assert.Equal(0, preparations);
             list.SelectedItem = idle; Assert.True(review.IsEnabled);
+            foreach (var failure in new Exception[] { new IOException("Owned inspection outage"), new OperationCanceledException() })
+            {
+                SetDelegate("Inspector", _ => throw failure);
+                inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+                Assert.Equal(2, list.Items.Count); Assert.Same(idle, list.SelectedItem); Assert.False(review.IsEnabled);
+                Assert.Contains("Out of date", ((TextBlock)view.FindName("StatusText")).Text);
+                blocked = Invoke("ReviewCleanupAsync"); Assert.True(blocked.IsCompletedSuccessfully); Assert.Equal(0, preparations);
+                if (failure is IOException) Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "opencode-retained-results.png"), 1050, 720);
+            }
+            SetDelegate("Inspector", _ => { inspections++; return Completed(inspector, snapshot); });
+            inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
+            Assert.Same(idle, list.SelectedItem); Assert.True(review.IsEnabled);
             tabs.SelectedIndex = 0; tabs.SelectedIndex = 1;
             Assert.Same(idle, list.SelectedItem); Assert.True(review.IsEnabled);
 #pragma warning disable WPF0001
@@ -92,11 +104,11 @@ public sealed partial class DesktopTests
             Render(workflow, Path.Join(artifactRoot, "artifacts", "ui", "opencode-sessions-compact.png"), 740, 590);
             Preview(confirm: false); Assert.Equal(0, executions); Assert.Same(idle, list.SelectedItem);
             Preview(confirm: true); Assert.Equal(1, executions); Assert.Equal(2, preparations);
-            Assert.Empty(list.Items); Assert.False(review.IsEnabled);
+            Assert.Same(busy, Assert.Single(list.Items.Cast<object>())); Assert.False(review.IsEnabled);
             Assert.Contains("fixture session removed", ((TextBlock)view.FindName("StatusText")).Text);
             ((TextBox)view.FindName("AgeBox")).Text = "0";
             inspect = Invoke("InspectAsync"); PumpUntil(() => inspect.IsCompleted, TimeSpan.FromSeconds(3)); inspect.GetAwaiter().GetResult();
-            Assert.Contains("1 through 3650", ((TextBlock)view.FindName("StatusText")).Text); Assert.Equal(1, inspections);
+            Assert.Contains("1 through 3650", ((TextBlock)view.FindName("StatusText")).Text); Assert.Equal(2, inspections);
 
             void Preview(bool confirm)
             {
