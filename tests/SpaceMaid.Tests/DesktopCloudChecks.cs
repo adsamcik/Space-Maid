@@ -133,7 +133,7 @@ public sealed partial class DesktopTests
         // Explicit discovery retries saved-folder reads, retaining useful
         // listing/pages and blocking writes while the durable file is unreadable.
         string settings = Path.Join(window.ExtensionDataRoot!, entry.Id, "folders.json");
-        Assert.True(settings.StartsWith(Path.GetFullPath(window.ExtensionDataRoot!) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        Assert.StartsWith(Path.GetFullPath(window.ExtensionDataRoot!) + Path.DirectorySeparatorChar, settings, StringComparison.OrdinalIgnoreCase);
         byte[] savedFolders = File.ReadAllBytes(settings);
         Finish(Invoke("BrowseAsync", pagedRoot));
         search.Text = "file-"; list.SelectedIndex = 23;

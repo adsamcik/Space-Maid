@@ -134,7 +134,7 @@ public sealed partial class DesktopTests
             Assert.Same(healthy, runtime.Entries.Single(item => item.Id == "space-maid.agents").View);
             Assert.Same(healthyParent, healthy.Parent);
             Assert.Same(manager, ((ContentControl)window.FindName("ExtensionManagerContent")).Content);
-            Assert.Single(links.Where(pair => pair.Key == entry.Id));
+            Assert.Single(links, pair => pair.Key == entry.Id);
             view.Fail = true;
             window.SetBusy(true); // The inherited disabled value is not the view's local state.
             window.SetScanTarget(@"R:\OwnedRecoveryFailure");

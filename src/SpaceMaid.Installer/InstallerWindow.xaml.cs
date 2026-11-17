@@ -50,8 +50,9 @@ public partial class InstallerWindow : Window
 
     private void RefreshChoice()
     {
+        if (FolderPath is null) return;
         bool portable = PortableMode.IsChecked == true;
-        if (FolderPath is not null && FolderPath.Text.Length > 0)
+        if (FolderPath.Text.Length > 0)
         {
             if (_showingPortable) _portableDestination = FolderPath.Text;
             else _normalDestination = FolderPath.Text;
