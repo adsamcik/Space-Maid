@@ -32,7 +32,16 @@
         </Grid>
         <Grid Grid.Row="1" Margin="0,0,0,8">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="4" /></Grid.RowDefinitions>
-            <TextBlock x:Name="StatusText" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" Margin="0,0,0,6" />
+            <StackPanel>
+                <TextBlock x:Name="StatusText" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.LiveSetting="Polite" Margin="0,0,0,6" />
+                <StackPanel x:Name="FoldersErrorPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                    <TextBlock x:Name="FoldersErrorSummaryText" FontSize="12" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                    <Expander Header="Saved folder error details" Style="{StaticResource CompactDetails}" FontSize="12">
+                        <ScrollViewer MaxHeight="80" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="FoldersErrorText" FontSize="12" TextWrapping="Wrap" /></ScrollViewer>
+                    </Expander>
+                    <Button x:Name="RetryFoldersButton" Content="Retry saved folders" Click="RetryFolders_Click" HorizontalAlignment="Left" Margin="0,5,0,0" />
+                </StackPanel>
+            </StackPanel>
             <ProgressBar x:Name="WorkProgress" Grid.Row="1" Height="3" MinHeight="0" Visibility="Hidden" IsIndeterminate="True" AutomationProperties.Name="Finding and measuring apps" />
         </Grid>
         <Border Grid.Row="2" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
@@ -71,8 +80,15 @@
                 <Button x:Name="OpenButton" Content="Open folder" Click="Open_Click" Padding="12,5" Margin="8,0,0,0" />
             </StackPanel>
         </Grid>
-        <Expander Grid.Row="4" Header="Discovery details" Style="{StaticResource CompactDetails}" FontSize="12" Margin="0,8,0,0">
-            <TextBlock x:Name="CoverageText" Text="Install folders only. App data and caches elsewhere are excluded. Windows Store packages and apps outside known locations may need Add app folder." TextWrapping="Wrap" Opacity="0.7" Margin="0,5,0,0" />
+        <Expander x:Name="DiscoveryDetails" Grid.Row="4" Header="Discovery details" Style="{StaticResource CompactDetails}" FontSize="12" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock x:Name="CoverageText" Text="Install folders only. App data and caches elsewhere are excluded. Windows Store packages and apps outside known locations may need Add app folder." TextWrapping="Wrap" Opacity="0.7" Margin="0,5,0,0" />
+                <StackPanel x:Name="SavedFoldersPanel" Visibility="Collapsed" Margin="0,8,0,0">
+                    <TextBlock Text="Saved app folders · Unavailable folders stay remembered" TextWrapping="Wrap" />
+                    <ListBox x:Name="SavedFolderList" MaxHeight="90" SelectionChanged="SavedFolder_Changed" AutomationProperties.Name="Saved app folder shortcuts" Margin="0,5,0,0" ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+                    <Button x:Name="RemoveSavedFolderButton" Content="Remove saved shortcut" ToolTip="Stops adding this folder to discovery. Does not uninstall the app or delete its files." IsEnabled="False" Click="RemoveSavedFolder_Click" HorizontalAlignment="Left" Margin="0,5,0,0" />
+                </StackPanel>
+            </StackPanel>
         </Expander>
     </Grid>
 </UserControl>

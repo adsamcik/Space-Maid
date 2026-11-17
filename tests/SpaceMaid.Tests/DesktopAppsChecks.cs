@@ -74,6 +74,34 @@ public sealed partial class DesktopTests
         list.SelectedIndex = 0;
         ((Button)view.FindName("OpenButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(fixture.Path, host.Revealed);
+        var savedFolders = (ListBox)view.FindName("SavedFolderList");
+        string savedPath = Path.Join(fixture.Path, "Remembered app currently offline");
+        var saved = (Task)type.GetMethod("AddFolderAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, [savedPath])!;
+        PumpUntil(() => saved.IsCompleted, TimeSpan.FromSeconds(3)); saved.GetAwaiter().GetResult();
+        Assert.Equal(savedPath, Assert.Single(savedFolders.Items.Cast<string>()));
+        Assert.False(Directory.Exists(savedPath));
+        string preferencePath = Path.Join(fixture.Path, "app-folders.json");
+        byte[] validPreferences = File.ReadAllBytes(preferencePath);
+        var priorSelection = Assert.IsAssignableFrom<object>(list.SelectedItem);
+        using (File.Open(preferencePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            load = Refresh(); PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(3)); load.GetAwaiter().GetResult();
+            Assert.Equal(savedPath, Assert.Single(savedFolders.Items.Cast<string>()));
+            Assert.Equal(48, list.Items.Count);
+            Assert.Equal(Visibility.Visible, ((StackPanel)view.FindName("FoldersErrorPanel")).Visibility);
+            Assert.False(((Button)view.FindName("AddButton")).IsEnabled);
+            Assert.Equal(RowText(priorSelection, "PathText"), RowText(Assert.IsAssignableFrom<object>(list.SelectedItem), "PathText"));
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "apps-saved-folder-recovery.png"), 1220, 910);
+        }
+        Assert.Equal(validPreferences, File.ReadAllBytes(preferencePath));
+        ((Button)view.FindName("RetryFoldersButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(() => ((Button)view.FindName("AddButton")).IsEnabled, TimeSpan.FromSeconds(2));
+        Assert.Equal(Visibility.Collapsed, ((StackPanel)view.FindName("FoldersErrorPanel")).Visibility);
+        savedFolders.SelectedItem = savedPath;
+        var removed = (Task)type.GetMethod("RemoveSavedFolderAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, [savedPath])!;
+        PumpUntil(() => removed.IsCompleted, TimeSpan.FromSeconds(3)); removed.GetAwaiter().GetResult();
+        Assert.Empty(savedFolders.Items.Cast<string>());
+        Assert.True(Directory.Exists(fixture.Path));
 #pragma warning disable WPF0001
         foreach (var theme in new[] { ThemeMode.Light, ThemeMode.Dark })
         {

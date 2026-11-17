@@ -16,6 +16,12 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
     private readonly CancellationToken _lifetime;
     private readonly ObservableCollection<AppRow> _rows = [];
     private readonly List<string> _addedFolders = [];
+    private AppFolderSettings? _folderSettings;
+    private string? _folderSettingsPath;
+    private Task _settingsOperation = Task.CompletedTask;
+    private bool _settingsBusy;
+    private string? _settingsError;
+    private bool _settingsWritable = true;
     private CancellationTokenSource? _work;
     private Task _pending = Task.CompletedTask;
     private string? _drive;
@@ -65,8 +71,7 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         _work = work;
         int revision = ++_revision;
         string drive = _drive;
-        string[] added = _addedFolders.ToArray();
-        return _pending = RunAsync(previous, work, revision, drive, added, refreshSizes);
+        return _pending = RunAsync(previous, work, revision, drive, _addedFolders.ToArray(), refreshSizes);
     }
     private async Task RunAsync(Task previous, CancellationTokenSource work, int revision, string drive, string[] added, bool refreshSizes)
     {
@@ -78,6 +83,9 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
             await previous;
             if (!Current()) return;
             Busy(true); _discovered = true;
+            await ReloadSavedFoldersAsync(work.Token);
+            if (!Current()) return;
+            added = _addedFolders.ToArray();
             StatusText.Text = $"Finding apps on {drive}…";
             var discovered = await Task.Run(() => Discover(drive, added, work.Token), work.Token);
             if (!Current()) return;
@@ -123,7 +131,7 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         { if (Current()) { StatusText.Text = "Couldn't find apps. Try Find apps again."; StatusText.ToolTip = error.Message; _discovered = false; } }
         finally
         {
-            if (ReferenceEquals(_work, work)) { Busy(false); _work = null; }
+            if (ReferenceEquals(_work, work)) { _work = null; Busy(false); }
             work.Dispose();
         }
         bool Current() => !_shutdown && revision == _revision;
@@ -159,9 +167,12 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
     { long max = _rows.Select(row => row.SizeBytes ?? 0).DefaultIfEmpty().Max(); foreach (var row in _rows) row.SetLargest(max); }
     private void Busy(bool busy)
     {
-        RefreshButton.IsEnabled = AddButton.IsEnabled = !busy;
+        RefreshButton.IsEnabled = !busy && !_settingsBusy;
+        AddButton.IsEnabled = !busy && !_settingsBusy && _settingsWritable;
+        RetryFoldersButton.IsEnabled = SavedFolderList.IsEnabled = !busy && !_settingsBusy;
+        RemoveSavedFolderButton.IsEnabled = !busy && !_settingsBusy && SavedFolderList.SelectedItem is string && _settingsWritable;
         RefreshButton.Content = "Refresh";
-        CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        CancelButton.Visibility = busy && _work is not null ? Visibility.Visible : Visibility.Collapsed;
         WorkProgress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
     }
     private void Search_Changed(object sender, TextChangedEventArgs e) { if (AppList is not null) UpdateList(); }
@@ -175,9 +186,85 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
         string? path = AppDiscovery.NormalizeFolder(picker.FolderName);
         if (path is null) { StatusText.Text = "Choose a specific app folder, inside the drive or program folder."; return; }
-        if (!_addedFolders.Contains(path, StringComparer.Ordinal)) _addedFolders.Add(path);
-        SetDrive(Path.GetPathRoot(path)!);
-        await RefreshAsync();
+        await AddFolderAsync(path);
+    }
+    internal Task AddFolderAsync(string path) => _settingsOperation = ChangeSavedFolderAsync(path, true);
+    internal Task RemoveSavedFolderAsync(string path) => _settingsOperation = ChangeSavedFolderAsync(path, false);
+    private AppFolderSettings FolderSettings
+    {
+        get
+        {
+            string path = Path.Join(_host.DataDirectory, "app-folders.json");
+            if (_folderSettings is null || _folderSettingsPath != path)
+            { _folderSettingsPath = path; _folderSettings = new(_host.Files, path); _addedFolders.Clear(); }
+            return _folderSettings;
+        }
+    }
+    private async Task<bool> ReloadSavedFoldersAsync(CancellationToken token)
+    {
+        var settings = FolderSettings;
+        var state = await Task.Run(() =>
+        {
+            lock (settings) { bool loaded = settings.Reload(); return (Loaded: loaded, Folders: settings.Folders.ToArray(), settings.Error, settings.CanChange); }
+        }, token);
+        if (!_shutdown) ShowSavedFolders(state.Folders, state.Error, state.CanChange);
+        return state.Loaded;
+    }
+    private void ShowSavedFolders(string[] folders, string? error, bool writable)
+    {
+        string? selected = SavedFolderList.SelectedItem as string;
+        _settingsError = error;
+        _settingsWritable = writable;
+        _addedFolders.Clear(); _addedFolders.AddRange(folders);
+        SavedFolderList.ItemsSource = _addedFolders.ToArray();
+        SavedFolderList.SelectedItem = _addedFolders.FirstOrDefault(path => path == selected);
+        SavedFoldersPanel.Visibility = _addedFolders.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        FoldersErrorText.Text = error ?? "";
+        FoldersErrorSummaryText.Text = writable ? "Saved app folders were not changed. See details or try again."
+            : "Saved app folders are unavailable. Existing shortcuts are retained; changes are paused. Restore app-folders.json or retry.";
+        FoldersErrorPanel.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
+        Busy(_work is not null);
+    }
+    private async Task ChangeSavedFolderAsync(string path, bool add)
+    {
+        if (_shutdown || _settingsBusy || _work is not null) return;
+        _settingsBusy = true; Busy(true);
+        bool changed = false;
+        try
+        {
+            var settings = FolderSettings;
+            var state = await Task.Run(() =>
+            {
+                lock (settings) { bool saved = settings.Change(path, add); return (Saved: saved, Folders: settings.Folders.ToArray(), settings.Error, settings.CanChange); }
+            }, _lifetime);
+            changed = state.Saved;
+            if (_shutdown) return;
+            ShowSavedFolders(state.Folders, state.Error, state.CanChange);
+            StatusText.Text = changed ? add ? "App folder saved. Files stay in place." : "Saved shortcut removed. The app and its files stay in place."
+                : state.Error;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        finally { _settingsBusy = false; if (!_shutdown) Busy(_work is not null); }
+        if (!changed || _shutdown) return;
+        if (add) SetDrive(Path.GetPathRoot(path)!);
+        await RefreshAsync(false);
+    }
+    private void SavedFolder_Changed(object sender, SelectionChangedEventArgs e)
+    { if (RemoveSavedFolderButton is not null) RemoveSavedFolderButton.IsEnabled = _work is null && !_settingsBusy && SavedFolderList.SelectedItem is string && _settingsWritable; }
+    private async void RemoveSavedFolder_Click(object sender, RoutedEventArgs e)
+    { if (SavedFolderList.SelectedItem is string path) await RemoveSavedFolderAsync(path); }
+    private async void RetryFolders_Click(object sender, RoutedEventArgs e) => await (_settingsOperation = RetrySavedFoldersAsync());
+    private async Task RetrySavedFoldersAsync()
+    {
+        if (_shutdown || _work is not null || _settingsBusy) return;
+        _settingsBusy = true; Busy(true);
+        try
+        {
+            await ReloadSavedFoldersAsync(_lifetime);
+            if (!_shutdown) StatusText.Text = _settingsError ?? "Saved app folders reloaded. Find apps to refresh discovery.";
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        finally { _settingsBusy = false; if (!_shutdown) Busy(_work is not null); }
     }
     private void Open_Click(object sender, RoutedEventArgs e)
     {
@@ -186,5 +273,5 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         _host.RevealLocation(path);
     }
     internal async Task ShutdownAsync()
-    { _shutdown = true; _revision++; _work?.Cancel(); await _pending; _work = null; }
+    { _shutdown = true; _revision++; _work?.Cancel(); await Task.WhenAll(_pending, _settingsOperation); _work = null; }
 }
