@@ -28,6 +28,14 @@ public partial class MainWindow
     internal async Task RecheckFolderAsync(string path)
     {
         if (_snapshot is not { } scan || !CanOpenEntryMenu(scan)) return;
+        if (RequiresInventoryRescan(scan))
+        {
+            StatusText.Text = !scan.HasAllocationData
+                ? "This inventory has logical sizes only. Choose Rescan inventory to refresh it; folder-only recheck is unavailable."
+                : "Choose Rescan inventory to refresh this inventory; another folder-only recheck cannot resolve it.";
+            OfferFullInventoryRescan(scan);
+            return;
+        }
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("recheck", path);
         _work = work; SetBusy(true);
@@ -37,9 +45,20 @@ public partial class MainWindow
             or DllNotFoundException or EntryPointNotFoundException)
         {
             log.Record("recheck-failed", new { Error = ex.ToString() });
-            if (!_closing) MarkScanStale(ex is OperationCanceledException ? "Recheck cancelled. Results remain out of date." : $"Recheck could not finish: {ex.Message}", [new(path)]);
+            ShowRecheckFailure(scan, path, ex);
         }
         finally { _work = null; if (!_closing) { ShowActionLogError(log); SetBusy(false); } }
+    }
+
+    internal void ShowRecheckFailure(ScanSnapshot scan, string path, Exception error)
+    {
+        if (_closing || !ReferenceEquals(_snapshot, scan)) return;
+        bool fullRescan = ScanRechecker.RequiresFullRescan(error);
+        string message = error is OperationCanceledException ? "Recheck cancelled. Results remain out of date."
+            : $"Recheck could not finish: {error.Message}";
+        if (fullRescan) message += " Choose Rescan inventory; previous results remain available.";
+        MarkScanStale(message, [new(fullRescan ? scan.RootPath : path)]);
+        if (fullRescan) OfferFullInventoryRescan(scan);
     }
 
     private static string NearestAvailableFolder(ScanSnapshot scan, string path)

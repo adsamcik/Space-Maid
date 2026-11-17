@@ -6,6 +6,9 @@ public partial class MainWindow
 {
     private ScanSnapshot? _fullRescanRecovery;
 
+    private bool RequiresInventoryRescan(ScanSnapshot scan)
+        => !scan.HasAllocationData || ReferenceEquals(_fullRescanRecovery, scan);
+
     internal void OfferFullInventoryRescan(ScanSnapshot scan)
     {
         if (!ReferenceEquals(_snapshot, scan)) return;

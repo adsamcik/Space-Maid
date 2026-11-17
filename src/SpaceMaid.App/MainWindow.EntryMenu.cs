@@ -71,8 +71,18 @@ public partial class MainWindow
         }
         if (entry.IsDirectory)
         {
-            var recheck = new MenuItem { Header = "Recheck this folder" };
-            recheck.Click += async (_, _) => { if (CanUseEntryMenu(scan, link)) await RecheckFolderAsync(path); };
+            var recheck = new MenuItem
+            {
+                Header = RequiresInventoryRescan(scan) ? "Rescan inventory…" : "Recheck this folder",
+                ToolTip = RequiresInventoryRescan(scan)
+                    ? "Refresh the scanned inventory. This inventory cannot safely accept a folder-only recheck." : null
+            };
+            recheck.Click += async (_, _) =>
+            {
+                if (!CanUseEntryMenu(scan, link)) return;
+                if (RequiresInventoryRescan(scan)) await NavigatePathAsync(scan.RootPath, forceScan: true);
+                else await RecheckFolderAsync(path);
+            };
             menu.Items.Add(recheck);
         }
         var checking = new MenuItem { Header = "Checking cloud availability…", IsEnabled = false };

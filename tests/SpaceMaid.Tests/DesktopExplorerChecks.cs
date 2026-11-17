@@ -199,6 +199,8 @@ public sealed partial class DesktopTests
         Load(false); Assert.Equal("Name ↑", ((GridViewColumnHeader)window.FindName("NameHeader")).Content);
         var columns = (GridView)window.FindName("TreeColumns");
         Assert.Contains(columns.Columns, column => ReferenceEquals(column.Header, window.FindName("NameHeader")));
+        CheckFolderRecheckRecovery(window);
+        Load(false);
 
         void Load(bool allocationData)
         {
@@ -217,6 +219,70 @@ public sealed partial class DesktopTests
         {
             ((GridViewColumnHeader)window.FindName(name)).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private static void CheckFolderRecheckRecovery(MainWindow window)
+    {
+        using var fixture = new TestDirectory();
+        string originalPath = window.CurrentPath;
+        string root = Path.Join(fixture.Path, "not-enumerated");
+        var tree = (ListView)window.FindName("SpaceTree");
+        var status = (TextBlock)window.FindName("StatusText");
+        var scanButton = (Button)window.FindName("ScanButton");
+        try
+        {
+            var logical = Snapshot(false, 1);
+            Load(logical);
+            AssertRefreshMenu("Rescan inventory…");
+            var recheck = window.RecheckFolderAsync(root);
+            Assert.True(recheck.IsCompletedSuccessfully); // No native read of the absent fixture path is needed.
+            recheck.GetAwaiter().GetResult();
+            Assert.Same(logical, Assert.IsType<ExplorerRows>(tree.ItemsSource).Scan);
+            Assert.Equal("Rescan inventory", scanButton.Content);
+            Assert.Contains("logical sizes only", status.Text);
+            Assert.DoesNotContain("could not finish", status.Text);
+
+            var stable = Snapshot(true, 1);
+            Load(stable);
+            AssertRefreshMenu("Recheck this folder");
+            window.ShowRecheckFailure(stable, root, new IOException("Temporary sharing violation."));
+            AssertRefreshMenu("Recheck this folder");
+            Assert.Equal("Scan", scanButton.Content);
+
+            var replacement = Snapshot(true, 2);
+            var changedRoot = Assert.Throws<IOException>(() => ScanRechecker.Merge(stable,
+                [new(root, true, replacement)], default));
+            window.ShowRecheckFailure(stable, root, changedRoot);
+            Assert.Same(stable, Assert.IsType<ExplorerRows>(tree.ItemsSource).Scan);
+            Assert.Equal("Rescan inventory", scanButton.Content);
+            Assert.Contains("Choose Rescan inventory", status.Text);
+            AssertRefreshMenu("Rescan inventory…");
+            Assert.True(window.RecheckFolderAsync(root).IsCompletedSuccessfully);
+            Assert.Contains("another folder-only recheck cannot resolve", status.Text);
+        }
+        finally { tree.ContextMenu.IsOpen = false; window.SetScanTarget(originalPath); }
+
+        ScanSnapshot Snapshot(bool allocation, ulong identity)
+        {
+            var builder = new ScanBuilder { AllocationData = allocation };
+            builder.RootIndex = builder.AddFile(new(new(identity), FileAttributes.Directory, 0, 0, 0));
+            return builder.Build(root, "Recovery fixture", TimeSpan.Zero, 0, default);
+        }
+        void Load(ScanSnapshot scan)
+        {
+            window.SetScanTarget(root);
+            var initialize = window.InitializeExplorerAsync(scan, [], default);
+            PumpUntil(() => initialize.IsCompleted, TimeSpan.FromSeconds(10)); initialize.GetAwaiter().GetResult();
+        }
+        void AssertRefreshMenu(string expected)
+        {
+            RightClick(window, tree, keyboard: true);
+            Assert.True(tree.ContextMenu.IsOpen);
+            var headers = tree.ContextMenu.Items.OfType<MenuItem>().Select(item => item.Header).ToArray();
+            Assert.Contains(expected, headers);
+            Assert.DoesNotContain(expected == "Rescan inventory…" ? "Recheck this folder" : "Rescan inventory…", headers);
+            tree.ContextMenu.IsOpen = false;
         }
     }
 
