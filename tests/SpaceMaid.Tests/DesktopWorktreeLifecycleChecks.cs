@@ -26,6 +26,8 @@ public sealed partial class DesktopTests
             var check = (Button)window.FindName("CheckButton"); var enroll = (Button)window.FindName("EnrollButton");
             var quarantine = (Button)window.FindName("QuarantineButton"); var status = (TextBlock)window.FindName("StatusText");
             Assert.False(((CheckBox)window.FindName("ManagedBox")).IsChecked); Assert.False(((CheckBox)window.FindName("AutomaticBox")).IsChecked);
+            var unmanage = (Button)window.FindName("UnmanageButton"); var removeHistory = (Button)window.FindName("RemoveHistoryButton");
+            Assert.False(unmanage.IsEnabled); Assert.False(removeHistory.IsEnabled);
             check.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => check.IsEnabled, TimeSpan.FromSeconds(15));
             Assert.Contains("integrated locally", status.Text);
             enroll.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -33,6 +35,7 @@ public sealed partial class DesktopTests
             ((CheckBox)window.FindName("ManagedBox")).IsChecked = true;
             enroll.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => enroll.IsEnabled, TimeSpan.FromSeconds(15));
             Assert.Single(service.Load().Policies);
+            Assert.True(unmanage.IsEnabled);
 #pragma warning disable WPF0001
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
             {
@@ -47,6 +50,7 @@ public sealed partial class DesktopTests
             Assert.Equal(WorktreeRetirementState.Quarantined, Assert.Single(service.Load().Records).State);
             var recovery = (DataGrid)window.FindName("RecoveryList"); recovery.SelectedIndex = 0;
             var record = Assert.Single(service.Load().Records);
+            Assert.False(unmanage.IsEnabled); Assert.False(removeHistory.IsEnabled);
             string lifecycle = Path.Join(fixture.Path, "lifecycle.json");
             File.WriteAllText(lifecycle, System.Text.Json.JsonSerializer.Serialize(service.Load() with
             { Records = [record with { State = WorktreeRetirementState.NeedsReview }] }));
@@ -66,6 +70,7 @@ public sealed partial class DesktopTests
             Assert.Equal(WorktreeRetirementState.Restored, Assert.Single(service.Load().Records).State);
             Assert.True(File.Exists(repo.Source)); Assert.Contains("Automatic retirement paused", status.Text);
             Assert.False(restore.IsEnabled);
+            Assert.True(unmanage.IsEnabled); Assert.True(removeHistory.IsEnabled);
 
             // Model the durable boundary independently: a launcher can stop
             // after the intent was saved, without the view reaching its happy path.
@@ -113,6 +118,7 @@ public sealed partial class DesktopTests
             Assert.Equal(intent.Id, ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).Id);
             Assert.Contains("Fixture operation stopped", status.Text); Assert.Contains("could not be refreshed", status.Text);
             Assert.False(reconcile.IsEnabled); Assert.False(restore.IsEnabled);
+            Assert.False(unmanage.IsEnabled); Assert.False(removeHistory.IsEnabled);
             Assert.Contains(true, changed); // Unknown durable state cannot certify the interrupted mutation as untouched.
 
             File.WriteAllText(lifecycle, readable);
@@ -123,8 +129,23 @@ public sealed partial class DesktopTests
             Assert.Empty(changed);
             Assert.Equal(intent.Id, ((WorktreeLifecycleWindow.RecoveryRow)recovery.SelectedItem).Id);
             Assert.True(reconcile.IsEnabled); Assert.False(restore.IsEnabled);
+            Assert.False(unmanage.IsEnabled); Assert.False(removeHistory.IsEnabled);
             Assert.Contains("No file operation was repeated", status.Text);
             Render(window, Path.Join(artifactRoot, "artifacts", "ui", "worktree-recovery-stopped.png"), 780, 600);
+
+            // Removing completed metadata cannot discard the remaining unknown
+            // recovery. Once it is explicitly restored, an unchecked policy can
+            // be saved as an opt-out without deleting this checkout.
+            File.WriteAllText(lifecycle, System.Text.Json.JsonSerializer.Serialize(service.Load() with { Records = [restored] }));
+            ((Button)window.FindName("RefreshRecoveryButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            recovery.SelectedIndex = 0;
+            Assert.True(removeHistory.IsEnabled); Assert.True(unmanage.IsEnabled);
+            ((CheckBox)window.FindName("ManagedBox")).IsChecked = false;
+            enroll.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => enroll.IsEnabled, TimeSpan.FromSeconds(15));
+            Assert.Empty(service.Load().Policies); Assert.Single(service.Load().Records);
+            Assert.True(File.Exists(repo.Source)); Assert.False(unmanage.IsEnabled);
+            Assert.Contains("Management stopped", status.Text);
+            Render(window, Path.Join(artifactRoot, "artifacts", "ui", "worktree-terminal-history-actions.png"), 780, 600);
         }
         finally { window.Close(); }
     }

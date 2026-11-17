@@ -13,6 +13,7 @@ public partial class WorktreeLifecycleWindow : Window
     private readonly Func<Func<CancellationToken, Task>, CancellationToken, Task> _run;
     private readonly Action<bool> _changed;
     private readonly List<CheckoutRow> _rows;
+    private IReadOnlyList<ManagedWorktreePolicy> _policies = [];
     private CancellationTokenSource? _work;
     private bool _closeAfterCancel, _recoveryCurrent, _mutationInvoked;
 
@@ -21,6 +22,7 @@ public partial class WorktreeLifecycleWindow : Window
     {
         InitializeComponent(); _service = service; _run = run; _changed = changed;
         var state = service.Load();
+        _policies = state.Policies;
         _rows = paths.Concat(state.Policies.Select(p => p.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)
             .Select(p => new CheckoutRow(p, "—", state.Policies.Any(s => s.Path == p) ? "Managed · Check current state" : "Not managed")).ToList();
         CheckoutList.ItemsSource = _rows; if (_rows.Count > 0) CheckoutList.SelectedIndex = 0;
@@ -48,6 +50,7 @@ public partial class WorktreeLifecycleWindow : Window
         ManagedBox.IsChecked = policy is not null; AutomaticBox.IsChecked = policy?.Automatic ?? false;
         TargetBox.Text = policy?.IntegrationReference ?? "refs/heads/main"; DaysBox.Text = (policy?.InactiveDays ?? 30).ToString(CultureInfo.InvariantCulture);
         GraceBox.Text = (policy?.GraceDays ?? 7).ToString(CultureInfo.InvariantCulture);
+        UpdateRecoveryActions();
     }
     private (int Days, int Grace) Retention()
     {
@@ -68,7 +71,12 @@ public partial class WorktreeLifecycleWindow : Window
     });
     private async void Enroll_Click(object sender, RoutedEventArgs e) => await Perform(async token =>
     {
-        if (ManagedBox.IsChecked != true) throw new InvalidOperationException("Opt this reproducible checkout into management before saving its policy.");
+        if (ManagedBox.IsChecked != true)
+        {
+            if (!_policies.Any(policy => policy.Path.Equals(SelectedPath, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("Opt this reproducible checkout into management before saving its policy.");
+            await StopManagingAsync(SelectedPath, token); return;
+        }
         var retention = Retention();
         await _service.EnrollAsync(SelectedPath, TargetBox.Text.Trim(), retention.Days, retention.Grace, AutomaticBox.IsChecked == true, token);
         _changed(false); StatusText.Text = "Managed policy saved for this exact checkout and branch.";
@@ -78,6 +86,30 @@ public partial class WorktreeLifecycleWindow : Window
         var policy = _service.Load().Policies.SingleOrDefault(p => p.Path == SelectedPath) ?? throw new InvalidOperationException("Save a managed policy first.");
         var result = await _service.QuarantineAsync(policy, token); StatusText.Text = result.Message; _changed(true);
     });
+    private async void Unmanage_Click(object sender, RoutedEventArgs e) => await Perform(token => StopManagingAsync(SelectedPath, token));
+    private async Task StopManagingAsync(string path, CancellationToken token)
+    {
+        var draft = (Target: TargetBox.Text, Days: DaysBox.Text, Grace: GraceBox.Text);
+        await _service.UnmanageAsync(path, token);
+        int index = _rows.FindIndex(row => row.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0) { _rows[index] = _rows[index] with { Status = "Not managed · Files retained" }; CheckoutList.Items.Refresh(); CheckoutList.SelectedIndex = index; }
+        ManagedBox.IsChecked = AutomaticBox.IsChecked = false;
+        TargetBox.Text = draft.Target; DaysBox.Text = draft.Days; GraceBox.Text = draft.Grace;
+        _changed(false);
+        StatusText.Text = "Management stopped. Checkout files, branches, retained references and recovery history stay.";
+    }
+    private async void RemoveHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (_work is not null || !_recoveryCurrent || RecoveryList.SelectedItem is not RecoveryRow { IsTerminal: true } row) return;
+        if (MessageBox.Show(this, "Remove this completed recovery history entry?\n\n" + row.Original
+            + "\n\nOnly this receipt is removed. Checkout files, Git branches and the retained reference stay:\n" + row.Reference,
+            "Remove recovery history", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        await Perform(async token =>
+        {
+            await _service.RemoveHistoryAsync(row.Id, token); _changed(false);
+            StatusText.Text = "History entry removed. Files, Git branches and retained references stay.";
+        });
+    }
     private async void Restore_Click(object sender, RoutedEventArgs e) => await PerformMutation(async token =>
     { var result = await _service.RestoreAsync(SelectedRecord, token); StatusText.Text = result.Message; _changed(true); });
     private async void Finalize_Click(object sender, RoutedEventArgs e) => await PerformMutation(async token =>
@@ -149,6 +181,14 @@ public partial class WorktreeLifecycleWindow : Window
         ReconcileButton.IsEnabled = actionable;
         RestoreButton.IsEnabled = actionable && row!.State != nameof(WorktreeRetirementState.NeedsReview);
         FinalizeButton.IsEnabled = actionable && row!.State is nameof(WorktreeRetirementState.Quarantined) or nameof(WorktreeRetirementState.Finalizing);
+        RemoveHistoryButton.IsEnabled = _work is null && _recoveryCurrent && row?.IsTerminal == true;
+        string? path = (CheckoutList.SelectedItem as CheckoutRow)?.Path;
+        bool unfinished = path is not null && RecoveryList.Items.Cast<RecoveryRow>().Any(item =>
+            item.Original.Equals(path, StringComparison.OrdinalIgnoreCase) && !item.IsTerminal);
+        UnmanageButton.IsEnabled = _work is null && _recoveryCurrent && path is not null
+            && _policies.Any(policy => policy.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) && !unfinished;
+        UnmanageButton.ToolTip = unfinished ? "Resolve unfinished recovery before stopping management. Pause automatic retirement to keep it inactive meanwhile."
+            : "Remove this policy. Checkout files, Git branches, retained references and recovery history stay.";
     }
     private void RefreshRecovery()
     {
@@ -157,10 +197,12 @@ public partial class WorktreeLifecycleWindow : Window
         var scroll = FindScrollViewer(RecoveryList);
         double offset = scroll?.VerticalOffset ?? 0;
         _recoveryCurrent = false;
-        var rows = _service.Load().Records.OrderByDescending(r => r.QuarantinedUtc)
+        var state = _service.Load();
+        var rows = state.Records.OrderByDescending(r => r.QuarantinedUtc)
             .Select(r => new RecoveryRow(r.Id, r.Policy.Path, r.State.ToString(), r.FinalizeAfterUtc.ToLocalTime().ToString("g"), r.QuarantinePath, r.RecoveryReference, r.Message)
             { CommonGitDirectory = r.CommonGitDirectory }).ToArray();
         _recoveryCurrent = true;
+        _policies = state.Policies;
         RecoveryList.ItemsSource = rows;
         RecoveryList.SelectedItem = rows.FirstOrDefault(row => row.Id == selected) ?? rows.FirstOrDefault(row => !known.Contains(row.Id));
         scroll?.ScrollToVerticalOffset(offset);
@@ -180,6 +222,7 @@ public partial class WorktreeLifecycleWindow : Window
     internal sealed record RecoveryRow(Guid Id, string Original, string State, string FinalizeAfter, string Quarantine, string Reference, string Message)
     {
         public string CommonGitDirectory { get; init; } = "";
+        public bool IsTerminal => State is nameof(WorktreeRetirementState.Completed) or nameof(WorktreeRetirementState.Restored);
         public string DisplayState => State switch
         { nameof(WorktreeRetirementState.RestoreOnly) => "Restore available", nameof(WorktreeRetirementState.NeedsReview) => "Needs review", _ => State };
     }

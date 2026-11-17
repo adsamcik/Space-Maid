@@ -309,9 +309,9 @@ public sealed partial class WorktreeRetirement
     { var state = Load(); Save(state with { Records = state.Records.Where(r => r.Id != record.Id).Append(record).ToArray() }); }
     private void Save(WorktreeRetirementSettings state)
     {
-        if (state.Policies.Count > 32 || state.Records.Count > 128) throw new IOException("Managed worktree record limit reached. Keep recovery records before enrolling more checkouts.");
+        if (state.Policies.Count > 32 || state.Records.Count > 128) throw new IOException("Managed worktree record limit reached. Stop managing inactive checkouts or remove completed/restored history; unfinished recovery must stay.");
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(state);
-        if (json.Length > 4 * 1024 * 1024) throw new IOException("Managed worktree recovery records exceed 4 MiB. Preserve existing records before enrolling more checkouts.");
+        if (json.Length > 4 * 1024 * 1024) throw new IOException("Managed worktree recovery records exceed 4 MiB. Remove completed/restored history to free space; unfinished recovery must stay.");
         _files.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(settingsPath))!);
         string temporary = settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try { _files.WriteAllBytes(temporary, json); _files.MoveFile(temporary, settingsPath, true); }
