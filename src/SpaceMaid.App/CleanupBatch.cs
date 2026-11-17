@@ -19,12 +19,18 @@ internal sealed record CleanupExecutionJournal(Action<Opportunity> Starting, Act
 internal sealed record CleanupBatchResult(IReadOnlyList<CleanupLocationResult> Locations,
     OpportunityReviewValidation? Validation, string? ValidationError = null, string? RefreshNote = null)
 {
+    // Only the pre-execution validation catch can establish this proof. A
+    // missing Validation alone says nothing about whether mutation began.
+    public bool ValidationFailedBeforeExecution { get; init; }
+    public bool CanReviewAgain => ValidationFailedBeforeExecution && Validation is null && ValidationError is not null
+        && Locations.All(item => !item.Attempted && item.Outcome is CleanupOutcome.Skipped or CleanupOutcome.NotProcessed);
     public ScanSnapshot? RefreshedSnapshot { get; init; }
     public IReadOnlyList<Opportunity>? RefreshedFindings { get; init; }
     public int RecycledCount => Locations.Count(item => item.Outcome == CleanupOutcome.Recycled);
     public int DeletedCount => Locations.Count(item => item.Outcome == CleanupOutcome.PermanentlyDeleted);
     public bool Cancelled => Locations.Any(item => item.Outcome is CleanupOutcome.Cancelled or CleanupOutcome.NotProcessed);
-    public string Summary => $"{RecycledCount:N0} recycled · {DeletedCount:N0} permanently deleted · {Locations.Count(item => item.Outcome == CleanupOutcome.Skipped):N0} skipped"
+    public string Summary => CanReviewAgain ? (Cancelled ? "Validation cancelled. No cleanup started." : "Validation could not finish. No cleanup started.")
+        : $"{RecycledCount:N0} recycled · {DeletedCount:N0} permanently deleted · {Locations.Count(item => item.Outcome == CleanupOutcome.Skipped):N0} skipped"
         + $" · {Locations.Count(item => item.Outcome == CleanupOutcome.Failed):N0} failed"
         + (Locations.Any(item => item.Outcome is CleanupOutcome.Partial or CleanupOutcome.Uncertain)
             ? $" · {Locations.Count(item => item.Outcome is CleanupOutcome.Partial or CleanupOutcome.Uncertain):N0} need checking" : "")
@@ -116,7 +122,7 @@ internal static class CleanupBatch
             results.AddRange(plan.Preview.Locations.Select(location => new CleanupLocationResult(location, outcome,
                 "No cleanup started: " + error.Message)));
             diagnostic("cleanup-validation-failed", new { Error = error.ToString() });
-            return new(results.AsReadOnly(), null, error.Message);
+            return new(results.AsReadOnly(), null, error.Message) { ValidationFailedBeforeExecution = true };
         }
         int completed = 0;
         bool journalFailed = false;

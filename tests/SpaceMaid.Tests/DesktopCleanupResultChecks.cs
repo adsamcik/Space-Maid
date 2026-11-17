@@ -125,5 +125,61 @@ public sealed partial class DesktopTests
             finally { completion.TrySetCanceled(); dialog.Close(); }
         }
         Assert.All(plan.Preview.Locations, item => Assert.True(Directory.Exists(item.Path)));
+        CheckCleanupValidationRetry(plan, artifactRoot);
+    }
+
+    private static void CheckCleanupValidationRetry(CleanupPlan plan, string artifactRoot)
+    {
+        int executions = 0;
+        CleanupPlan? approved = null;
+        var dialog = new ReviewWindow(plan, "Owned fixture · Validation recovery only", (chosen, _, _) =>
+        {
+            executions++;
+            if (executions > 1)
+            {
+                Assert.Equal(approved!.Targets.ToArray(), chosen.Targets.ToArray());
+                return Task.FromException<CleanupBatchResult>(new IOException("Execution outcome unavailable"));
+            }
+            approved = chosen;
+            return Task.FromResult(new CleanupBatchResult(chosen.Preview.Locations.Select(item =>
+                new CleanupLocationResult(item, CleanupOutcome.Skipped, "No cleanup started: metadata temporarily unavailable")).ToArray(),
+                null, "Metadata temporarily unavailable") { ValidationFailedBeforeExecution = true });
+        });
+        dialog.ShowActivated = false; dialog.ShowInTaskbar = false;
+        dialog.WindowStartupLocation = WindowStartupLocation.Manual; dialog.Left = -10000; dialog.Top = -10000;
+        dialog.Show();
+        try
+        {
+            var list = (ListBox)dialog.FindName("LocationList");
+            var rows = list.Items.Cast<CleanupReviewRow>().ToArray();
+            rows[0].Selected = false;
+            ((TextBox)dialog.FindName("SearchBox")).Text = "bin";
+            list.SelectedItem = rows[1];
+            var run = (Button)dialog.FindName("CleanupButton");
+            var retry = (Button)dialog.FindName("ReviewAgainButton");
+            PumpUntil(() => run.IsEnabled, TimeSpan.FromSeconds(5));
+            run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => retry.IsVisible, TimeSpan.FromSeconds(5));
+            Assert.Equal(1, executions); Assert.NotNull(dialog.Result); Assert.True(dialog.Result.CanReviewAgain);
+            Assert.False(run.IsEnabled);
+            Assert.Contains("No cleanup started", ((TextBlock)dialog.FindName("ResultText")).Text);
+            Render(dialog, Path.Join(artifactRoot, "artifacts", "ui", "cleanup-validation-recovery.png"), 980, 720);
+            retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(1, executions); // Review alone never starts another mutation.
+            Assert.Same(rows[1], list.SelectedItem);
+            Assert.Equal("bin", ((TextBox)dialog.FindName("SearchBox")).Text);
+            Assert.False(rows[0].CanSelect); Assert.False(rows[0].Selected);
+            Assert.All(rows.Skip(1), row => { Assert.True(row.CanSelect); Assert.True(row.Selected); });
+            Assert.Contains("Previous attempt", ((TextBlock)dialog.FindName("ResultDetailText")).Text);
+            PumpUntil(() => run.IsEnabled, TimeSpan.FromSeconds(5));
+            run.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => dialog.Execution!.IsCompleted && Equals("Close", ((Button)dialog.FindName("CloseButton")).Content), TimeSpan.FromSeconds(5));
+            Assert.Equal(2, executions);
+            Assert.Equal(Visibility.Collapsed, retry.Visibility);
+            retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(2, executions); Assert.False(run.IsEnabled);
+            Assert.All(rows, row => Assert.False(row.CanSelect));
+        }
+        finally { dialog.Close(); }
     }
 }

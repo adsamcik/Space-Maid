@@ -143,7 +143,7 @@
                         <TextBlock x:Name="CautionText" TextWrapping="Wrap" Margin="0,6,0,0" /><TextBlock x:Name="ResultDetailText" TextWrapping="Wrap" Margin="0,6,0,0" />
                     </StackPanel></ScrollViewer></Expander>
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="CloseButton" Content="Cancel" Click="Close_Click" IsDefault="True" Margin="0,0,10,0" /><Button x:Name="CleanupButton" Content="Move to Recycle Bin" IsEnabled="False" Click="Cleanup_Click" /></StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="ReviewAgainButton" Content="Review again" Click="ReviewAgain_Click" Visibility="Collapsed" Margin="0,0,10,0" /><Button x:Name="CloseButton" Content="Cancel" Click="Close_Click" IsDefault="True" Margin="0,0,10,0" /><Button x:Name="CleanupButton" Content="Move to Recycle Bin" IsEnabled="False" Click="Cleanup_Click" /></StackPanel>
             </Grid>
         </StackPanel>
     </Grid>

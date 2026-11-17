@@ -20,7 +20,10 @@ public partial class ReviewWindow : Window
     private CleanupReadiness _filter = CleanupReadiness.Ready;
     private CleanupReviewGroup? _group;
     private int _page, _selectionVersion;
-    private bool _initialized, _updating, _selectionBatch, _closed, _closeWhenFinished, _hasResults;
+    private bool _initialized, _updating, _selectionBatch, _closed, _closeWhenFinished, _hasResults, _validationRetryAvailable;
+    private HashSet<(string Provider, string Rule, string Path)> _selectedAtApproval = [];
+    private CleanupReadiness _filterAtApproval;
+    private int _pageAtApproval;
     internal CleanupBatchResult? Result { get; private set; }
     internal Task? Execution { get; private set; }
     internal Task? SelectionCalculation { get; private set; }
@@ -263,6 +266,10 @@ public partial class ReviewWindow : Window
     {
         if (_execute is null || _selectedPlan is null || !CleanupButton.IsEnabled || Execution is not null) return;
         var chosen = _selectedPlan;
+        _selectedAtApproval = _locations.Where(row => row.Selected && row.CanSelect).Select(row => row.Identity).ToHashSet();
+        _filterAtApproval = _filter; _pageAtApproval = _page;
+        _validationRetryAvailable = false;
+        ReviewAgainButton.Visibility = Visibility.Collapsed;
         _includedAtApproval = _locations.Where(row => row.Selected && row.CanSelect || row.IncludedByParent).Select(row => row.Identity).ToHashSet();
         _executingPlan = chosen;
         _estimateTimer.Stop(); _estimateCancellation?.Cancel(); _selectionVersion++;
@@ -286,6 +293,7 @@ public partial class ReviewWindow : Window
         {
             var execution = _execute(chosen, progress, cleanup.Token); Execution = execution;
             Result = await execution;
+            _validationRetryAvailable = Result.CanReviewAgain;
             ShowCompletedResults(Result);
             ShowResults();
             ResultText.Text = Result.Summary;
@@ -306,8 +314,32 @@ public partial class ReviewWindow : Window
             SelectionControls.IsEnabled = GroupList.IsEnabled = LocationList.IsEnabled = true;
             RulesScroll.IsEnabled = true;
             UpdateSelectionIndicators(); CloseButton.Content = "Close";
+            ReviewAgainButton.Visibility = _validationRetryAvailable ? Visibility.Visible : Visibility.Collapsed;
             if (_closeWhenFinished) Close();
         }
+    }
+
+    private void ReviewAgain_Click(object sender, RoutedEventArgs e)
+    {
+        if (_cleanup is not null || _closed || !_validationRetryAvailable || Execution?.IsCompleted != true || Result?.CanReviewAgain != true
+            || _executingPlan is not { } approved) return;
+        // Reopen only the exact captured set from the untouched attempt. The
+        // next Run is a new approval and repeats all live execution checks.
+        var allowed = approved.Preview.Locations.Select(item => (item.ProviderId, item.RuleId, item.Path)).ToHashSet();
+        _plan = approved;
+        if (_ruleReview) { _ruleBasis = approved; _ruleOptionsDirty = false; }
+        foreach (var row in _locations)
+            row.RestoreUntouchedReview(_selectedAtApproval.Contains(row.Identity), allowed.Contains(row.Identity));
+        Execution = null; _executingPlan = null; _hasResults = false; _remainingEstimateUncertain = false;
+        _filter = _filterAtApproval; _page = _pageAtApproval;
+        bool initialized = _initialized; _initialized = false;
+        try { (_filter switch { CleanupReadiness.Ready => ReadyFilter, CleanupReadiness.NeedsReview => ManualFilter, _ => KeptFilter }).IsChecked = true; }
+        finally { _initialized = initialized; }
+        ReviewAgainButton.Visibility = Visibility.Collapsed;
+        _validationRetryAvailable = false;
+        ApplyRuleExclusions(); UpdateRuleSummary(); ApplyFilters(false); ScheduleEstimate();
+        ResultText.Text = "Review the retained selection, then approve a new run. All folders will be checked again.";
+        ResultDetailText.Text = "Previous attempt · No cleanup started.\n" + Result.Summary + "\n" + Result.ValidationError;
     }
 
     private void ShowResults()

@@ -69,6 +69,15 @@ internal sealed class CleanupReviewRow : INotifyPropertyChanged
     }
     public void DisableSelection()
     { CanSelect = false; PropertyChanged?.Invoke(this, new(nameof(CanSelect))); }
+    public void RestoreUntouchedReview(bool selected, bool selectable)
+    {
+        Result = null; _resultState = null; IncludedByParent = false;
+        CanSelect = selectable && Assessment.State != CleanupReadiness.Protected;
+        _selected = selected && CanSelect;
+        Status = Assessment.State switch { CleanupReadiness.Protected => "Kept", CleanupReadiness.NeedsReview => "Needs review", _ => "Ready" };
+        foreach (string property in new[] { nameof(CanSelect), nameof(Selected), nameof(DisplayState), nameof(IsRecycled), nameof(IsRemoved), nameof(Bytes), nameof(Size) })
+            PropertyChanged?.Invoke(this, new(property));
+    }
     public void SetResult(CleanupLocationResult? result)
     {
         Result = result;

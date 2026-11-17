@@ -11,6 +11,37 @@ public sealed class CleanupBatchTests
     private readonly FileOperations _operations = new();
 
     [Fact]
+    public void ReviewAgainRequiresAnExplicitUntouchedValidationFailure()
+    {
+        var location = new Opportunity(0, "Fixture", "Fixture", @"G:\owned-fixture\bin", 1, 1, "", "", "", false);
+        foreach (var outcome in Enum.GetValues<CleanupOutcome>())
+        foreach (bool attempted in new[] { false, true })
+        {
+            var result = new CleanupBatchResult([new(location, outcome, "Fixture", attempted)], null, "Validation unavailable")
+            { ValidationFailedBeforeExecution = true };
+            Assert.Equal(!attempted && outcome is CleanupOutcome.Skipped or CleanupOutcome.NotProcessed, result.CanReviewAgain);
+            Assert.False((result with { ValidationFailedBeforeExecution = false }).CanReviewAgain);
+        }
+    }
+
+    [Fact]
+    public async Task CancelledPreExecutionValidationCanBeReviewedAgainWithoutClaimingPartialMutation()
+    {
+        using var fixture = new TestDirectory();
+        var project = CreateProject(fixture.Path, "validation-cancelled", 'v', 4096);
+        var scan = await new VolumeScanner().ScanAsync(fixture.Path, preferFast: false);
+        var plan = await _operations.PrepareCleanupAsync(scan, OpportunityDetector.Find(scan), discover: DeveloperOpportunityFixture.Find);
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        var result = await _operations.ExecuteCleanupAsync(plan, 0, new InlineProgress(_ => { }), cancellation.Token,
+            (_, _) => { }, discover: DeveloperOpportunityFixture.Find);
+        Assert.True(result.CanReviewAgain);
+        Assert.Contains("No cleanup started", result.Summary);
+        Assert.DoesNotContain("removed", result.Summary);
+        Assert.All(result.Locations, item => Assert.False(item.Attempted));
+        Assert.Equal(project.Content, File.ReadAllText(project.File));
+    }
+
+    [Fact]
     [Trait("Stage", "System")]
     public async Task JunctionAddedAfterConfirmationSkipsOnlyItsFolderAndRecyclesTheIndependentFixture()
     {
