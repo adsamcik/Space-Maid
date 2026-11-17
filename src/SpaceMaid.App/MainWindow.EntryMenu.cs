@@ -13,20 +13,20 @@ public partial class MainWindow
         var item = ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) as ListBoxItem;
         var row = item?.DataContext as ExplorerRow;
         // Apps / Shift+F10 can originate on the list itself. A mouse click on
-        // empty space must never inherit an unrelated selected folder.
+        // empty space must never inherit an unrelated selected entry.
         if (row is null && e.CursorLeft < 0)
         {
             row = SpaceTree.SelectedItem as ExplorerRow;
             item = SpaceTree.ItemContainerGenerator.ContainerFromIndex(SpaceTree.SelectedIndex) as ListBoxItem;
         }
-        if (row is null || !PrepareFolderMenu(SpaceTree.ContextMenu, row.Scan, row.Entry.LinkIndex))
+        if (row is null || !PrepareEntryMenu(SpaceTree.ContextMenu, row.Scan, row.Entry.LinkIndex))
         { e.Handled = true; return; }
         ContextMenuService.SetPlacementTarget(SpaceTree, item ?? (UIElement)SpaceTree);
     }
 
-    private bool PrepareFolderMenu(ContextMenu menu, ScanSnapshot scan, int link)
+    private bool PrepareEntryMenu(ContextMenu menu, ScanSnapshot scan, int link)
     {
-        if (!CanUseFolderEntry(scan, link)) return false;
+        if (!CanUseEntryMenu(scan, link)) return false;
         var entry = scan.Entry(link);
         string? path = scan.EntryPath(link);
         if (path is null || link < -1) return false;
@@ -38,36 +38,40 @@ public partial class MainWindow
             var open = new MenuItem { Header = "Open in File Explorer" };
             open.Click += (_, _) =>
             {
-                if (CanUseFolderEntry(scan, link)) OpenFolderInExplorer(path);
+                if (CanUseEntryMenu(scan, link)) OpenFolderInExplorer(path);
             };
-            string? recycleRoot = RecycleBinService.RootForFolder(path);
-            string? blocked = recycleRoot is not null ? null : FolderDeletionTarget.SelectionBlockReason(scan, link);
-            var recycle = new MenuItem
+            menu.Items.Add(open);
+        }
+        string? recycleRoot = entry.IsDirectory ? RecycleBinService.RootForFolder(path) : null;
+        string? blocked = recycleRoot is not null ? null : DeletionTarget.ExploreSelectionBlockReason(scan, link);
+        var recycle = new MenuItem
+        {
+            Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
+            ToolTip = recycleRoot is null ? blocked : $"Permanently deletes your recycled items on {recycleRoot}"
+        };
+        ToolTipService.SetShowOnDisabled(recycle, true);
+        recycle.Click += async (_, _) =>
+        {
+            if (!CanUseEntryMenu(scan, link)) return;
+            if (recycleRoot is not null) await EmptyRecycleBinAsync(recycleRoot);
+            else await DeleteEntryAsync(scan, link);
+        };
+        menu.Items.Add(recycle);
+        if (recycleRoot is null)
+        {
+            var delete = new MenuItem
             {
-                Header = recycleRoot is null ? "Move to Recycle Bin" : "Empty Recycle Bin…", IsEnabled = blocked is null,
-                ToolTip = recycleRoot is null ? blocked : $"Permanently deletes your recycled items on {recycleRoot}"
+                Header = "Delete permanently…", InputGestureText = "Shift+Delete",
+                IsEnabled = blocked is null, ToolTip = blocked
             };
-            ToolTipService.SetShowOnDisabled(recycle, true);
-            recycle.Click += async (_, _) =>
-            {
-                if (!CanUseFolderEntry(scan, link)) return;
-                if (recycleRoot is not null) await EmptyRecycleBinAsync(recycleRoot);
-                else await DeleteFolderAsync(scan, link);
-            };
-            menu.Items.Add(open); menu.Items.Add(recycle);
-            if (recycleRoot is null)
-            {
-                var delete = new MenuItem
-                {
-                    Header = "Delete permanently…", InputGestureText = "Shift+Delete",
-                    IsEnabled = blocked is null, ToolTip = blocked
-                };
-                ToolTipService.SetShowOnDisabled(delete, true);
-                delete.Click += async (_, _) => await DeleteFolderAsync(scan, link, permanent: true);
-                menu.Items.Add(delete);
-            }
+            ToolTipService.SetShowOnDisabled(delete, true);
+            delete.Click += async (_, _) => await DeleteEntryAsync(scan, link, permanent: true);
+            menu.Items.Add(delete);
+        }
+        if (entry.IsDirectory)
+        {
             var recheck = new MenuItem { Header = "Recheck this folder" };
-            recheck.Click += async (_, _) => { if (CanUseFolderEntry(scan, link)) await RecheckFolderAsync(path); };
+            recheck.Click += async (_, _) => { if (CanUseEntryMenu(scan, link)) await RecheckFolderAsync(path); };
             menu.Items.Add(recheck);
         }
         var checking = new MenuItem { Header = "Checking cloud availability…", IsEnabled = false };
@@ -80,7 +84,7 @@ public partial class MainWindow
     private async Task AddCloudMenuAsync(ContextMenu menu, MenuItem checking, object marker, ScanSnapshot scan, int link, string path)
     {
         var state = await Operations.InspectCloudAsync(path);
-        if (!CanUseFolderEntry(scan, link) || !ReferenceEquals(menu.Tag, marker)) return;
+        if (!CanUseEntryMenu(scan, link) || !ReferenceEquals(menu.Tag, marker)) return;
         menu.Items.Remove(checking);
         if (state is not null)
         {
@@ -89,16 +93,16 @@ public partial class MainWindow
                 ToolTip = enabled ? $"Managed by {state.Provider}"
                     : state.LocalBytes == 0 ? "This file is already online-only." : "This file is unsynced or excluded by the provider." };
             ToolTipService.SetShowOnDisabled(online, true);
-            online.Click += async (_, _) => { if (CanUseFolderEntry(scan, link)) await MakeOnlineOnlyAsync(scan, link); };
+            online.Click += async (_, _) => { if (CanUseEntryMenu(scan, link)) await MakeOnlineOnlyAsync(scan, link); };
             menu.Items.Add(online);
         }
         if (menu.Items.Count == 0) menu.IsOpen = false;
     }
 
-    private bool CanUseFolderMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing
+    private bool CanOpenEntryMenu(ScanSnapshot scan) => !_closing && _work is null && !_browsing
         && ReferenceEquals(_snapshot, scan);
 
-    private bool CanUseFolderEntry(ScanSnapshot scan, int link) => link >= -1 && CanUseFolderMenu(scan)
+    private bool CanUseEntryMenu(ScanSnapshot scan, int link) => link >= -1 && CanOpenEntryMenu(scan)
         && _explorer?.IsInRemovedBranch(link) != true;
 
     private bool SelectContextEntry(ScanSnapshot scan, int link)

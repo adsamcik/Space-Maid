@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
+using SpaceMaid.Core.IO;
+using SpaceMaid.Core.Scanning;
 using Xunit;
 
 namespace SpaceMaid.Tests;
@@ -39,16 +41,20 @@ public sealed class SilentRecyclingTests
         Assert.Equal(contents, File.ReadAllText(file));
     }
 
-    [Fact]
+    [Theory]
     [Trait("Stage", "System")]
-    public async Task WindowsUnrecyclableSparseFixtureIsKeptWithoutDialogsOrPermanentFallback()
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WindowsUnrecyclableSparseFixtureIsKeptWithoutDialogsOrPermanentFallback(bool recycleFolder)
     {
         using var fixture = new TestDirectory();
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "too-large-build")).FullName;
         string file = Path.Join(folder, "owned-sparse.bin");
         byte[] contents = "Owned sparse fixture"u8.ToArray();
         long logicalLength = CreateOversizedFixtureFile(file, contents);
-        var target = FolderDeletionTarget.CaptureCurrent(folder, logicalLength);
+        var scan = await new VolumeScanner().ScanAsync(folder, preferFast: false);
+        var target = DeletionTarget.FromExploreSelection(scan, recycleFolder ? -1 : scan.FindEntry(file)!.Value,
+            DiskAccess.Default);
         var events = new List<string>();
         object? finish = null;
         var outcome = await RecycleWithoutWindows(target, (name, data) =>
@@ -58,11 +64,11 @@ public sealed class SilentRecyclingTests
         });
         try
         {
-            // Native Windows first considers recycling, then requests a transfer
-            // without TSF_DELETE_RECYCLE_IF_POSSIBLE. The live guard must reject it.
+            // Folder recycling's callback rejects the Shell's separate
+            // request for a permanent transfer. The file API refuses directly.
             Assert.Null(outcome.Result);
             Assert.True(outcome.Error is RecycleUnavailableException, $"{outcome.Error}\nShell result: {finish}");
-            Assert.Contains("recycle-delete-blocked", events);
+            if (recycleFolder) Assert.Contains("recycle-delete-blocked", events);
             Assert.DoesNotContain("recycle-verified", events);
             Assert.True(Directory.Exists(folder)); Assert.Equal(logicalLength, new FileInfo(file).Length);
             using var preserved = File.OpenRead(file);
@@ -71,7 +77,7 @@ public sealed class SilentRecyclingTests
         }
         finally
         {
-            if (outcome.Result?.RecycledPath is { } unexpected) DeletionTests.RestoreFixture(unexpected, folder);
+            if (outcome.Result?.RecycledPath is { } unexpected) DeletionTests.RestoreFixture(unexpected, target.Path);
         }
     }
 
@@ -89,7 +95,7 @@ public sealed class SilentRecyclingTests
     }
 
     private static async Task<(RecycleResult? Result, Exception? Error)> RecycleWithoutWindows(
-        FolderDeletionTarget target, Action<string, object>? diagnostic = null)
+        DeletionTarget target, Action<string, object>? diagnostic = null)
     {
         uint nativeThread = 0;
         var windows = new HashSet<nint>();

@@ -22,7 +22,7 @@ public sealed class DeletionTests
         int link = scan.FindEntry(folder)!.Value;
         File.WriteAllBytes(file, new byte[8192]);
         File.WriteAllBytes(file + ":extra", new byte[4096]);
-        var target = await operations.PrepareRecycleAsync(scan, link, default);
+        var target = await operations.PrepareExploreDeletionAsync(scan, link, default);
         Assert.Equal(4096, scan.Entry(link).LogicalBytes);
         Assert.Equal(4096, target.LogicalBytes);
         Assert.Equal(folder, target.Path);
@@ -30,7 +30,7 @@ public sealed class DeletionTests
         Directory.Move(folder, folder + "-original");
         Directory.CreateDirectory(folder);
         Assert.Throws<InvalidOperationException>(target.ValidateCurrent);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => operations.PrepareRecycleAsync(scan, link, default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => operations.PrepareExploreDeletionAsync(scan, link, default));
         Assert.Equal(8192, new FileInfo(Path.Join(folder + "-original", "data.bin")).Length);
     }
 
@@ -42,10 +42,10 @@ public sealed class DeletionTests
         var operations = new FileOperations();
         var scan = await operations.MeasureFolderAsync(fixture.Path);
         int link = scan.FindEntry(folder)!.Value;
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operations.PrepareRecycleAsync(scan, link, new(true)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operations.PrepareExploreDeletionAsync(scan, link, new(true)));
         Assert.True(Directory.Exists(folder));
         Directory.Move(folder, folder + "-moved");
-        Assert.NotNull(await Record.ExceptionAsync(() => operations.PrepareRecycleAsync(scan, link, default)));
+        Assert.NotNull(await Record.ExceptionAsync(() => operations.PrepareExploreDeletionAsync(scan, link, default)));
         Assert.True(Directory.Exists(folder + "-moved"));
     }
 
@@ -101,19 +101,62 @@ public sealed class DeletionTests
         File.WriteAllText(file, "original");
         var operations = new FileOperations();
         var scan = await operations.MeasureFolderAsync(fixture.Path);
-        var target = await operations.PrepareRecycleAsync(scan, scan.FindEntry(folder)!.Value, default);
+        var target = await operations.PrepareExploreDeletionAsync(scan, scan.FindEntry(folder)!.Value, default);
         int starts = 0;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-            await operations.DeleteFolderPermanentlyAsync(target, new(true), () => starts++));
+            await operations.DeletePermanentlyAsync(target, new(true), () => starts++));
         Assert.Equal("original", File.ReadAllText(file));
         Directory.Move(folder, folder + "-original");
         Directory.CreateDirectory(folder);
         File.WriteAllText(file, "replacement");
         await Assert.ThrowsAsync<IOException>(() =>
-            operations.DeleteFolderPermanentlyAsync(target, default, () => starts++));
+            operations.DeletePermanentlyAsync(target, default, () => starts++));
         Assert.Equal(0, starts);
         Assert.Equal("replacement", File.ReadAllText(file));
         Assert.Equal("original", File.ReadAllText(Path.Join(folder + "-original", "keep.txt")));
+    }
+
+    [Fact]
+    public async Task ExploreFileConfirmationRejectsAReplacement()
+    {
+        using var fixture = new TestDirectory();
+        string path = Path.Join(fixture.Path, "selected.txt");
+        File.WriteAllText(path, "original");
+        var operations = new FileOperations();
+        var scan = await operations.MeasureFolderAsync(fixture.Path);
+        int link = scan.FindEntry(path)!.Value;
+        var target = await operations.PrepareExploreDeletionAsync(scan, link, default);
+        Assert.False(target.IsDirectory);
+        Assert.Equal(path, target.Path);
+        Assert.Null(DeletionTarget.ExploreSelectionBlockReason(scan, link));
+        target.ValidateCurrent();
+        File.Move(path, path + ".held");
+        File.WriteAllText(path, "replacement");
+        Assert.Throws<InvalidOperationException>(target.ValidateCurrent);
+        await Assert.ThrowsAsync<IOException>(() => operations.DeletePermanentlyAsync(target, default,
+            () => throw new InvalidOperationException("A replacement must not be touched.")));
+        Assert.Equal("replacement", File.ReadAllText(path));
+        Assert.Equal("original", File.ReadAllText(path + ".held"));
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public async Task ExplorePermanentDeletionRemovesOnlyTheSelectedHardLinkName()
+    {
+        using var fixture = new TestDirectory();
+        string original = Path.Join(fixture.Path, "original.txt");
+        string alias = Path.Join(fixture.Path, "alias.txt");
+        File.WriteAllText(original, "keep");
+        Assert.True(CreateHardLinkW(alias, original, 0));
+        var operations = new FileOperations();
+        var scan = await operations.MeasureFolderAsync(fixture.Path);
+        int secondary = new[] { scan.FindEntry(original)!.Value, scan.FindEntry(alias)!.Value }
+            .Single(link => !scan.Entry(link).IsPrimaryName);
+        var target = await operations.PrepareExploreDeletionAsync(scan, secondary, default);
+        await operations.DeletePermanentlyAsync(target, default, () => { });
+        string remaining = target.Path == original ? alias : original;
+        Assert.False(File.Exists(target.Path));
+        Assert.Equal("keep", File.ReadAllText(remaining));
     }
 
     [Fact]
@@ -137,9 +180,9 @@ public sealed class DeletionTests
             File.WriteAllText(Path.Join(nested, name + "0:extra"), "named stream");
             var operations = new FileOperations();
             var scan = await operations.MeasureFolderAsync(fixture.Path);
-            var target = await operations.PrepareRecycleAsync(scan, scan.FindEntry(folder)!.Value, default);
+            var target = await operations.PrepareExploreDeletionAsync(scan, scan.FindEntry(folder)!.Value, default);
             int starts = 0;
-            await operations.DeleteFolderPermanentlyAsync(target, default, () => starts++);
+            await operations.DeletePermanentlyAsync(target, default, () => starts++);
             Assert.Equal(1, starts);
             Assert.False(Directory.Exists(folder));
             Assert.Equal("keep me", File.ReadAllText(original));
@@ -261,14 +304,14 @@ public sealed class DeletionTests
         Assert.Equal(content, File.ReadAllText(file));
     }
 
-    internal static void RestoreFixture(string recycled, string folder)
+    internal static void RestoreFixture(string recycled, string path)
     {
         // Restore only the exact fixture destination returned by this operation.
         // Its matching $I record must name our original owned fixture before
         // removing that metadata. Never enumerate or empty the Recycle Bin.
         string expected = Path.GetFullPath(Path.Join(Path.GetTempPath(), "SpaceMaid-tests")) + "\\";
-        Assert.StartsWith(expected, Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase);
-        Assert.StartsWith(Path.GetPathRoot(folder)! + "$Recycle.Bin\\", recycled, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(expected, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(Path.GetPathRoot(path)! + "$Recycle.Bin\\", recycled, StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith("$R", Path.GetFileName(recycled), StringComparison.Ordinal);
         string metadata = Path.Join(Path.GetDirectoryName(recycled)!, "$I" + Path.GetFileName(recycled)[2..]);
         if (File.Exists(metadata))
@@ -281,11 +324,17 @@ public sealed class DeletionTests
                 input.CopyTo(buffer);
                 data = buffer.ToArray();
             });
-            Assert.Contains(folder, System.Text.Encoding.Unicode.GetString(data), StringComparison.OrdinalIgnoreCase);
-            Directory.Move(recycled, folder);
+            Assert.Contains(path, System.Text.Encoding.Unicode.GetString(data), StringComparison.OrdinalIgnoreCase);
+            MoveBack();
             RetrySharingViolation(() => File.Delete(metadata));
         }
-        else Directory.Move(recycled, folder);
+        else MoveBack();
+
+        void MoveBack()
+        {
+            if (Directory.Exists(recycled)) Directory.Move(recycled, path);
+            else File.Move(recycled, path);
+        }
     }
 
     private static void RetrySharingViolation(Action action)

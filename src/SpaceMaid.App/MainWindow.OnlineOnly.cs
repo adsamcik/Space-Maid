@@ -10,7 +10,7 @@ public partial class MainWindow
 {
     internal async Task MakeOnlineOnlyAsync(ScanSnapshot scan, int link)
     {
-        if (!CanUseFolderMenu(scan)) return;
+        if (!CanOpenEntryMenu(scan)) return;
         await ReviewOnlineOnlyCoreAsync(scan.EntryPath(link)!, scan, link, default);
     }
 

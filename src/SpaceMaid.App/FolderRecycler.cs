@@ -9,8 +9,8 @@ namespace SpaceMaid.App;
 #endif
 
 internal sealed record RecycleResult(bool Cancelled, string? RecycledPath);
-internal sealed class RecycleUnavailableException(bool mayHaveMoved)
-    : IOException("Windows cannot move this folder to the Recycle Bin.")
+internal sealed class RecycleUnavailableException(string item, bool mayHaveMoved)
+    : IOException($"Windows can’t move this {item} to the Recycle Bin.")
 {
     public bool MayHaveMoved { get; } = mayHaveMoved;
 }
@@ -22,12 +22,13 @@ internal static class FolderRecycler
     internal const int CancelledHResult = unchecked((int)0x800704C7);
     internal const int CannotRecycleHResult = unchecked((int)0x80070032);
     private const uint OperationFlags = 0x00080000 | 0x20000000 | 0x00100000 | 0x00000614;
+    private const uint RecycleIfPossible = 0x80; // TSF_DELETE_RECYCLE_IF_POSSIBLE
 
-    public static Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
+    public static Task<RecycleResult> RecycleAsync(DeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null, Action? validateContents = null)
         => CleanupMutationLease.RunAsync(() => RecycleCapturedAsync(target, owner, token, diagnostic, validateContents), token);
 
-    private static Task<RecycleResult> RecycleCapturedAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
+    private static Task<RecycleResult> RecycleCapturedAsync(DeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic, Action? validateContents)
     {
         var completion = new TaskCompletionSource<RecycleResult>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -41,12 +42,13 @@ internal static class FolderRecycler
         return completion.Task;
     }
 
-    private static RecycleResult Recycle(FolderDeletionTarget target, nint owner, CancellationToken token,
+    private static RecycleResult Recycle(DeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic, Action? validateContents)
     {
         token.ThrowIfCancellationRequested();
         target.ValidateCurrent();
         validateContents?.Invoke();
+        if (!target.IsDirectory) return RecycleFile(target, token, diagnostic);
         IFileOperation? operation = null;
         IShellItem? item = null;
         uint cookie = 0;
@@ -79,7 +81,7 @@ internal static class FolderRecycler
             if (sink.ValidationError is { } validation) throw new IOException(validation);
             if (!token.IsCancellationRequested && sink.RecycledPath is null
                 && (sink.CannotRecycle || IsRecycleUnavailable(result) || IsRecycleUnavailable(sink.Result)))
-                throw new RecycleUnavailableException(sink.TransferAllowed);
+                throw new RecycleUnavailableException("folder", sink.TransferAllowed);
             if (token.IsCancellationRequested || IsCancellation(result) || IsCancellation(sink.Result))
                 return new(true, sink.RecycledPath);
             ThrowIfFailed(result);
@@ -88,7 +90,7 @@ internal static class FolderRecycler
             // A successful HRESULT alone is insufficient: a non-null new item
             // is Windows' evidence that it was recycled rather than destroyed.
             if (!sink.RootCompleted || sink.RecycledPath is null)
-                throw new IOException("Windows did not confirm a Recycle Bin destination. Rescan to check the folder's current state.");
+                throw new IOException("Windows did not confirm a Recycle Bin destination. Recheck the item's location.");
             target.ValidateRecycledIdentity(sink.RecycledPath);
             diagnostic?.Invoke("recycle-verified", new { target.Path, sink.RecycledPath });
             return new(false, sink.RecycledPath);
@@ -104,10 +106,58 @@ internal static class FolderRecycler
         }
     }
 
+    private static RecycleResult RecycleFile(DeletionTarget target, CancellationToken token, Action<string, object>? diagnostic)
+    {
+        using var pathLease = target.HoldFileRecyclePath(token, out string shellPath);
+        IShellItem? item = null, parent = null, bin = null, recycled = null;
+        ITransferSource? transfer = null;
+        try
+        {
+            Guid shellItemId = typeof(IShellItem).GUID;
+            Guid recycleBinId = new("B7534046-3ECB-4C18-BE4E-64CD4CB7D6AC");
+            Guid transferHandlerId = new("D5E346A1-F753-4932-B403-4574800E2498");
+            Guid transferSourceId = typeof(ITransferSource).GUID;
+            Marshal.ThrowExceptionForHR(SHCreateItemFromParsingName(shellPath, 0, ref shellItemId, out item));
+            item.GetDisplayName(0x80058000, out string source); // SIGDN_FILESYSPATH
+            if (!source.Equals(shellPath, StringComparison.Ordinal))
+                throw new IOException("Windows requested a file outside the confirmed location.");
+            Marshal.ThrowExceptionForHR(SHGetKnownFolderItem(ref recycleBinId, 0, 0, ref shellItemId, out bin));
+            item.GetParent(out parent);
+            parent.BindToHandler(0, ref transferHandlerId, ref transferSourceId, out transfer);
+            token.ThrowIfCancellationRequested();
+            target.ValidateCurrent();
+
+            // RecycleItem reports the failure without invoking permanent
+            // deletion when the Shell cannot fit a file in the bin.
+            diagnostic?.Invoke("recycle-native-start", new { target.Path, Method = "RecycleItem" });
+            int result = transfer.RecycleItem(item, bin, RecycleIfPossible, out recycled);
+            diagnostic?.Invoke("recycle-native-finish", new { target.Path, HResult = $"0x{result:X8}" });
+            if (IsCancellation(result)) return new(true, null);
+            if (recycled is null && IsRecycleUnavailable(result))
+            {
+                token.ThrowIfCancellationRequested();
+                target.ValidateCurrent();
+                throw new RecycleUnavailableException("file", mayHaveMoved: false);
+            }
+            ThrowIfFailed(result);
+            if (recycled is null)
+                throw new IOException("Windows did not confirm a Recycle Bin destination. Recheck the item's location.");
+            recycled.GetDisplayName(0x80058000, out string destination);
+            target.ValidateRecycledIdentity(destination);
+            diagnostic?.Invoke("recycle-verified", new { target.Path, RecycledPath = destination });
+            return new(false, destination);
+        }
+        finally
+        {
+            foreach (object? itemToRelease in new object?[] { recycled, transfer, bin, parent, item })
+                if (itemToRelease is not null) Marshal.FinalReleaseComObject(itemToRelease);
+        }
+    }
+
     // Testable policy gate as well as a live PreDeleteItem guard. Windows must
     // request recycling; a permanent-delete callback is never accepted.
     internal static int DeletePermission(uint flags, CancellationToken token) => token.IsCancellationRequested
-        ? CancelledHResult : (flags & 0x80) == 0 ? CannotRecycleHResult : 0;
+        ? CancelledHResult : (flags & RecycleIfPossible) == 0 ? CannotRecycleHResult : 0;
 
     private static bool IsCancellation(int result) => result is CancelledHResult
         or unchecked((int)0x80270000) or unchecked((int)0x80270001);
@@ -123,9 +173,9 @@ internal static class FolderRecycler
         string? message = unchecked((uint)result) switch
         {
             0x80070020 or 0x80070021 or 0x80270027 or 0x80270028 => "A file is in use. Close the app using it, then try again.",
-            0x80070005 or 0x80270021 or 0x80270022 or 0x80270002 => "Windows denied access. Check folder permissions, then try again.",
-            0x80270037 => "This folder is too large for the Recycle Bin. Increase this drive's Recycle Bin limit, then try again.",
-            0x80270036 or 0x8027003A => "The Recycle Bin is unavailable for this folder. Check this drive's Recycle Bin settings.",
+            0x80070005 or 0x80270021 or 0x80270022 or 0x80270002 => "Windows denied access. Check permissions, then try again.",
+            0x80270037 => "This item is too large for the Recycle Bin. Increase this drive's Recycle Bin limit, then try again.",
+            0x80270036 or 0x8027003A => "The Recycle Bin is unavailable for this item. Check this drive's Recycle Bin settings.",
             0x80270038 or 0x8027001D or 0x8027001E => "This path is too long for Windows recycling. Open it in File Explorer to review it.",
             0x80070070 or 0x80270032 or 0x80270033 => "Windows has insufficient space to complete recycling.",
             _ => null
@@ -135,7 +185,7 @@ internal static class FolderRecycler
     }
 
     [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
-    private sealed class RecycleSink(FolderDeletionTarget target, CancellationToken token,
+    private sealed class RecycleSink(DeletionTarget target, CancellationToken token,
         Action<string, object>? diagnostic, Action? validateContents) : IFileOperationProgressSink
     {
         public bool CannotRecycle { get; private set; }
@@ -145,6 +195,7 @@ internal static class FolderRecycler
         public int Result { get; private set; }
         public bool RootCompleted { get; private set; }
         public int CallbackCount { get; private set; }
+
         public int StartOperations() => token.IsCancellationRequested ? CancelledHResult : 0;
         public int FinishOperations(int result) { if (result < 0) Result = result; return 0; }
         public int PreDeleteItem(uint flags, IShellItem item)
@@ -160,7 +211,7 @@ internal static class FolderRecycler
                 item.GetDisplayName(0x80058000, out string path);
                 if (path.Equals(target.Path, StringComparison.OrdinalIgnoreCase)) { target.ValidateCurrent(); validateContents?.Invoke(); }
                 else if (!path.StartsWith(target.Path + "\\", StringComparison.OrdinalIgnoreCase))
-                    throw new IOException("Windows requested a folder outside the confirmed location.");
+                    throw new IOException("Windows requested an item outside the confirmed location.");
                 // A recursive callback belongs to the operation already
                 // authorized for the root. Do not require the old root to
                 // still exist after Windows has moved it to the Recycle Bin.
@@ -208,6 +259,20 @@ internal static class FolderRecycler
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
     private static extern int SHCreateItemFromParsingName(string path, nint context, ref Guid id, out IShellItem item);
 
+    [DllImport("shell32.dll", ExactSpelling = true)]
+    private static extern int SHGetKnownFolderItem(ref Guid folder, uint flags, nint token, ref Guid id, out IShellItem item);
+
+    [ComImport, Guid("00ADB003-BDE9-45C6-8E29-D09F9353E108"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ITransferSource
+    {
+        void Advise(nint sink, out uint cookie);
+        void Unadvise(uint cookie);
+        void SetProperties(nint properties);
+        void OpenItem(IShellItem item, uint flags, ref Guid id, out nint resource);
+        void MoveItem(IShellItem item, IShellItem destination, [MarshalAs(UnmanagedType.LPWStr)] string name, uint flags, out IShellItem result);
+        [PreserveSig] int RecycleItem(IShellItem item, IShellItem recycleBin, uint flags, out IShellItem? result);
+    }
+
     // Full vtables are required even though this feature only calls delete.
     [ComImport, Guid("947AAB5F-0A5C-4C13-B4D6-4BF7836FC9F8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IFileOperation
@@ -237,7 +302,7 @@ internal static class FolderRecycler
     [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IShellItem
     {
-        void BindToHandler(nint context, ref Guid handler, ref Guid id, out nint result);
+        void BindToHandler(nint context, ref Guid handler, ref Guid id, out ITransferSource result);
         void GetParent(out IShellItem parent);
         void GetDisplayName(uint type, [MarshalAs(UnmanagedType.LPWStr)] out string name);
         void GetAttributes(uint mask, out uint attributes);

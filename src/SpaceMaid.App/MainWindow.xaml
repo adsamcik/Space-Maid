@@ -167,7 +167,7 @@
                       <ListView x:Name="SpaceTree" Grid.RowSpan="2" Margin="5,4,5,0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" SizeChanged="Tree_SizeChanged"
                                SelectionChanged="Tree_Changed" PreviewKeyDown="Tree_KeyDown" PreviewMouseDown="Tree_MouseDown" MouseDoubleClick="Tree_DoubleClick" ContextMenuOpening="Tree_ContextMenuOpening"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
-                               ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected folder after confirmation. Right-click a folder for its operations.">
+                               ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete recycles the selected file or folder after confirmation. Shift+F10 opens its actions.">
                           <ListView.ContextMenu><ContextMenu /></ListView.ContextMenu>
                           <ListView.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
                           <ListView.ItemContainerStyle><Style TargetType="ListViewItem" BasedOn="{StaticResource TreeRow}" /></ListView.ItemContainerStyle>

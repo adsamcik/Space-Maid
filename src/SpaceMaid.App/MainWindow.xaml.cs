@@ -99,7 +99,7 @@ public partial class MainWindow : Window
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;
         OpportunityBrowser?.SetBusy(busy);
-        ExplorePanel.IsEnabled = (!busy || _removingFolder) && !_browsing;
+        ExplorePanel.IsEnabled = (!busy || _removingEntry) && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
         if (!busy) { DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
@@ -183,11 +183,11 @@ public partial class MainWindow : Window
             if (_cleanupTask is not null)
                 try { await _cleanupTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Cleanup shutdown: {error}"); }
-            if (_folderRemovalTask is not null)
-                try { await _folderRemovalTask; }
+            if (_entryRemovalTask is not null)
+                try { await _entryRemovalTask; }
                 catch (OperationCanceledException) { }
                 catch (RecycleUnavailableException) { }
-                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Folder removal shutdown: {error}"); }
+                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Explore removal shutdown: {error}"); }
             if (_worktreeCheckTask is not null)
                 try { await _worktreeCheckTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Worktree check shutdown: {error}"); }

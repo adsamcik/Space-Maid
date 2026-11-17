@@ -7,11 +7,11 @@ using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
 
-internal enum FolderRemoval { Recycled, Deleted }
+internal enum EntryRemoval { Recycled, Deleted }
 
 internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth, bool Expanded, int VisibleIndex = -1)
 {
-    public FolderRemoval? Removal { get; init; }
+    public EntryRemoval? Removal { get; init; }
     public bool IsRemoved => Removal.HasValue;
     public string Name => Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
@@ -44,13 +44,13 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     }
     public string Flags => Removal switch
     {
-        FolderRemoval.Recycled => "Recycled",
-        FolderRemoval.Deleted => "Permanently deleted",
+        EntryRemoval.Recycled => "Recycled",
+        EntryRemoval.Deleted => "Permanently deleted",
         _ => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Unmeasured ? "Not checked" : Entry.IsIncomplete ? "Partial" : null }.OfType<string>())
     };
     public string Description => IsRemoved ? $"{Path}, {SizeNote}" : $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
-    public string SizeNote => Removal == FolderRemoval.Deleted ? "Permanently deleted."
-        : Removal == FolderRemoval.Recycled ? "Moved to the Recycle Bin."
+    public string SizeNote => Removal == EntryRemoval.Deleted ? "Permanently deleted."
+        : Removal == EntryRemoval.Recycled ? "Moved to the Recycle Bin."
         : Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size." : Entry.IsShared
         ? $"This object has multiple observed names. Its {SizeText.Format(Entry.AllocatedBytes)} allocation is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
         : Entry.IsIncomplete ? "This branch is incomplete. Sizes show only metadata that was read." : "";
@@ -63,7 +63,7 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     private readonly record struct Position(int Link, int Depth);
     private readonly List<Position> _visible = [new(-1, 0)];
     private readonly HashSet<int> _expanded = [];
-    private readonly Dictionary<int, FolderRemoval> _removed = [];
+    private readonly Dictionary<int, EntryRemoval> _removed = [];
     public ScanSnapshot Scan { get; } = scan;
     public int Count => _visible.Count;
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
@@ -75,8 +75,8 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     }
     public int Find(int link) => _visible.FindIndex(position => position.Link == link);
     public bool IsExpanded(int link) => _expanded.Contains(link);
-    public FolderRemoval? RemovalFor(int link) => _removed.TryGetValue(link, out var removal) ? removal : null;
-    public IEnumerable<KeyValuePair<int, FolderRemoval>> RemovedLinks => _removed;
+    public EntryRemoval? RemovalFor(int link) => _removed.TryGetValue(link, out var removal) ? removal : null;
+    public IEnumerable<KeyValuePair<int, EntryRemoval>> RemovedLinks => _removed;
     public bool IsInRemovedBranch(int link)
     {
         if (_removed.Count == 0) return false;
@@ -90,7 +90,7 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
         return false;
     }
 
-    public void MarkRemoved(int link, FolderRemoval removal)
+    public void MarkRemoved(int link, EntryRemoval removal)
     {
         if (_removed.ContainsKey(link)) return;
         Collapse(link);

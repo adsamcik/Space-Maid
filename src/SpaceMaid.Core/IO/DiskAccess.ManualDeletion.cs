@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 using SpaceMaid.Core.Scanning;
 
@@ -7,35 +8,14 @@ namespace SpaceMaid.Core.IO;
 
 public sealed partial class DiskAccess
 {
-    internal void DeleteUserConfirmedFolder(string path, FileIdentity identity, ulong volume, CancellationToken token,
+    internal void DeleteUserConfirmedEntry(string path, bool isDirectory, FileIdentity identity, ulong volume, CancellationToken token,
         Action? mutationStarted)
     {
-        token.ThrowIfCancellationRequested();
-        var leases = new Stack<SafeFileHandle>();
+        using var ancestors = HoldDeletionAncestors(path, volume, ignoreCase: isDirectory, token);
         var folders = new Stack<(SafeFileHandle Handle, FileAttributes Attributes, IEnumerator<DirectoryMember> Children)>();
         try
         {
-            // Beyond the drive root, resolve one name at a time against a held
-            // directory. An ancestor's path is never resolved again.
-            string drive = Path.GetPathRoot(path)!;
-            string[] names = path[drive.Length..].Split(Path.DirectorySeparatorChar);
-            using var driveHandle = OpenPermanentDeleteHandle(drive, 0x81, 3); // LIST_DIRECTORY | READ_ATTRIBUTES
-            var driveMetadata = InspectPermanentDeleteHandle(driveHandle);
-            CheckPermanentDeleteAttributes(driveMetadata.Attributes, directory: true);
-            if (driveMetadata.Volume != volume) throw new IOException("The confirmed folder's drive has changed.");
-            var parent = driveHandle;
-            foreach (string name in names.AsSpan(0, names.Length - 1))
-            {
-                token.ThrowIfCancellationRequested();
-                var lease = OpenDeletionChild(parent, name, 0x81, ignoreCase: true);
-                leases.Push(lease);
-                var metadata = InspectPermanentDeleteHandle(lease);
-                CheckPermanentDeleteAttributes(metadata.Attributes, directory: true);
-                if (metadata.Volume != volume) throw new IOException("The confirmed folder's drive has changed.");
-                parent = lease;
-            }
-
-            OpenEntry(parent, new(names[^1], FileAttributes.Directory), isRoot: true);
+            OpenEntry(ancestors.Parent, new(Path.GetFileName(path), isDirectory ? FileAttributes.Directory : FileAttributes.Normal), isRoot: true);
             while (folders.TryPeek(out var folder))
             {
                 token.ThrowIfCancellationRequested();
@@ -52,7 +32,7 @@ public sealed partial class DiskAccess
 
             try { GetAttributes(NativeMethods.ExtendedPath(path)); }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
-            throw new IOException("The original folder path is still present. Recheck the location.");
+            throw new IOException("The original item is still present. Recheck the location.");
         }
         finally
         {
@@ -61,7 +41,6 @@ public sealed partial class DiskAccess
                 folder.Children.Dispose();
                 folder.Handle.Dispose();
             }
-            while (leases.TryPop(out var lease)) lease.Dispose();
         }
 
         void OpenEntry(SafeFileHandle parent, DirectoryMember member, bool isRoot)
@@ -72,7 +51,7 @@ public sealed partial class DiskAccess
             bool descend = (member.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint))
                 == FileAttributes.Directory;
             var handle = OpenDeletionChild(parent, member.Name, deleteAndReadAttributes | (descend ? listDirectory : 0),
-                ignoreCase: isRoot);
+                ignoreCase: isRoot && isDirectory);
             bool held = false;
             try
             {
@@ -80,8 +59,8 @@ public sealed partial class DiskAccess
                 if (entry.Volume != volume) throw new IOException("An entry is on a different drive.");
                 bool directory = (entry.Attributes & FileAttributes.Directory) != 0;
                 bool reparse = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-                if (isRoot && (!directory || reparse || entry.Identity != identity))
-                    throw new IOException("This folder changed after confirmation. Recheck it before deleting.");
+                if (isRoot && (directory != isDirectory || reparse || entry.Identity != identity))
+                    throw new IOException("This item changed after confirmation. Recheck it before deleting.");
                 if ((entry.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint))
                     != (member.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)))
                     throw new IOException("An entry changed while deleting the folder. Recheck the location.");
@@ -105,6 +84,83 @@ public sealed partial class DiskAccess
                 MarkReadOnlyEntryForDeletion(handle);
             else MarkPermanentDelete(handle);
         }
+    }
+
+    internal IDisposable HoldFileRecyclePath(string path, FileIdentity identity, ulong volume, CancellationToken token, out string shellPath)
+    {
+        var ancestors = HoldDeletionAncestors(path, volume, ignoreCase: false, token);
+        try
+        {
+            using var file = OpenDeletionChild(ancestors.Parent, Path.GetFileName(path), 0x80, ignoreCase: false);
+            var entry = InspectPermanentDeleteHandle(file);
+            if (entry.Identity != identity || entry.Volume != volume
+                || (entry.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("This file changed after confirmation. Recheck it before recycling.");
+
+            // The Shell returns canonical spelling. Obtain it from the exact
+            // opened link so the callback can use an ordinal comparison even
+            // where two names differ only in case.
+            string finalPath = ReadFinalDosPath(file);
+            if (!finalPath.StartsWith(@"\\?\", StringComparison.Ordinal)
+                || !finalPath.AsSpan(4).Equals(path.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Windows resolved this file to a different path. Recheck it before recycling.");
+            shellPath = finalPath[4..];
+            return ancestors;
+        }
+        catch
+        {
+            ancestors.Dispose();
+            throw;
+        }
+    }
+
+    private DeletionAncestors HoldDeletionAncestors(string path, ulong volume, bool ignoreCase, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        // Resolve each name against a held directory and deny renames while
+        // Windows or the handle-based deleter operates on the selected item.
+        string drive = Path.GetPathRoot(path)!;
+        string[] names = path[drive.Length..].Split(Path.DirectorySeparatorChar);
+        const uint listAndReadAttributes = 0x81;
+        var ancestors = new DeletionAncestors();
+        try
+        {
+            ancestors.Add(OpenPermanentDeleteHandle(drive, listAndReadAttributes, 3));
+            ValidateAncestor(ancestors.Parent);
+            foreach (string name in names.AsSpan(0, names.Length - 1))
+            {
+                token.ThrowIfCancellationRequested();
+                ancestors.Add(OpenDeletionChild(ancestors.Parent, name, listAndReadAttributes, ignoreCase));
+                ValidateAncestor(ancestors.Parent);
+            }
+            return ancestors;
+        }
+        catch
+        {
+            ancestors.Dispose();
+            throw;
+        }
+
+        void ValidateAncestor(SafeFileHandle handle)
+        {
+            var metadata = InspectPermanentDeleteHandle(handle);
+            CheckPermanentDeleteAttributes(metadata.Attributes, directory: true);
+            if (metadata.Volume != volume) throw new IOException("The confirmed item's drive has changed.");
+        }
+    }
+
+    private static string ReadFinalDosPath(SafeFileHandle handle)
+    {
+        var path = new StringBuilder(512);
+        uint length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
+        if (length >= path.Capacity)
+        {
+            path.Capacity = checked((int)length + 1);
+            length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
+            if (length >= path.Capacity) throw new IOException("The file path changed while Windows was resolving it.");
+        }
+        if (length == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        return path.ToString();
     }
 
     private IEnumerable<DirectoryMember> ReadDeletionDirectory(SafeFileHandle handle)
@@ -180,6 +236,17 @@ public sealed partial class DiskAccess
 
     private readonly record struct DirectoryMember(string Name, FileAttributes Attributes);
 
+    private sealed class DeletionAncestors : IDisposable
+    {
+        private readonly Stack<SafeFileHandle> _handles = new();
+        public SafeFileHandle Parent => _handles.Peek();
+        public void Add(SafeFileHandle handle) => _handles.Push(handle);
+        public void Dispose()
+        {
+            while (_handles.TryPop(out var handle)) handle.Dispose();
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private unsafe struct DeletionUnicodeString
     {
@@ -203,4 +270,7 @@ public sealed partial class DiskAccess
 
     [DllImport("ntdll.dll", ExactSpelling = true)]
     private static extern uint RtlNtStatusToDosError(int status);
+
+    [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint capacity, uint flags);
 }

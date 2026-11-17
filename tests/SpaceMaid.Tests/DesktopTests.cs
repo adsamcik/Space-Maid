@@ -110,8 +110,8 @@ public sealed partial class DesktopTests
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "folder-deletion")
                 {
-                    BeginWorkflow("Manual folder deletion");
-                    CheckPermanentFolderDeletion(window, app, FindRepository());
+                    BeginWorkflow("Explore file and folder deletion");
+                    CheckExploreDeletion(window, app, FindRepository());
                     return;
                 }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "sidebar")
@@ -492,7 +492,7 @@ public sealed partial class DesktopTests
                 string? menuConfirmationPath = null;
                 var menuTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
-                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
+                    var dialog = app.Windows.OfType<RecycleEntryWindow>().FirstOrDefault();
                     if (dialog is null) return;
                     menuConfirmationPath = ((TextBox)dialog.FindName("TargetPath")).Text;
                     dialog.Close();
@@ -551,7 +551,7 @@ public sealed partial class DesktopTests
                 bool confirmed = false;
                 var confirmationTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
-                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
+                    var dialog = app.Windows.OfType<RecycleEntryWindow>().FirstOrDefault();
                     if (dialog is null) return;
                     try
                     {
@@ -598,7 +598,7 @@ public sealed partial class DesktopTests
                 Task? backgroundBrowse = null;
                 NotifyCollectionChangedEventHandler observeRecycle = (_, change) =>
                 {
-                    if (change.NewItems is not { Count: 1 } || change.NewItems[0] is not ExplorerRow { Removal: FolderRemoval.Recycled } removed) return;
+                    if (change.NewItems is not { Count: 1 } || change.NewItems[0] is not ExplorerRow { Removal: EntryRemoval.Recycled } removed) return;
                     _ = window.Dispatcher.InvokeAsync(() =>
                     {
                         try
@@ -622,10 +622,10 @@ public sealed partial class DesktopTests
                 originalRows.CollectionChanged += observeRecycle;
                 var approveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(10), DispatcherPriority.Background, (_, _) =>
                 {
-                    var dialog = app.Windows.OfType<RecycleFolderWindow>().FirstOrDefault();
+                    var dialog = app.Windows.OfType<RecycleEntryWindow>().FirstOrDefault();
                     if (dialog is not null) ((Button)dialog.FindName("RecycleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 }, Dispatcher.CurrentDispatcher);
-                var recycleTask = window.DeleteSelectedFolderAsync();
+                var recycleTask = window.DeleteSelectedEntryAsync();
                 PumpUntil(() => recycleTask.IsCompleted, TimeSpan.FromSeconds(10));
                 approveTimer.Stop();
                 originalRows.CollectionChanged -= observeRecycle;
@@ -769,7 +769,7 @@ public sealed partial class DesktopTests
                 var unrelatedRefresh = window.RecheckFolderAsync(project);
                 PumpUntil(() => unrelatedRefresh.IsCompleted, TimeSpan.FromSeconds(10)); unrelatedRefresh.GetAwaiter().GetResult();
                 Assert.True((bool)typeof(MainWindow).GetField("_selectionIsGroup", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!);
-                Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
+                Assert.Null(window.DeleteSelectedEntryAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 Assert.True(Directory.Exists(groupedRoot));
 
@@ -782,7 +782,7 @@ public sealed partial class DesktopTests
                 CheckToolCaches(app, artifactRoot);
                 BeginWorkflow("managed worktree lifecycle");
                 CheckWorktreeLifecycle(app, artifactRoot);
-                var recyclePreview = new RecycleFolderWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
+                var recyclePreview = new RecycleEntryWindow(FolderDeletionTarget.FromScan(scan, scan.FindEntry(bin)!.Value));
 #pragma warning disable WPF0001 // Exercise the same Fluent theme through its experimental C# API in this smoke test only.
                 foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
                 {
@@ -909,13 +909,13 @@ public sealed partial class DesktopTests
                 Assert.Null(groupedTile.ContextMenu);
                 groupedTile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(() => ((Grid)window.FindName("ExplorePanel")).IsEnabled, TimeSpan.FromSeconds(10));
-                var groupedDelete = window.DeleteSelectedFolderAsync();
+                var groupedDelete = window.DeleteSelectedEntryAsync();
                 Assert.Null(groupedDelete.GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 var groupedSort = window.SortTreeAsync(ScanSortColumn.Name);
                 PumpUntil(() => groupedSort.IsCompleted, TimeSpan.FromSeconds(10));
                 groupedSort.GetAwaiter().GetResult();
-                Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
+                Assert.Null(window.DeleteSelectedEntryAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 SetStage("disabling recycling on a drive-root context menu");
                 RightClick(window, Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(0)));
@@ -943,10 +943,10 @@ public sealed partial class DesktopTests
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
                 Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("BackendStatusText")).Visibility);
                 Assert.Empty(tree.ContextMenu.Items.Cast<object>());
-                int dialogsBefore = app.Windows.OfType<RecycleFolderWindow>().Count();
+                int dialogsBefore = app.Windows.OfType<RecycleEntryWindow>().Count();
                 capturedRecycle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 Assert.True(scanButton.IsEnabled);
-                Assert.Equal(dialogsBefore, app.Windows.OfType<RecycleFolderWindow>().Count()); // An older scan's menu cannot delete a current target.
+                Assert.Equal(dialogsBefore, app.Windows.OfType<RecycleEntryWindow>().Count()); // An older scan's menu cannot delete a current target.
 
                 BeginWorkflow("Photos");
                 CheckPhotos(window, app, fixture, artifactRoot, SetStage);
@@ -1035,7 +1035,7 @@ public sealed partial class DesktopTests
                 Assert.True(groupedRows.IsExpanded(-1));
                 Assert.Equal(@"G:\Github", Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 Assert.True(Assert.IsType<ExplorerRow>(tree.SelectedItem).Expanded);
-                Assert.Null(window.DeleteSelectedFolderAsync().GetAwaiter().GetResult());
+                Assert.Null(window.DeleteSelectedEntryAsync().GetAwaiter().GetResult());
                 Assert.Contains("Grouped entries cannot be deleted", ((TextBlock)window.FindName("StatusText")).Text);
                 SetStage("keeping the initial sort visible after column changes and basic scanning");
                 CheckVisibleInitialSort(window);
@@ -1072,8 +1072,8 @@ public sealed partial class DesktopTests
                 BeginWorkflow("Recycle Bin and helper lifecycle");
                 SetStage("confirming selected-drive Recycle Bin cleanup without deleting real bin contents");
                 CheckRecycleBinCleanup(window, app, artifactRoot);
-                BeginWorkflow("Manual folder deletion");
-                CheckPermanentFolderDeletion(window, app, artifactRoot);
+                BeginWorkflow("Explore file and folder deletion");
+                CheckExploreDeletion(window, app, artifactRoot);
                 SetStage("retaining one helper across app scans and closing it with the window");
                 var helperStart = HelperLayoutSource.CreateAsync(false);
                 PumpUntil(() => helperStart.IsCompleted, TimeSpan.FromSeconds(10));

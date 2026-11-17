@@ -1,4 +1,4 @@
-<Window x:Class="SpaceMaid.App.RecycleFolderWindow"
+<Window x:Class="SpaceMaid.App.RecycleEntryWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Recycle folder" Width="520" SizeToContent="Height" ResizeMode="NoResize"
@@ -10,7 +10,7 @@
             <StackPanel>
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
+                    <TextBlock x:Name="TargetIcon" Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
                     <TextBlock x:Name="TargetName" Grid.Column="1" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0" />
                     <TextBlock x:Name="TargetSize" Grid.Column="2" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
                 </Grid>

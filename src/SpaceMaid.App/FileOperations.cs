@@ -50,13 +50,13 @@ internal sealed partial class FileOperations(Func<INtfsLayoutSource?>? ntfsSourc
         IProgress<OpportunityValidationProgress>? progress = null)
         => _disk.ReviewCleanupAsync(scan, selected, token, diagnostic, discover, progress);
 
-    public Task<FolderDeletionTarget> PrepareRecycleAsync(ScanSnapshot scan, int link, CancellationToken token)
-        => Task.Run(() => FolderDeletionTarget.FromScan(scan, link, Files), token);
+    public Task<DeletionTarget> PrepareExploreDeletionAsync(ScanSnapshot scan, int link, CancellationToken token)
+        => Task.Run(() => DeletionTarget.FromExploreSelection(scan, link, Files), token);
 
-    public Task<RecycleResult> RecycleAsync(FolderDeletionTarget target, nint owner, CancellationToken token,
+    public Task<RecycleResult> RecycleAsync(DeletionTarget target, nint owner, CancellationToken token,
         Action<string, object>? diagnostic = null) => FolderRecycler.RecycleAsync(target, owner, token, diagnostic);
 
-    public Task DeleteFolderPermanentlyAsync(FolderDeletionTarget target, CancellationToken token, Action mutationStarted)
+    public Task DeletePermanentlyAsync(DeletionTarget target, CancellationToken token, Action mutationStarted)
         => CleanupMutationLease.RunAsync(() => Task.Run(() => target.DeleteManually(token, mutationStarted), token), token);
 
     public Task<CleanupBatchResult> ExecuteCleanupAsync(CleanupPlan plan, nint owner,

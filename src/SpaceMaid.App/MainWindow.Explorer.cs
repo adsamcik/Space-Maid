@@ -19,7 +19,7 @@ public partial class MainWindow
     private int _browseVersion;
     private bool _browsing, _syncTree, _selectionIsGroup;
     private int _selectedLink = -1;
-    private bool CanBrowseExplorer => !_closing && (_work is null || _removingFolder);
+    private bool CanBrowseExplorer => !_closing && (_work is null || _removingEntry);
 
     private void ClearExplorer()
     {
@@ -89,7 +89,7 @@ public partial class MainWindow
 
     private async Task<PreparedExplorer> PrepareExplorerRefreshAsync(ScanSnapshot scan,
         IReadOnlyList<Opportunity> opportunities, string[] expanded, string selected,
-        ScanSortColumn column, bool descending, IReadOnlyList<(int Link, FolderRemoval Removal)> removed, CancellationToken token)
+        ScanSortColumn column, bool descending, IReadOnlyList<(int Link, EntryRemoval Removal)> removed, CancellationToken token)
     {
         await _classificationReady.WaitAsync(token);
         return await Task.Run(() =>
@@ -108,9 +108,13 @@ public partial class MainWindow
                     || scan.IsUnmeasuredDirectory(entry.FileIndex)) continue;
                 rows.Expand(link, PreparedChildOrder(scan, entry.FileIndex, childOrders, column, descending, token));
             }
-            while (scan.FindEntry(selected) is null
-                && Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(selected)) is { } parent) selected = parent;
-            int selection = scan.FindEntry(selected) ?? -1;
+            int selection = -1;
+            for (string? path = selected; path is not null; path = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)))
+            {
+                if (scan.FindEntry(path) is not { } link || scan.EntryPath(link) != path) continue;
+                selection = link;
+                break;
+            }
             var presentation = PrepareEntry(scan, rows, selection, kinds, childOrders, mapOrders, column, descending, token);
             token.ThrowIfCancellationRequested();
             return new PreparedExplorer(rows, kinds, childOrders, mapOrders, presentation);
@@ -324,7 +328,7 @@ public partial class MainWindow
         if (ItemsControl.ContainerFromElement(SpaceTree, e.OriginalSource as DependencyObject) is ListBoxItem item)
         {
             _selectionIsGroup = false;
-            if (e.ChangedButton == MouseButton.Right && item.DataContext is ExplorerRow row && CanUseFolderMenu(row.Scan))
+            if (e.ChangedButton == MouseButton.Right && item.DataContext is ExplorerRow row && CanOpenEntryMenu(row.Scan))
             {
                 // Avoid ListBox selection triggering async navigation before menu opening.
                 e.Handled = SelectContextEntry(row.Scan, row.Entry.LinkIndex);

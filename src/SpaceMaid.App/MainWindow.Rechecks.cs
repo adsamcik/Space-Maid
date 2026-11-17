@@ -27,7 +27,7 @@ public partial class MainWindow
 
     internal async Task RecheckFolderAsync(string path)
     {
-        if (_snapshot is not { } scan || !CanUseFolderMenu(scan)) return;
+        if (_snapshot is not { } scan || !CanOpenEntryMenu(scan)) return;
         using var work = new CancellationTokenSource();
         using var log = StartActionLog("recheck", path);
         _work = work; SetBusy(true);
@@ -55,7 +55,7 @@ public partial class MainWindow
     {
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
         string? detailPath = OpportunityBrowser?.Detail?.Path;
-        if (!_removingFolder) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
+        if (!_removingEntry) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();
         var timer = Stopwatch.StartNew();
@@ -82,7 +82,7 @@ public partial class MainWindow
             var column = _treeSortColumn;
             bool descending = _treeDescending;
             var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
-                expanded, selected, column, descending, retainedRemoved, _removingFolder ? token : CancellationToken.None);
+                expanded, selected, column, descending, retainedRemoved, _removingEntry ? token : CancellationToken.None);
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             // A browse completed against the earlier inventory while the tree
             // was prepared. Build its presentation from the user's latest view.
@@ -124,9 +124,9 @@ public partial class MainWindow
         RestoreTreeViewport(viewport);
     }
 
-    private List<(int Link, FolderRemoval Removal)> RetainRemovedRows(ScanSnapshot updated, IReadOnlyList<ScanRecheckRequest> requests)
+    private List<(int Link, EntryRemoval Removal)> RetainRemovedRows(ScanSnapshot updated, IReadOnlyList<ScanRecheckRequest> requests)
     {
-        var retained = new List<(int, FolderRemoval)>();
+        var retained = new List<(int, EntryRemoval)>();
         if (_explorer is not { } rows) return retained;
         foreach (var (oldLink, removal) in rows.RemovedLinks)
         {
@@ -158,7 +158,7 @@ public partial class MainWindow
     private async void DrainExplorerRecheck()
     {
         if (_openingPath || !_explorerReturnPending) return;
-        if (_explorerRecheckPath is not { } path || _snapshot is not { } scan || !CanUseFolderMenu(scan)) return;
+        if (_explorerRecheckPath is not { } path || _snapshot is not { } scan || !CanOpenEntryMenu(scan)) return;
         _explorerRecheckPath = null; _explorerReturnPending = false;
         await RecheckFolderAsync(path);
     }

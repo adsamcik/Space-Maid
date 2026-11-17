@@ -14,8 +14,8 @@ namespace SpaceMaid.App;
 
 public partial class MainWindow
 {
-    private bool _removingFolder, _scanStale;
-    private Task? _folderRemovalTask;
+    private bool _removingEntry, _scanStale;
+    private Task? _entryRemovalTask;
 
     private async void Explore_KeyDown(object sender, KeyEventArgs e)
     {
@@ -27,23 +27,27 @@ public partial class MainWindow
              source = VisualTreeHelper.GetParent(source))
             if (source is TextBoxBase) return;
         e.Handled = true;
-        await DeleteSelectedFolderAsync(permanent: modifiers == ModifierKeys.Shift);
+        await DeleteSelectedEntryAsync(permanent: modifiers == ModifierKeys.Shift);
     }
 
-    internal Task<RecycleResult?> DeleteSelectedFolderAsync(bool permanent = false)
+    internal Task<RecycleResult?> DeleteSelectedEntryAsync(bool permanent = false)
     {
-        if (_snapshot is not { } scan || !CanUseFolderMenu(scan)) return Task.FromResult<RecycleResult?>(null);
+        if (_snapshot is not { } scan || !CanOpenEntryMenu(scan)) return Task.FromResult<RecycleResult?>(null);
         if (_selectionIsGroup)
         {
-            StatusText.Text = "Grouped entries cannot be deleted. Select an exact folder in the tree.";
+            StatusText.Text = "Grouped entries cannot be deleted. Select an individual file or folder in the tree.";
             return Task.FromResult<RecycleResult?>(null);
         }
-        return DeleteFolderAsync(scan, _selectedLink, permanent);
+        return DeleteEntryAsync(scan, _selectedLink, permanent);
     }
 
-    private async Task<RecycleResult?> DeleteFolderAsync(ScanSnapshot scan, int link, bool permanent = false)
+    private async Task<RecycleResult?> DeleteEntryAsync(ScanSnapshot scan, int link, bool permanent = false)
     {
-        if (!CanUseFolderEntry(scan, link)) return null;
+        if (!CanUseEntryMenu(scan, link)) return null;
+        bool isDirectory = scan.Entry(link).IsDirectory;
+        string kind = isDirectory ? "folder" : "file";
+        string kindLabel = isDirectory ? "Folder" : "File";
+        string mayHaveMoved = isDirectory ? "Some contents may already have moved." : "The file may already have moved.";
         using var work = new CancellationTokenSource();
         using var log = StartActionLog(permanent ? "delete-permanently" : "recycle", scan.EntryPath(link) ?? scan.RootPath);
         _work = work;
@@ -55,12 +59,12 @@ public partial class MainWindow
         try
         {
             SetBusy(true);
-            StatusText.Text = "Checking selected folder…";
-            var target = await Operations.PrepareRecycleAsync(scan, link, work.Token);
+            StatusText.Text = $"Checking selected {kind}…";
+            var target = await Operations.PrepareExploreDeletionAsync(scan, link, work.Token);
             if (_closing || work.IsCancellationRequested || !ReferenceEquals(_snapshot, scan)) return null;
             if (!Confirm(target)) return null;
             string name = scan.Entry(link).Name;
-            _removingFolder = true;
+            _removingEntry = true;
             ExplorePanel.IsEnabled = true;
             string parent = Path.GetDirectoryName(target.Path)!;
             requests.Add(new(link == -1 ? scan.RootPath : parent, link == -1));
@@ -76,24 +80,23 @@ public partial class MainWindow
                 try
                 {
                     var recycleTask = Operations.RecycleAsync(target, new WindowInteropHelper(this).Handle, work.Token, diagnostic: log.Record);
-                    _folderRemovalTask = recycleTask;
+                    _entryRemovalTask = recycleTask;
                     outcome = await recycleTask;
                     log.Record("recycle-result", outcome);
                 }
                 catch (RecycleUnavailableException error)
                 {
                     started = false;
-                    _folderRemovalTask = null;
+                    _entryRemovalTask = null;
                     recycleMayHaveMoved = error.MayHaveMoved;
                     if (!recycleMayHaveMoved) requests.Remove(binScope);
                     log.Record("recycle-unavailable", new { target.Path, error.MayHaveMoved });
                     permanent = true;
-                    var warning = "Windows can’t move this folder to the Recycle Bin.";
-                    if (recycleMayHaveMoved) warning += " Some contents may already have moved.";
+                    string warning = recycleMayHaveMoved ? $"{error.Message} {mayHaveMoved}" : error.Message;
                     if (_closing || work.IsCancellationRequested || !Confirm(target, warning))
                     {
                         if (!_closing && recycleMayHaveMoved)
-                            MarkPartial("Recycling stopped. Some contents may already have moved. Recheck the folder.");
+                            MarkPartial($"Recycling stopped. {mayHaveMoved} Recheck the folder.");
                         return null;
                     }
                 }
@@ -101,8 +104,8 @@ public partial class MainWindow
             if (permanent)
             {
                 StatusText.Text = $"Permanently deleting {name}…";
-                _folderRemovalTask = Operations.DeleteFolderPermanentlyAsync(target, work.Token, () => started = true);
-                await _folderRemovalTask;
+                _entryRemovalTask = Operations.DeletePermanentlyAsync(target, work.Token, () => started = true);
+                await _entryRemovalTask;
                 deleted = true;
                 log.Record("permanent-delete-completed", new { target.Path });
             }
@@ -113,7 +116,7 @@ public partial class MainWindow
                     requests.Remove(binScope);
                     requests.Add(new(recycleRoot, false));
                     requests.Add(new(Path.GetDirectoryName(destination)!, false));
-                    requests.Add(new(destination));
+                    if (isDirectory) requests.Add(new(destination));
                 }
                 string completed = deleted ? $"Permanently deleted {name}." : $"Moved {name} to the Recycle Bin.";
                 string note = deleted ? completed : completed + " Empty the bin to free space.";
@@ -125,7 +128,7 @@ public partial class MainWindow
                     if (_closing || !ReferenceEquals(_snapshot, scan)) return outcome;
                     _staleScopes.RemoveWhere(scope => scope.Path.Equals(target.Path, StringComparison.Ordinal)
                         || scope.Path.StartsWith(target.Path + "\\", StringComparison.Ordinal));
-                    MarkExplorerFolderRemoved(link, deleted ? FolderRemoval.Deleted : FolderRemoval.Recycled);
+                    MarkExplorerEntryRemoved(link, deleted ? EntryRemoval.Deleted : EntryRemoval.Recycled);
                     await Dispatcher.Yield(DispatcherPriority.Background);
                     if (_closing || !ReferenceEquals(_snapshot, scan)) return outcome;
                     if (link == -1 || !scan.HasAllocationData)
@@ -137,9 +140,9 @@ public partial class MainWindow
                 }
                 else
                 {
-                    note = "Recycling cancelled. Some contents may already have moved.";
+                    note = $"Recycling cancelled. {mayHaveMoved}";
                     StatusText.Text = "Recycling cancelled. Updating scan results…";
-                    if (link != -1 && await Task.Run(() => Operations.Files.DirectoryExists(target.Path), work.Token))
+                    if (isDirectory && link != -1 && await Task.Run(() => Operations.Files.DirectoryExists(target.Path), work.Token))
                         requests.Add(new(target.Path));
                 }
                 await RefreshAffectedAsync(scan, requests, note, work.Token, log);
@@ -151,13 +154,14 @@ public partial class MainWindow
             if (!_closing)
             {
                 if (deleted || outcome is { Cancelled: false })
-                    MarkScanStale((deleted ? "Folder permanently deleted." : "Folder moved to the Recycle Bin.")
+                    MarkScanStale((deleted ? $"{kindLabel} permanently deleted." : $"{kindLabel} moved to the Recycle Bin.")
                         + " Refresh cancelled. Recheck to update results.", requests);
                 else if (started || recycleMayHaveMoved)
                     MarkPartial(permanent && started
-                        ? "Deletion stopped. Some items may already be permanently deleted. Recheck or rescan to update results."
-                        : "Recycling stopped. Some contents may already have moved. Recheck or rescan to update results.");
-                else StatusText.Text = "Cancelled. Folder unchanged.";
+                        ? isDirectory ? "Deletion stopped. Some items may already be permanently deleted. Recheck or rescan to update results."
+                            : "Deletion stopped. Recheck the folder to see whether the file is still present."
+                        : $"Recycling stopped. {mayHaveMoved} Recheck or rescan to update results.");
+                else StatusText.Text = $"Cancelled. {kindLabel} unchanged.";
             }
             return outcome;
         }
@@ -167,12 +171,12 @@ public partial class MainWindow
             if (!_closing)
             {
                 bool completed = deleted || outcome is { Cancelled: false };
-                string message = completed ? (deleted ? "Folder permanently deleted." : "Folder moved to the Recycle Bin.")
+                string message = completed ? (deleted ? $"{kindLabel} permanently deleted." : $"{kindLabel} moved to the Recycle Bin.")
                     + " Refresh failed. Recheck to update results." : permanent
-                    ? $"Could not finish deleting the folder. {ex.Message}" : $"Could not recycle the folder: {ex.Message}";
-                if (permanent && started && !completed)
+                    ? $"Could not finish deleting the {kind}. {ex.Message}" : $"Could not recycle the {kind}: {ex.Message}";
+                if (permanent && started && !completed && isDirectory)
                     message = "Deletion was incomplete. Some items may already be permanently deleted. " + ex.Message;
-                log.Record(completed ? "folder-refresh-failed" : "folder-action-failed", new { Error = ex.ToString(), permanent, started });
+                log.Record(completed ? "entry-refresh-failed" : "entry-action-failed", new { Error = ex.ToString(), permanent, started });
                 if (completed) MarkScanStale(message, requests);
                 else if (started || recycleMayHaveMoved) MarkPartial(message + " Recheck or rescan to update results.");
                 else StatusText.Text = message;
@@ -181,28 +185,28 @@ public partial class MainWindow
         }
         finally
         {
-            _folderRemovalTask = null;
-            _work = null; _removingFolder = false;
+            _entryRemovalTask = null;
+            _work = null; _removingEntry = false;
             if (!_closing) { ShowActionLogError(log); SetBusy(false); }
         }
 
-        bool Confirm(FolderDeletionTarget target, string? recycleWarning = null)
+        bool Confirm(DeletionTarget target, string? recycleWarning = null)
         {
-            var confirmation = new RecycleFolderWindow(target, permanent, recycleWarning) { Owner = this };
+            var confirmation = new RecycleEntryWindow(target, permanent, recycleWarning) { Owner = this };
             if (confirmation.ShowDialog() == true && !_closing && !work.IsCancellationRequested) return true;
-            log.Record("folder-confirmation-cancelled", new { target.Path, permanent });
-            if (!_closing) StatusText.Text = "Folder unchanged.";
+            log.Record("entry-confirmation-cancelled", new { target.Path, permanent });
+            if (!_closing) StatusText.Text = $"{kindLabel} unchanged.";
             return false;
         }
 
         void MarkPartial(string message)
         {
-            if (permanent && link != -1) requests.Add(new(scan.EntryPath(link)!));
+            if (isDirectory && permanent && link != -1) requests.Add(new(scan.EntryPath(link)!));
             MarkScanStale(message, requests);
         }
     }
 
-    private void MarkExplorerFolderRemoved(int link, FolderRemoval removal)
+    private void MarkExplorerEntryRemoved(int link, EntryRemoval removal)
     {
         if (_explorer is not { } explorer) return;
         bool expanded = explorer.IsExpanded(link);

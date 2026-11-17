@@ -134,7 +134,7 @@ public partial class MainWindow
             button.ContextMenu = new ContextMenu();
             button.ContextMenuOpening += (_, args) =>
             {
-                if (!PrepareFolderMenu(button.ContextMenu, scan, contribution.Link)) args.Handled = true;
+                if (!PrepareEntryMenu(button.ContextMenu, scan, contribution.Link)) args.Handled = true;
             };
         }
         button.Click += async (_, _) =>
