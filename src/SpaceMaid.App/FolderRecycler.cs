@@ -9,6 +9,11 @@ namespace SpaceMaid.App;
 #endif
 
 internal sealed record RecycleResult(bool Cancelled, string? RecycledPath);
+internal sealed class RecycleUnavailableException(bool mayHaveMoved)
+    : IOException("Windows cannot move this folder to the Recycle Bin.")
+{
+    public bool MayHaveMoved { get; } = mayHaveMoved;
+}
 
 // Windows owns the Recycle Bin. Run its silent COM operation on a dedicated
 // STA; the cleanup run owns progress, cancellation and error presentation.
@@ -69,11 +74,12 @@ internal static class FolderRecycler
             {
                 target.Path, HResult = $"0x{result:X8}", ItemHResult = $"0x{sink.Result:X8}",
                 aborted, sink.CallbackCount, sink.RootCompleted, sink.RecycledPath,
-                sink.CannotRecycle, sink.ValidationError
+                sink.CannotRecycle, sink.TransferAllowed, sink.ValidationError
             });
-            if (sink.CannotRecycle)
-                throw new IOException("Windows cannot recycle this folder. Check this drive's Recycle Bin settings. Permanent deletion was blocked.");
             if (sink.ValidationError is { } validation) throw new IOException(validation);
+            if (!token.IsCancellationRequested && sink.RecycledPath is null
+                && (sink.CannotRecycle || IsRecycleUnavailable(result) || IsRecycleUnavailable(sink.Result)))
+                throw new RecycleUnavailableException(sink.TransferAllowed);
             if (token.IsCancellationRequested || IsCancellation(result) || IsCancellation(sink.Result))
                 return new(true, sink.RecycledPath);
             ThrowIfFailed(result);
@@ -106,6 +112,9 @@ internal static class FolderRecycler
     private static bool IsCancellation(int result) => result is CancelledHResult
         or unchecked((int)0x80270000) or unchecked((int)0x80270001);
 
+    private static bool IsRecycleUnavailable(int result) => unchecked((uint)result) is
+        0x80270036 or 0x80270037 or 0x80270038 or 0x8027003A;
+
     private static void ThrowIfFailed(int result)
     {
         if (result >= 0) return;
@@ -130,6 +139,7 @@ internal static class FolderRecycler
         Action<string, object>? diagnostic, Action? validateContents) : IFileOperationProgressSink
     {
         public bool CannotRecycle { get; private set; }
+        public bool TransferAllowed { get; private set; }
         public string? ValidationError { get; private set; }
         public string? RecycledPath { get; private set; }
         public int Result { get; private set; }
@@ -154,6 +164,7 @@ internal static class FolderRecycler
                 // A recursive callback belongs to the operation already
                 // authorized for the root. Do not require the old root to
                 // still exist after Windows has moved it to the Recycle Bin.
+                TransferAllowed = true;
                 return 0;
             }
             catch (Exception ex) { ValidationError = ex.Message; return unchecked((int)0x80004005); }

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using SpaceMaid.App;
 using SpaceMaid.Core.Analysis;
 using SpaceMaid.Core.Scanning;
@@ -89,6 +90,71 @@ public sealed class DeletionTests
         Assert.Equal(0, FolderRecycler.DeletePermission(0x80, default));
         Assert.Equal(FolderRecycler.CancelledHResult, FolderRecycler.DeletePermission(0x80, new(true)));
     }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public async Task ManualDeletionHonorsCancellationAndKeepsAReplacementFolder()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "target")).FullName;
+        string file = Path.Join(folder, "keep.txt");
+        File.WriteAllText(file, "original");
+        var operations = new FileOperations();
+        var scan = await operations.MeasureFolderAsync(fixture.Path);
+        var target = await operations.PrepareRecycleAsync(scan, scan.FindEntry(folder)!.Value, default);
+        int starts = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await operations.DeleteFolderPermanentlyAsync(target, new(true), () => starts++));
+        Assert.Equal("original", File.ReadAllText(file));
+        Directory.Move(folder, folder + "-original");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(file, "replacement");
+        await Assert.ThrowsAsync<IOException>(() =>
+            operations.DeleteFolderPermanentlyAsync(target, default, () => starts++));
+        Assert.Equal(0, starts);
+        Assert.Equal("replacement", File.ReadAllText(file));
+        Assert.Equal("original", File.ReadAllText(Path.Join(folder + "-original", "keep.txt")));
+    }
+
+    [Fact]
+    [Trait("Stage", "System")]
+    public async Task ManualDeletionRemovesContentsAndLinksWithoutFollowingThem()
+    {
+        using var fixture = new TestDirectory();
+        string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "target")).FullName;
+        string outside = Directory.CreateDirectory(Path.Join(fixture.Path, "outside")).FullName;
+        string junction = Path.Join(folder, "linked-folder");
+        string original = Path.Join(outside, "read-only.txt");
+        File.WriteAllText(original, "keep me");
+        Assert.True(CreateHardLinkW(Path.Join(folder, "linked-file.txt"), original, 0));
+        File.SetAttributes(original, FileAttributes.ReadOnly);
+        try
+        {
+            await OpportunityReviewValidatorTests.CreateJunctionAsync(junction, outside);
+            string nested = Directory.CreateDirectory(Path.Join(folder, ".git", "objects")).FullName;
+            string name = new('n', 120);
+            for (int i = 0; i < 40; i++) File.WriteAllText(Path.Join(nested, name + i), "owned fixture");
+            File.WriteAllText(Path.Join(nested, name + "0:extra"), "named stream");
+            var operations = new FileOperations();
+            var scan = await operations.MeasureFolderAsync(fixture.Path);
+            var target = await operations.PrepareRecycleAsync(scan, scan.FindEntry(folder)!.Value, default);
+            int starts = 0;
+            await operations.DeleteFolderPermanentlyAsync(target, default, () => starts++);
+            Assert.Equal(1, starts);
+            Assert.False(Directory.Exists(folder));
+            Assert.Equal("keep me", File.ReadAllText(original));
+            Assert.True(File.GetAttributes(original).HasFlag(FileAttributes.ReadOnly));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+            File.SetAttributes(original, FileAttributes.Normal);
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string name, string existing, nint security);
 
     [Fact]
     public void UnresolvedAndReparseDirectorySelectionsAreRejected()

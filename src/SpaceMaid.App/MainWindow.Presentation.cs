@@ -25,7 +25,7 @@ public partial class MainWindow
         ScanSortColumn column, bool descending, CancellationToken token)
     {
         var selected = scan.Entry(link);
-        var folder = selected.IsDirectory && selected.IsPrimaryName && (selected.ParentIndex < 0 || !explorer.IsRecycled(link))
+        var folder = selected.IsDirectory && selected.IsPrimaryName && (selected.ParentIndex < 0 || explorer.RemovalFor(link) is null)
             ? selected : scan.Entry(scan.PrimaryLink(selected.ParentIndex));
         PreparedChildOrder(scan, folder.FileIndex, childOrders, column, descending, token);
         var children = MapOrder(folder.FileIndex);
@@ -60,7 +60,7 @@ public partial class MainWindow
         var (scan, selected, expanded, folder, childCount, contributions) = presentation;
         long total = folder.AttributedBytes(scan.HasAllocationData);
         EntryDetail.DataContext = new ExplorerRow(scan, selected, 0, expanded)
-            { IsRecycled = _explorer?.IsRecycled(selected.LinkIndex) == true };
+            { Removal = _explorer?.RemovalFor(selected.LinkIndex) };
         EntryDetail.Visibility = Visibility.Visible;
         ShowPath(scan.EntryPath(folder.LinkIndex)!);
         SelectedEntryPath.Visibility = scan.EntryPath(selected.LinkIndex) == _currentPath ? Visibility.Collapsed : Visibility.Visible;
@@ -146,7 +146,7 @@ public partial class MainWindow
             }
             else await BrowseAsync(async cancellation =>
             {
-                if (_explorer!.IsInRecycledBranch(folder.LinkIndex)) return;
+                if (_explorer!.IsInRemovedBranch(folder.LinkIndex)) return;
                 var ancestors = AncestorLinks(scan, folder.LinkIndex);
                 while (ancestors.TryPop(out int ancestor))
                     if (!_explorer!.IsExpanded(ancestor))

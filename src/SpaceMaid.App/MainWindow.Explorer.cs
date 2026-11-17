@@ -19,7 +19,7 @@ public partial class MainWindow
     private int _browseVersion;
     private bool _browsing, _syncTree, _selectionIsGroup;
     private int _selectedLink = -1;
-    private bool CanBrowseExplorer => !_closing && (_work is null || _recycling);
+    private bool CanBrowseExplorer => !_closing && (_work is null || _removingFolder);
 
     private void ClearExplorer()
     {
@@ -89,13 +89,13 @@ public partial class MainWindow
 
     private async Task<PreparedExplorer> PrepareExplorerRefreshAsync(ScanSnapshot scan,
         IReadOnlyList<Opportunity> opportunities, string[] expanded, string selected,
-        ScanSortColumn column, bool descending, IReadOnlyList<int> recycled, CancellationToken token)
+        ScanSortColumn column, bool descending, IReadOnlyList<(int Link, FolderRemoval Removal)> removed, CancellationToken token)
     {
         await _classificationReady.WaitAsync(token);
         return await Task.Run(() =>
         {
             var rows = new ExplorerRows(scan);
-            foreach (int link in recycled) rows.MarkRecycled(link);
+            foreach (var (link, removal) in removed) rows.MarkRemoved(link, removal);
             var kinds = OpportunityKinds(opportunities);
             var childOrders = new Dictionary<int, int[]>();
             var mapOrders = new Dictionary<int, int[]>();
@@ -260,7 +260,7 @@ public partial class MainWindow
 
     internal Task NavigateToEntryAsync(int link) => BrowseAsync(async token =>
     {
-        if (_explorer!.IsInRecycledBranch(link)) return;
+        if (_explorer!.IsInRemovedBranch(link)) return;
         var scan = _snapshot!;
         var ancestors = AncestorLinks(scan, link);
         while (ancestors.TryPop(out int ancestor))
@@ -308,7 +308,7 @@ public partial class MainWindow
         if (_syncTree || !CanBrowseExplorer || SpaceTree.SelectedItem is not ExplorerRow row) return;
         _selectedLink = row.Entry.LinkIndex;
         _selectionIsGroup = false;
-        if (row.IsRecycled)
+        if (row.IsRemoved)
         {
             EntryDetail.DataContext = row;
             EntryDetail.Visibility = Visibility.Visible;

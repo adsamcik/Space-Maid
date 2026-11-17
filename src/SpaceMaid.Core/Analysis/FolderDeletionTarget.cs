@@ -11,8 +11,8 @@ public sealed record FolderDeletionIdentity(string Path, FileIdentity Identity, 
     long LogicalBytes = 0, long AllocatedBytes = 0, bool HasAllocationData = false, bool IsIncomplete = false);
 
 // A resolved directory with a captured live identity, validated again before
-// cleanup. Permanent removal additionally requires the caller's explicit build
-// action and a fresh native snapshot of the complete target subtree.
+// cleanup. Rule-based permanent removal also requires a fresh native snapshot
+// of the complete rebuildable subtree.
 public sealed class FolderDeletionTarget
 {
     public string Path { get; }
@@ -147,6 +147,10 @@ public sealed class FolderDeletionTarget
         ArgumentNullException.ThrowIfNull(current);
         files.DeleteConfirmedDirectoryTree(ValidatePath(Path), _identity, _volume, current, token, mutationStarted);
     }
+
+    /// <summary>Permanently removes the folder and its contents after explicit manual confirmation.</summary>
+    public void DeleteManually(CancellationToken token, Action? mutationStarted)
+        => _files.DeleteUserConfirmedFolder(ValidatePath(Path), _identity, _volume, token, mutationStarted);
 
     // Check only the exact destination reported by Windows. No Recycle Bin
     // traversal is needed, and a successful callback cannot substitute a child

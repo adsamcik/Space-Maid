@@ -182,7 +182,7 @@
                                           <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                               <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis">
                                                   <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
-                                                      <DataTrigger Binding="{Binding IsRecycled}" Value="True"><Setter Property="TextDecorations" Value="Strikethrough" /></DataTrigger>
+                                                      <DataTrigger Binding="{Binding IsRemoved}" Value="True"><Setter Property="TextDecorations" Value="Strikethrough" /></DataTrigger>
                                                   </Style.Triggers></Style></TextBlock.Style>
                                               </TextBlock>
                                               <TextBlock Text="{Binding Flags}" FontSize="11" Opacity="0.65"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Flags}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>

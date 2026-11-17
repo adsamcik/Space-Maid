@@ -1,11 +1,14 @@
 using System.Windows;
+using System.Windows.Automation;
 using SpaceMaid.Core.Analysis;
 
 namespace SpaceMaid.App;
 
 public partial class RecycleFolderWindow : Window
 {
-    public RecycleFolderWindow(FolderDeletionTarget target)
+    public RecycleFolderWindow(FolderDeletionTarget target) : this(target, permanent: false, recycleWarning: null) { }
+
+    internal RecycleFolderWindow(FolderDeletionTarget target, bool permanent, string? recycleWarning)
     {
         InitializeComponent();
         TargetPath.Text = target.Path; TargetPath.ToolTip = target.Path;
@@ -19,6 +22,18 @@ public partial class RecycleFolderWindow : Window
             : $"Scanned logical size: {SizeText.Format(target.LogicalBytes)} · Allocation unknown";
         TargetSize.ToolTip = SizeDetails.Text;
         PartialScanNote.Visibility = target.IsIncomplete ? Visibility.Visible : Visibility.Collapsed;
+        if (permanent)
+        {
+            Title = "Delete folder permanently";
+            Heading.Text = "Delete this folder permanently?";
+            const string permanentWarning = "The folder and all its current contents will be deleted. This can’t be undone.";
+            Consequence.Text = recycleWarning is null ? permanentWarning : recycleWarning + "\n\n" + permanentWarning;
+            Consequence.Opacity = 1;
+            CancellationNote.Text = "Stopping a deletion can leave some contents permanently deleted.";
+            RecycleButton.Content = "Delete permanently";
+            RecycleButton.ClearValue(StyleProperty);
+            AutomationProperties.SetName(TargetPath, "Exact folder to delete permanently");
+        }
     }
     private void Recycle_Click(object sender, RoutedEventArgs e) => DialogResult = true;
 }

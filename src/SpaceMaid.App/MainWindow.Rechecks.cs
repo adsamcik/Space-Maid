@@ -55,7 +55,7 @@ public partial class MainWindow
     {
         var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
         string? detailPath = OpportunityBrowser?.Detail?.Path;
-        if (!_recycling) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
+        if (!_removingFolder) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();
         var timer = Stopwatch.StartNew();
@@ -69,7 +69,7 @@ public partial class MainWindow
         log.Record("opportunity-extensions", new { Status = OpportunityExtensions.Status(updated), ExtensionLog = _extensions?.LogPath });
         token.ThrowIfCancellationRequested();
         if (_closing || !ReferenceEquals(_snapshot, scan)) return;
-        var retainedRecycled = RetainRecycledRows(updated, requests);
+        var retainedRemoved = RetainRemovedRows(updated, requests);
         TreeViewport? viewport;
         while (true)
         {
@@ -82,7 +82,7 @@ public partial class MainWindow
             var column = _treeSortColumn;
             bool descending = _treeDescending;
             var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
-                expanded, selected, column, descending, retainedRecycled, _recycling ? token : CancellationToken.None);
+                expanded, selected, column, descending, retainedRemoved, _removingFolder ? token : CancellationToken.None);
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             // A browse completed against the earlier inventory while the tree
             // was prepared. Build its presentation from the user's latest view.
@@ -124,11 +124,11 @@ public partial class MainWindow
         RestoreTreeViewport(viewport);
     }
 
-    private List<int> RetainRecycledRows(ScanSnapshot updated, IReadOnlyList<ScanRecheckRequest> requests)
+    private List<(int Link, FolderRemoval Removal)> RetainRemovedRows(ScanSnapshot updated, IReadOnlyList<ScanRecheckRequest> requests)
     {
-        var retained = new List<int>();
+        var retained = new List<(int, FolderRemoval)>();
         if (_explorer is not { } rows) return retained;
-        foreach (int oldLink in rows.RecycledLinks)
+        foreach (var (oldLink, removal) in rows.RemovedLinks)
         {
             string path = rows.Scan.EntryPath(oldLink)!;
             if (updated.FindEntry(path) is not { } link || updated.EntryPath(link) != path) continue;
@@ -138,7 +138,7 @@ public partial class MainWindow
             // Partial refreshes can keep an earlier name when its parent was
             // skipped or unreadable. A successful re-read can show a restore.
             string? parent = Path.GetDirectoryName(path);
-            if (!requests.Any(CoversName) || updated.IncompleteRecheckScopes.Any(CoversName)) retained.Add(link);
+            if (!requests.Any(CoversName) || updated.IncompleteRecheckScopes.Any(CoversName)) retained.Add((link, removal));
 
             bool CoversName(ScanRecheckRequest scope) => scope.Path.Equals(path, StringComparison.Ordinal)
                 || scope.Path.Equals(parent, StringComparison.Ordinal)

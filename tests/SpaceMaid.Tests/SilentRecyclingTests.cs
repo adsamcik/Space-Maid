@@ -47,24 +47,21 @@ public sealed class SilentRecyclingTests
         string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "too-large-build")).FullName;
         string file = Path.Join(folder, "owned-sparse.bin");
         byte[] contents = "Owned sparse fixture"u8.ToArray();
-        File.WriteAllBytes(file, contents);
-        const long logicalLength = 1L << 40;
-        using (var sparse = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
-        {
-            // Sparse metadata creates an oversized Recycle Bin candidate
-            // without allocating its logical size or changing drive settings.
-            Assert.True(DeviceIoControl(sparse.SafeFileHandle, 0x000900C4, 0, 0, 0, 0, out _, 0),
-                new System.ComponentModel.Win32Exception(Marshal.GetLastPInvokeError()).Message);
-            sparse.SetLength(logicalLength);
-        }
+        long logicalLength = CreateOversizedFixtureFile(file, contents);
         var target = FolderDeletionTarget.CaptureCurrent(folder, logicalLength);
         var events = new List<string>();
-        var outcome = await RecycleWithoutWindows(target, (name, _) => events.Add(name));
+        object? finish = null;
+        var outcome = await RecycleWithoutWindows(target, (name, data) =>
+        {
+            events.Add(name);
+            if (name == "recycle-native-finish") finish = data;
+        });
         try
         {
             // Native Windows first considers recycling, then requests a transfer
             // without TSF_DELETE_RECYCLE_IF_POSSIBLE. The live guard must reject it.
-            Assert.Null(outcome.Result); Assert.IsType<IOException>(outcome.Error);
+            Assert.Null(outcome.Result);
+            Assert.True(outcome.Error is RecycleUnavailableException, $"{outcome.Error}\nShell result: {finish}");
             Assert.Contains("recycle-delete-blocked", events);
             Assert.DoesNotContain("recycle-verified", events);
             Assert.True(Directory.Exists(folder)); Assert.Equal(logicalLength, new FileInfo(file).Length);
@@ -76,6 +73,19 @@ public sealed class SilentRecyclingTests
         {
             if (outcome.Result?.RecycledPath is { } unexpected) DeletionTests.RestoreFixture(unexpected, folder);
         }
+    }
+
+    internal static long CreateOversizedFixtureFile(string file, byte[] contents)
+    {
+        File.WriteAllBytes(file, contents);
+        const long logicalLength = 1L << 40;
+        using var sparse = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        // Exercise the real Recycle Bin refusal without filling the drive or
+        // changing drive settings.
+        Assert.True(DeviceIoControl(sparse.SafeFileHandle, 0x000900C4, 0, 0, 0, 0, out _, 0),
+            new System.ComponentModel.Win32Exception(Marshal.GetLastPInvokeError()).Message);
+        sparse.SetLength(logicalLength);
+        return logicalLength;
     }
 
     private static async Task<(RecycleResult? Result, Exception? Error)> RecycleWithoutWindows(

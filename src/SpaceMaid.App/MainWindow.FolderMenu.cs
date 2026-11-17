@@ -55,6 +55,17 @@ public partial class MainWindow
                 else await DeleteFolderAsync(scan, link);
             };
             menu.Items.Add(open); menu.Items.Add(recycle);
+            if (recycleRoot is null)
+            {
+                var delete = new MenuItem
+                {
+                    Header = "Delete permanently…", InputGestureText = "Shift+Delete",
+                    IsEnabled = blocked is null, ToolTip = blocked
+                };
+                ToolTipService.SetShowOnDisabled(delete, true);
+                delete.Click += async (_, _) => await DeleteFolderAsync(scan, link, permanent: true);
+                menu.Items.Add(delete);
+            }
             var recheck = new MenuItem { Header = "Recheck this folder" };
             recheck.Click += async (_, _) => { if (CanUseFolderEntry(scan, link)) await RecheckFolderAsync(path); };
             menu.Items.Add(recheck);
@@ -88,14 +99,14 @@ public partial class MainWindow
         && ReferenceEquals(_snapshot, scan);
 
     private bool CanUseFolderEntry(ScanSnapshot scan, int link) => link >= -1 && CanUseFolderMenu(scan)
-        && _explorer?.IsInRecycledBranch(link) != true;
+        && _explorer?.IsInRemovedBranch(link) != true;
 
     private bool SelectContextEntry(ScanSnapshot scan, int link)
     {
         // Context selection does not drill into the folder or replace the
         // map button while its menu is opening. Details and Delete still
         // reflect the clicked entry; menu actions capture their own target.
-        if (_explorer is null || _explorer.IsInRecycledBranch(link)) return false;
+        if (_explorer is null || _explorer.IsInRemovedBranch(link)) return false;
         if (_explorer.Find(link) < 0)
         {
             // A displayed map folder can have collapsed tree ancestors. Their

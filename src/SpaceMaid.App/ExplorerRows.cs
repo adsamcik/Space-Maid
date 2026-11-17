@@ -7,9 +7,12 @@ using SpaceMaid.Core.Scanning;
 
 namespace SpaceMaid.App;
 
+internal enum FolderRemoval { Recycled, Deleted }
+
 internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth, bool Expanded, int VisibleIndex = -1)
 {
-    public bool IsRecycled { get; init; }
+    public FolderRemoval? Removal { get; init; }
+    public bool IsRemoved => Removal.HasValue;
     public string Name => Entry.Name;
     public string Path => Scan.EntryPath(Entry.LinkIndex) ?? "Unresolved path";
     public string TypeDescription => Entry.IsDirectory ? "" : FileTypeClassifier.Describe(Name);
@@ -24,24 +27,31 @@ internal sealed record ExplorerRow(ScanSnapshot Scan, ScanEntry Entry, int Depth
     private bool Unmeasured => Scan.IsUnmeasuredDirectory(Entry.FileIndex);
     public string EntryTooltip => TypeDescription.Length > 0 ? $"{Path}\n{FileTypeClassifier.DescribeDetails(Name)}" : Unmeasured ? $"{Path}\n{SizeNote}" : Path;
     public Thickness Indent => new(Depth * 14, 0, 0, 0);
-    public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName && !Unmeasured && !IsRecycled;
+    public bool CanExpand => Entry.IsDirectory && Entry.IsPrimaryName && !Unmeasured && !IsRemoved;
     public string Expander => CanExpand ? Expanded ? "⌄" : "›" : "";
     public string Glyph => Entry.IsDirectory ? "\uE8B7" : "\uE8A5";
-    public string Allocated => IsRecycled ? "—" : Unmeasured ? "Not checked" : Scan.HasAllocationData ? SizeText.Format(Entry.AttributedBytes(true)) : "—";
-    public string Logical => IsRecycled ? "—" : Unmeasured ? "Not checked" : SizeText.Format(Entry.LogicalBytes);
+    public string Allocated => IsRemoved ? "—" : Unmeasured ? "Not checked" : Scan.HasAllocationData ? SizeText.Format(Entry.AttributedBytes(true)) : "—";
+    public string Logical => IsRemoved ? "—" : Unmeasured ? "Not checked" : SizeText.Format(Entry.LogicalBytes);
     public string Share
     {
         get
         {
-            if (Entry.ParentIndex < 0 || Unmeasured || IsRecycled) return "—";
+            if (Entry.ParentIndex < 0 || Unmeasured || IsRemoved) return "—";
             var parent = Scan.Entry(Scan.PrimaryLink(Entry.ParentIndex));
             long total = parent.AttributedBytes(Scan.HasAllocationData);
             return total == 0 ? "—" : $"{100d * Entry.AttributedBytes(Scan.HasAllocationData) / total:0.#}%";
         }
     }
-    public string Flags => IsRecycled ? "Recycled" : string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Unmeasured ? "Not checked" : Entry.IsIncomplete ? "Partial" : null }.OfType<string>());
-    public string Description => IsRecycled ? $"{Path}, moved to the Recycle Bin" : $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
-    public string SizeNote => IsRecycled ? "Moved to the Recycle Bin." : Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size." : Entry.IsShared
+    public string Flags => Removal switch
+    {
+        FolderRemoval.Recycled => "Recycled",
+        FolderRemoval.Deleted => "Permanently deleted",
+        _ => string.Join(" · ", new[] { Entry.IsShared ? "Shared" : null, Unmeasured ? "Not checked" : Entry.IsIncomplete ? "Partial" : null }.OfType<string>())
+    };
+    public string Description => IsRemoved ? $"{Path}, {SizeNote}" : $"{Path}, {Allocated} allocated, {Logical} logical. {Flags} {TypeDescription}";
+    public string SizeNote => Removal == FolderRemoval.Deleted ? "Permanently deleted."
+        : Removal == FolderRemoval.Recycled ? "Moved to the Recycle Bin."
+        : Unmeasured ? "Folder contents were not checked. Use Recheck this folder to measure its size." : Entry.IsShared
         ? $"This object has multiple observed names. Its {SizeText.Format(Entry.AllocatedBytes)} allocation is attributed once, under {Scan.EntryPath(Scan.PrimaryLink(Entry.FileIndex))}."
         : Entry.IsIncomplete ? "This branch is incomplete. Sizes show only metadata that was read." : "";
 }
@@ -53,7 +63,7 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     private readonly record struct Position(int Link, int Depth);
     private readonly List<Position> _visible = [new(-1, 0)];
     private readonly HashSet<int> _expanded = [];
-    private readonly HashSet<int> _recycled = [];
+    private readonly Dictionary<int, FolderRemoval> _removed = [];
     public ScanSnapshot Scan { get; } = scan;
     public int Count => _visible.Count;
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
@@ -61,32 +71,32 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     {
         var position = _visible[index];
         return new ExplorerRow(Scan, Scan.Entry(position.Link), position.Depth, _expanded.Contains(position.Link), index)
-            { IsRecycled = IsRecycled(position.Link) };
+            { Removal = RemovalFor(position.Link) };
     }
     public int Find(int link) => _visible.FindIndex(position => position.Link == link);
     public bool IsExpanded(int link) => _expanded.Contains(link);
-    public bool IsRecycled(int link) => _recycled.Contains(link);
-    public IEnumerable<int> RecycledLinks => _recycled;
-    public bool IsInRecycledBranch(int link)
+    public FolderRemoval? RemovalFor(int link) => _removed.TryGetValue(link, out var removal) ? removal : null;
+    public IEnumerable<KeyValuePair<int, FolderRemoval>> RemovedLinks => _removed;
+    public bool IsInRemovedBranch(int link)
     {
-        if (_recycled.Count == 0) return false;
-        if (IsRecycled(link)) return true;
+        if (_removed.Count == 0) return false;
+        if (_removed.ContainsKey(link)) return true;
         var visited = new HashSet<int>();
         for (int parent = Scan.Entry(link).ParentIndex; parent >= 0 && visited.Add(parent); parent = Scan.Entry(link).ParentIndex)
         {
             link = Scan.PrimaryLink(parent);
-            if (IsRecycled(link)) return true;
+            if (_removed.ContainsKey(link)) return true;
         }
         return false;
     }
 
-    public void MarkRecycled(int link)
+    public void MarkRemoved(int link, FolderRemoval removal)
     {
-        if (IsRecycled(link)) return;
+        if (_removed.ContainsKey(link)) return;
         Collapse(link);
         int index = Find(link);
         ExplorerRow? previous = index < 0 ? null : Row(index);
-        _recycled.Add(link);
+        _removed.Add(link, removal);
         if (previous is not null)
             CollectionChanged?.Invoke(this, new(NotifyCollectionChangedAction.Replace, Row(index), previous, index));
     }
@@ -95,7 +105,7 @@ internal sealed class ExplorerRows(ScanSnapshot scan) : IList, INotifyCollection
     public void Expand(int link, int[] children)
     {
         int index = Find(link);
-        if (index < 0 || IsRecycled(link) || !_expanded.Add(link)) return;
+        if (index < 0 || _removed.ContainsKey(link) || !_expanded.Add(link)) return;
         int depth = _visible[index].Depth + 1;
         _visible.InsertRange(index + 1, children.Select(child => new Position(child, depth)).ToArray());
         Changed();

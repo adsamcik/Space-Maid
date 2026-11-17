@@ -108,6 +108,12 @@ public sealed partial class DesktopTests
                 // Begin interactions only once both have finished, so their
                 // focus changes cannot interrupt the path editor assertions.
                 PumpUntil(() => window.ExtensionsReady && !app.Windows.OfType<StartupWindow>().Any(), TimeSpan.FromSeconds(15));
+                if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "folder-deletion")
+                {
+                    BeginWorkflow("Manual folder deletion");
+                    CheckPermanentFolderDeletion(window, app, FindRepository());
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SPACEMAID_DESKTOP_WORKFLOW") == "sidebar")
                 {
                     BeginWorkflow("Sidebar navigation and extension icons");
@@ -428,7 +434,8 @@ public sealed partial class DesktopTests
                 Assert.Equal(project, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
                 Assert.Equal(rootMapTotal, window.CurrentPath);
                 PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
-                Assert.Equal(new[] { "Open in File Explorer", "Move to Recycle Bin", "Recheck this folder" }, tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
+                Assert.Equal(new[] { "Open in File Explorer", "Move to Recycle Bin", "Delete permanently…", "Recheck this folder" },
+                    tree.ContextMenu.Items.Cast<MenuItem>().Select(i => i.Header));
                 Assert.True(tree.ContextMenu.Items.Cast<MenuItem>().All(i => i.IsEnabled));
                 var capturedRecycle = (MenuItem)tree.ContextMenu.Items[1];
                 tree.ContextMenu.IsOpen = false;
@@ -438,7 +445,7 @@ public sealed partial class DesktopTests
                 PumpUntil(() => projectTile.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 Assert.Equal(rootMapTotal, window.CurrentPath);
                 PumpUntil(() => projectTile.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
-                Assert.Equal(3, projectTile.ContextMenu.Items.Count);
+                Assert.Equal(4, projectTile.ContextMenu.Items.Count);
                 projectTile.ContextMenu.IsOpen = false;
 
                 SetStage("revealing a map folder beneath a collapsed tree branch");
@@ -572,7 +579,7 @@ public sealed partial class DesktopTests
                 Assert.True(confirmed);
                 Assert.True(Directory.Exists(bin));
                 Assert.Equal(16384, new FileInfo(Path.Join(bin, "sample.dll")).Length);
-                Assert.False(Assert.IsType<ExplorerRow>(tree.SelectedItem).IsRecycled);
+                Assert.False(Assert.IsType<ExplorerRow>(tree.SelectedItem).IsRemoved);
                 Assert.Contains("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
                 File.WriteAllBytes(Path.Join(bin, "sample.dll"), new byte[8192]);
                 BuildActivityFixture.AgeProject(project);
@@ -591,7 +598,7 @@ public sealed partial class DesktopTests
                 Task? backgroundBrowse = null;
                 NotifyCollectionChangedEventHandler observeRecycle = (_, change) =>
                 {
-                    if (change.NewItems is not { Count: 1 } || change.NewItems[0] is not ExplorerRow { IsRecycled: true } removed) return;
+                    if (change.NewItems is not { Count: 1 } || change.NewItems[0] is not ExplorerRow { Removal: FolderRemoval.Recycled } removed) return;
                     _ = window.Dispatcher.InvokeAsync(() =>
                     {
                         try
@@ -1065,6 +1072,8 @@ public sealed partial class DesktopTests
                 BeginWorkflow("Recycle Bin and helper lifecycle");
                 SetStage("confirming selected-drive Recycle Bin cleanup without deleting real bin contents");
                 CheckRecycleBinCleanup(window, app, artifactRoot);
+                BeginWorkflow("Manual folder deletion");
+                CheckPermanentFolderDeletion(window, app, artifactRoot);
                 SetStage("retaining one helper across app scans and closing it with the window");
                 var helperStart = HelperLayoutSource.CreateAsync(false);
                 PumpUntil(() => helperStart.IsCompleted, TimeSpan.FromSeconds(10));
