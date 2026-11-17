@@ -3,7 +3,10 @@ namespace SpaceMaid.Core.Analysis;
 public sealed partial class WorktreeRetirement
 {
     // Policy removal never removes the checkout or its recovery information.
-    public async Task UnmanageAsync(string path, CancellationToken token = default)
+    public Task UnmanageAsync(string path, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => UnmanageCapturedAsync(path, token), token);
+
+    private async Task UnmanageCapturedAsync(string path, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
@@ -23,7 +26,10 @@ public sealed partial class WorktreeRetirement
 
     // Explicitly discard only a terminal receipt. Git branches, retained refs,
     // registration and both recorded filesystem locations remain untouched.
-    public async Task RemoveHistoryAsync(Guid id, CancellationToken token = default)
+    public Task RemoveHistoryAsync(Guid id, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => RemoveHistoryCapturedAsync(id, token), token);
+
+    private async Task RemoveHistoryCapturedAsync(Guid id, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try

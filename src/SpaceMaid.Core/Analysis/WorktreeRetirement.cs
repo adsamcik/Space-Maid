@@ -40,6 +40,9 @@ public sealed partial class WorktreeRetirement
     public WorktreeRetirement(string settingsPath) : this(settingsPath, DiskAccess.Default) { }
     public WorktreeRetirement(string settingsPath, DiskAccess files) => (this.settingsPath, _files) = (settingsPath, files);
     private const int EntryLimit = 4000;
+    // All persisted read/modify/save entry points acquire the shared mutation
+    // lease before this instance gate, including policy and history-only edits.
+    // Otherwise another instance could overwrite a just-persisted recovery intent.
     private readonly SemaphoreSlim _gate = new(1);
     public WorktreeRetirementSettings Load()
     {
@@ -87,8 +90,12 @@ public sealed partial class WorktreeRetirement
         return await GitWorktreeAnalyzer.AssessAsync(scan, location, integrationReference, token).ConfigureAwait(false);
     }
 
-    public async Task<ManagedWorktreePolicy> EnrollAsync(string path, string integrationReference, int inactiveDays, int graceDays,
+    public Task<ManagedWorktreePolicy> EnrollAsync(string path, string integrationReference, int inactiveDays, int graceDays,
         bool automatic, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => EnrollCapturedAsync(path, integrationReference, inactiveDays, graceDays, automatic, token), token);
+
+    private async Task<ManagedWorktreePolicy> EnrollCapturedAsync(string path, string integrationReference, int inactiveDays, int graceDays,
+        bool automatic, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
@@ -109,10 +116,13 @@ public sealed partial class WorktreeRetirement
         finally { _gate.Release(); }
     }
 
-    public async Task SetAutomaticAsync(string path, bool automatic, CancellationToken token = default)
+    public Task SetAutomaticAsync(string path, bool automatic, CancellationToken token = default)
+        => CleanupMutationLease.RunAsync(() => SetAutomaticCapturedAsync(path, automatic, token), token);
+
+    private async Task SetAutomaticCapturedAsync(string path, bool automatic, CancellationToken token)
     {
         await _gate.WaitAsync(token).ConfigureAwait(false);
-        try { var state = Load(); Save(state with { Policies = state.Policies.Select(p => p.Path.Equals(path, StringComparison.OrdinalIgnoreCase) ? p with { Automatic = automatic } : p).ToArray() }); }
+        try { token.ThrowIfCancellationRequested(); var state = Load(); Save(state with { Policies = state.Policies.Select(p => p.Path.Equals(path, StringComparison.OrdinalIgnoreCase) ? p with { Automatic = automatic } : p).ToArray() }); }
         finally { _gate.Release(); }
     }
 
