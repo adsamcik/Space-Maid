@@ -941,8 +941,13 @@ public sealed partial class DesktopTests
                 Assert.True(Descendants(tree).OfType<ListBoxItem>().Count() <= 100, "Scrolling realized the whole wide folder.");
                 var finalFile = Assert.IsAssignableFrom<ListBoxItem>(tree.ItemContainerGenerator.ContainerFromIndex(wideRows.Count - 1));
                 RightClick(window, finalFile);
+                PumpUntil(() => tree.ContextMenu.IsOpen, TimeSpan.FromSeconds(2));
                 PumpUntil(() => tree.ContextMenu.Items.Cast<MenuItem>().All(i => !Equals(i.Header, "Checking cloud availability…")), TimeSpan.FromSeconds(3));
-                Assert.False(tree.ContextMenu.IsOpen); // File rows do not expose folder operations.
+                Assert.Equal(Assert.IsType<ExplorerRow>(finalFile.DataContext).Path, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+                Assert.Collection(tree.ContextMenu.Items.Cast<MenuItem>(),
+                    action => { Assert.Equal("Move to Recycle Bin", action.Header); Assert.True(action.IsEnabled); },
+                    action => { Assert.Equal("Delete permanently…", action.Header); Assert.True(action.IsEnabled); });
+                tree.ContextMenu.IsOpen = false;
                 Assert.Equal(8192, new FileInfo(Path.Join(bin, "sample.dll")).Length);
                 window.SetScanTarget(Path.GetPathRoot(fixture.Path)!);
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("OpenLogButton")).Visibility);
