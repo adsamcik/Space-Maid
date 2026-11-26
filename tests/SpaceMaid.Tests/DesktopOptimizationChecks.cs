@@ -366,7 +366,7 @@ public sealed partial class DesktopTests
             Assert.Null(snapshotField.GetValue(host)); // New scopes cannot inherit unrelated results.
             var failed = host.ScanCurrentPathAsync();
             PumpUntil(() => failed.IsCompleted, TimeSpan.FromSeconds(15)); Assert.False(failed.GetAwaiter().GetResult());
-            Assert.True(button.IsEnabled); Assert.Equal("Scan for generated files", hint.Text);
+            Assert.True(button.IsEnabled); Assert.Equal("Tools available now", hint.Text);
         }
         finally
         {

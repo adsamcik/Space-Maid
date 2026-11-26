@@ -27,7 +27,7 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button x:Name="AddButton" Content="Add app folder" Click="Add_Click" Padding="12,5" Margin="0,0,8,0" />
                 <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Padding="12,5" Visibility="Collapsed" Margin="0,0,8,0" />
-                <Button x:Name="RefreshButton" Content="Find apps" Click="Refresh_Click" Padding="14,5" />
+                <Button x:Name="RefreshButton" Content="Refresh" Click="Refresh_Click" Padding="14,5" />
             </StackPanel>
         </Grid>
         <Grid Grid.Row="1" Margin="0,0,0,8">

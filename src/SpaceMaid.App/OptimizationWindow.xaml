@@ -111,8 +111,13 @@
                         <TextBlock x:Name="SavedScopeHint" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12" Visibility="Collapsed"/>
                         <TextBlock Text="Native tools, models, conversations and virtual disks always require review." TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,6,0,0"/>
                     </StackPanel>
-                    <StackPanel x:Name="PolicyControls" Grid.Row="1" Margin="0,12,0,12">
-                        <WrapPanel>
+                    <Expander x:Name="PolicyControls" Grid.Row="1" Margin="0,12,0,12">
+                        <Expander.Header>
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="Run limits · Keep " /><Run Text="{Binding Text, ElementName=DaysBox, Mode=OneWay}" /><Run Text=" days · " /><Run Text="{Binding Text, ElementName=LimitBox, Mode=OneWay}" /><Run Text=" MiB per run" />
+                            </TextBlock>
+                        </Expander.Header>
+                        <WrapPanel Margin="0,8,0,0">
                             <TextBlock Text="Keep recent activity" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <TextBox x:Name="DaysBox" Width="48" VerticalContentAlignment="Center" AutomationProperties.Name="Days of recent activity to keep"/>
                             <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,22,0"/>
@@ -120,7 +125,7 @@
                             <TextBox x:Name="LimitBox" Width="65" VerticalContentAlignment="Center" AutomationProperties.Name="Maximum megabytes per run"/>
                             <TextBlock Text="MiB · up to 500 files" VerticalAlignment="Center" Margin="6,0,0,0"/>
                         </WrapPanel>
-                    </StackPanel>
+                    </Expander>
                     <Grid Grid.Row="2">
                         <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsControl x:Name="RuleList">
                             <ItemsControl.ItemTemplate><DataTemplate>
@@ -158,7 +163,7 @@
             <DockPanel Grid.Row="1">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
                     <Button x:Name="SaveButton" Content="Save settings" Click="Save_Click" Padding="12,6" Margin="0,0,8,0" Visibility="Collapsed"/>
-                    <Button x:Name="RunButton" Content="Delete previewed files" Click="Run_Click" IsEnabled="False" Padding="12,6" Margin="0,0,8,0"/>
+                    <Button x:Name="RunButton" Content="Permanently delete reviewed files" Click="Run_Click" IsEnabled="False" Visibility="Collapsed" Padding="12,6" Margin="0,0,8,0"/>
                     <Button x:Name="CloseButton" Content="Close" Click="Close_Click" Padding="12,6"/>
                 </StackPanel>
                 <StackPanel VerticalAlignment="Center">

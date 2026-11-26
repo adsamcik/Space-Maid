@@ -150,6 +150,13 @@ public sealed partial class DesktopTests
         Assert.Equal(exactScopes, workspace.Prepared!.Definition.ScopePaths);
         try
         {
+            var options = (Expander)workspace.FindName("MoreOptions");
+            Assert.False(options.IsExpanded);
+            Assert.Contains("30+ days inactive", ((TextBlock)workspace.FindName("BuildSummaryText")).Text);
+            options.IsExpanded = true;
+            window.UpdateLayout();
+            Assert.True(((TextBox)workspace.FindName("DaysBox")).IsVisible);
+            options.IsExpanded = false;
             Guid draftId = workspace.Prepared!.Record.Id;
             var historical = workspace.Prepared.Record with { Id = Guid.NewGuid(), State = CleanupRunState.Completed,
                 Definition = workspace.Prepared.Definition with { Id = Guid.NewGuid(), Name = "Navigation history fixture" },

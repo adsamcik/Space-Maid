@@ -20,7 +20,8 @@ public partial class MainWindow
     private void UpdateOptimizationAvailability(bool busy)
     {
         bool available = !_closing && !_scanning && !busy && _work is null && (_snapshot is not null || ExtensionsReady);
-        string hint = _scanning ? "Available after scan" : _snapshot is null ? "Scan for generated files" : "Available when idle";
+        string hint = available ? "Tools available now" : _scanning ? "Available after scan"
+            : _snapshot is null ? "Scan for generated files" : "Available when idle";
         string help = available ? "Review optimization actions from enabled extensions. Native tools are available without a scan."
             : _scanning ? "Wait for the scan to finish, then choose rules and preview files."
             : _snapshot is null ? "Complete a scan to choose rules and preview generated files."

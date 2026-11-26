@@ -130,6 +130,13 @@ internal sealed partial class CleanupInspector : UserControl
         Rebuild();
     }
 
+    internal void FocusCurrentTab()
+    {
+        var tab = ListTab.IsChecked == true ? ListTab : SummaryTab;
+        tab.BringIntoView();
+        tab.Focus();
+    }
+
     internal void SetBusy(bool busy) { _busy = busy; UpdateDetails(); }
     internal void SetCanExclude(bool canExclude) { _canExclude = canExclude; UpdateDetails(); }
     internal void ShowKept() { OutcomePicker.SelectedIndex = 2; SummaryTab.IsChecked = true; ApplyFilters(true); }

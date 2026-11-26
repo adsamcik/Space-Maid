@@ -71,6 +71,11 @@ public sealed partial class DesktopTests
         Assert.Equal("On disk", RowText(list.Items[0], "Basis"));
         Assert.Contains(list.Items.Cast<object>(), row => RowText(row, "Basis") == "File size · partial");
         Assert.Contains(list.Items.Cast<object>(), row => RowText(row, "Basis") == "Unavailable");
+        search.Text = "no-such-application-name";
+        load = Refresh(); PumpUntil(() => load.IsCompleted, TimeSpan.FromSeconds(3)); load.GetAwaiter().GetResult();
+        Assert.Empty(list.Items);
+        Assert.Equal("No apps match your search.", ((TextBlock)view.FindName("EmptyText")).Text);
+        search.Text = "";
         list.SelectedIndex = 0;
         ((Button)view.FindName("OpenButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(fixture.Path, host.Revealed);

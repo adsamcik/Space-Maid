@@ -357,6 +357,9 @@ public partial class OpportunitiesView : UserControl, IOpportunityBrowserView, I
             SelectionText.Text = selected > 0 ? $"{groups:N0} {(groups == 1 ? "group" : "groups")} selected · {selected:N0} {(selected == 1 ? "folder" : "folders")}"
                 : "";
         }
+        if (selected == 0 && _rows.Count > 0 && (_cleanupDrillDown || !overview && _visibleOpportunityRows.Count < _rows.Count))
+            SelectionText.Text = "Review uses the full scanned location.";
+        ReviewButton.Content = selected > 0 ? "Review selected folders" : "Review cleanup for this scan";
         ReviewButton.IsEnabled = _rows.Count > 0 && !_busy && (!SelectedView || selected > 0);
         SelectListedButton.IsEnabled = _visibleOpportunityRows.Any(row => row.CanSelect) && !_busy;
         ClearOpportunitySelectionButton.IsEnabled = selected > 0 && !_busy;

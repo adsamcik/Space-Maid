@@ -23,7 +23,7 @@ public partial class PhotosView
 
     private Task ChangeCollectionLocationAsync(PhotoCollection collection, string path) => ChangeCollectionIndexAsync(collection,
         token => _service.ChangeCollectionRootAsync(collection, path, token),
-        "Collection location updated. Refresh filenames, then Analyze to verify content. Original files and keep preferences stay untouched.");
+        "Collection location updated.", discover: true);
 
     private async void RemoveCollection_Click(object sender, RoutedEventArgs e)
     {
@@ -36,13 +36,14 @@ public partial class PhotosView
     private Task RemoveCollectionIndexAsync(PhotoCollection collection) => ChangeCollectionIndexAsync(collection,
         token => _service.RemoveCollectionAsync(collection, token), "Collection index removed. Photos, sidecars and keep preferences stay untouched.");
 
-    private async Task ChangeCollectionIndexAsync(PhotoCollection collection, Func<CancellationToken, Task> change, string completed)
+    private async Task ChangeCollectionIndexAsync(PhotoCollection collection, Func<CancellationToken, Task> change, string completed, bool discover = false)
     {
         if (_busy || _collectionReloadRequired || _shuttingDown || Collection?.Id != collection.Id) return;
         _busy = _changingCollection = true;
         _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime);
         _pageGeneration++; _pageQuery?.Cancel(); ResetPreviewRequests(); UpdateControls();
         bool committed = false;
+        bool discoverAfterReload = false;
         try
         {
             await change(_operation.Token);
@@ -51,7 +52,9 @@ public partial class PhotosView
             SelectedPreview.Source = null; SelectionPanel.Visibility = Visibility.Collapsed;
             _page = 0; _total = 0; _displayedCollection = null;
             await LoadCollectionsAsync(collection.Id);
-            SetNotice(completed + (_pageLoadFailure is null ? "" : " The view could not refresh. Use Try again. " + _pageLoadFailure));
+            discoverAfterReload = discover && _pageLoadFailure is null && !_operation.IsCancellationRequested;
+            SetNotice(completed + (_pageLoadFailure is not null ? " The view could not refresh. Use Try again. " + _pageLoadFailure
+                : discover && !discoverAfterReload ? " Select Refresh to check the new location." : ""));
         }
         catch (OperationCanceledException) when (!committed) { SetNotice("Collection change cancelled. The previous index is retained."); }
         catch (Exception error)
@@ -69,5 +72,7 @@ public partial class PhotosView
             _busy = _changingCollection = false; _operation.Dispose(); _operation = null; UpdateControls();
             RequestDisplayedPreviews();
         }
+        if (discoverAfterReload && !_shuttingDown && !_lifetime.IsCancellationRequested && Collection?.Id == collection.Id)
+            await DiscoverCurrentAsync();
     }
 }

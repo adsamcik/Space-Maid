@@ -100,6 +100,7 @@ public sealed partial class DesktopTests
                 SetFunction("Executor", (_, _) => { executed++; return TaskFor(result, Activator.CreateInstance(result, [true, "Owned fixture removal confirmed", null])!); });
                 foreach (bool confirm in new[] { false, true })
                 {
+                    int inspectionsBefore = calls;
                     picker.SelectedItem = confirm ? "Containers" : "Volumes";
                     list.SelectedItem = list.Items.Cast<object>().First(item => item.GetType().GetProperty("CanClean")!.GetValue(item) is true);
                     Exception? failure = null; bool reviewed = false;
@@ -136,6 +137,7 @@ public sealed partial class DesktopTests
                         PumpUntil(() => review.IsCompleted, TimeSpan.FromSeconds(5)); review.GetAwaiter().GetResult();
                         if (failure is not null) throw failure;
                         Assert.True(reviewed); Assert.Equal(confirm ? 1 : 0, executed);
+                        Assert.Equal(inspectionsBefore + (confirm ? 1 : 0), calls);
                     }
                     finally { timer.Stop(); }
                 }

@@ -18,11 +18,10 @@ public partial class MainWindow : Window
     private string? _snapshotVolumeId;
     private CancellationTokenSource? _work;
     private bool _closing;
-    private bool _startupOffered;
+    private bool _initialized;
     private string? _scanLogPath;
     private readonly Task _classificationReady = Task.Run(FileTypeClassifier.Prepare);
     internal string LogDirectory { get; set; } = AppData.File("Logs");
-    internal string StartupPreferencePath { get; set; } = AppData.File("startup-standard-choice.json");
     internal FileOperations Operations { get; set; }
 
     public MainWindow()
@@ -38,24 +37,12 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_startupOffered) return;
-        _startupOffered = true;
+        if (_initialized) return;
+        _initialized = true;
         LoadColumnLayout();
         LoadBuildCleanupSettings();
         _ = RefreshRecycleBinAsync();
         _ = RefreshDriveChoicesAsync();
-        if (!Elevation.IsAdministrator)
-        {
-            var choice = StartupScanningPreference.Load(StartupPreferencePath, Operations.Files);
-            if (choice.ShouldOffer)
-            {
-                var startup = new StartupWindow { Owner = this };
-                if (startup.ShowDialog() == true) await RequestElevationAsync();
-                else choice = StartupScanningPreference.RememberStandard(StartupPreferencePath, Operations.Files);
-            }
-            if (choice.Error is not null)
-                StatusText.Text = "Continuing with standard scanning. The startup choice could not be saved or read; Enable fast scanning remains available. " + choice.Error;
-        }
         if (!_closing) await InitializeExtensionsAsync();
         if (!_closing) InitializeUpdates();
         if (!_closing) InitializeOptimization();
@@ -105,6 +92,8 @@ public partial class MainWindow : Window
         UpdatePathAvailability(busy);
         UpdateFastScanButton(busy);
         UpdateOptimizationAvailability(busy);
+        ExploreStartTitle.Text = busy && _scanning ? "Scanning…" : "See what takes up space";
+        ExploreStartHint.Visibility = busy && _scanning ? Visibility.Collapsed : Visibility.Visible;
         CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;
@@ -112,7 +101,7 @@ public partial class MainWindow : Window
         ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
-        if (!busy) { DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
+        if (!busy) { DrainExplorerRecheck(); if (_initialized) _ = RefreshRecycleBinAsync(); }
         if (!busy) TryRefreshAfterDeletions();
     }
 

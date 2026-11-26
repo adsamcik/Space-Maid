@@ -34,6 +34,8 @@ public sealed partial class DesktopTests
         var mode = (ComboBox)workspace.FindName("ActionBox");
         Assert.Equal(2, workspace.Prepared!.Plan.Preview.Locations.Count);
         Assert.Equal(Visibility.Collapsed, ((Border)workspace.FindName("InspectorHost")).Visibility);
+        ((Expander)workspace.FindName("MoreOptions")).IsExpanded = true;
+        window.UpdateLayout();
         days.Text = "30"; WaitForWorkspacePlan(workspace, 30);
         Assert.Single(workspace.Prepared!.Plan.Preview.Locations);
         mode.SelectedIndex = 1; WaitForWorkspacePlan(workspace, 30, action: BuildCleanupAction.PermanentlyDelete);

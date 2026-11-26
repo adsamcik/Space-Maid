@@ -36,7 +36,8 @@ public partial class MainWindow
         bool attention = _updates is { Supported: true } && (_updates.AvailableVersion is not null
             || _updates.CheckRetryAvailable || _updates.Error is not null);
         UpdateButton.Visibility = attention ? Visibility.Visible : Visibility.Collapsed;
-        UpdateButton.Content = _updates?.CheckRetryAvailable == true ? "Retry update check" : "Update available";
+        UpdateButton.Content = _updates?.Ready == true ? "Restart to update"
+            : _updates?.CheckRetryAvailable == true ? "Retry update check" : "Update available";
         UpdateButton.ToolTip = _updates is null ? null : _updates.Status + "\n" + _updates.CheckHistory;
         _updatesWindow?.Refresh();
     }

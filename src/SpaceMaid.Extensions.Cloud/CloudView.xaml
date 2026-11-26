@@ -14,11 +14,11 @@
                         <MenuItem Header="Proton Drive" Tag="Proton Drive" Click="AddProvider_Click"/>
                     </ContextMenu></Button.ContextMenu>
                 </Button>
-                <Button x:Name="FindButton" Content="Find drives" Click="Find_Click"/>
+                <Button x:Name="FindButton" Content="Refresh drives" Click="Find_Click"/>
             </StackPanel>
             <TextBlock Text="Cloud drives" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </DockPanel>
-        <TextBlock x:Name="StatusText" Grid.Row="1" Text="Find connected drives or add a sync folder." TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite"/>
+        <TextBlock x:Name="StatusText" Grid.Row="1" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite"/>
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions><ColumnDefinition Width="210"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <DockPanel>

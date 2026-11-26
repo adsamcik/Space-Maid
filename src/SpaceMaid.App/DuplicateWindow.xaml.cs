@@ -61,6 +61,11 @@ public partial class DuplicateWindow : Window
         finally { _work = null; _operation = null; SetWorking(false); if (_closeAfterWork) Close(); }
     }
     private async void Find_Click(object sender, RoutedEventArgs e) => await StartSearchAsync(false);
+    private async void Window_ContentRendered(object? sender, EventArgs e)
+    {
+        ContentRendered -= Window_ContentRendered;
+        await StartSearchAsync(false);
+    }
     private async void Continue_Click(object sender, RoutedEventArgs e) => await StartSearchAsync(true);
     private async void Retry_Click(object sender, RoutedEventArgs e) => await StartPageAsync(true, true);
     private Task StartSearchAsync(bool next) => StartPageAsync(next, false);

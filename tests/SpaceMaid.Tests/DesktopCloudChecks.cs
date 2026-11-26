@@ -25,12 +25,19 @@ public sealed partial class DesktopTests
         var entry = Assert.Single(runtime.Entries, entry => entry.Id == "space-maid.cloud");
         Assert.Equal("Loaded", entry.Status); Assert.Null(entry.Error);
         var view = Assert.IsAssignableFrom<UserControl>(entry.View);
+        string settings = Path.Join(window.ExtensionDataRoot!, entry.Id, "folders.json");
+        string savedRoot = Directory.CreateDirectory(Path.Join(fixture.Path, "Saved cloud folder")).FullName;
+        Directory.CreateDirectory(Path.GetDirectoryName(settings)!);
+        File.WriteAllText(settings, System.Text.Json.JsonSerializer.Serialize(new[] { new { Provider = "OneDrive", Path = savedRoot, Source = "Added" } }));
         Assert.True(window.OpenExtension(entry.Id));
         Task Invoke(string method, params object[] args) => (Task)view.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, args)!;
         void Finish(Task task) { PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(10)); task.GetAwaiter().GetResult(); }
         var list = (DataGrid)view.FindName("FileList");
         var free = (Button)view.FindName("FreeButton");
         var search = (TextBox)view.FindName("SearchBox");
+        var rootList = (ListBox)view.FindName("RootList");
+        PumpUntil(() => ((Button)view.FindName("FindButton")).IsEnabled && rootList.Items.Cast<object>()
+            .Any(item => (string)item.GetType().GetProperty("Path")!.GetValue(item)! == savedRoot), TimeSpan.FromSeconds(10));
         Assert.Empty(list.Items); Assert.False(free.IsEnabled);
         Finish(Invoke("AddRootAsync", "Proton Drive", root));
         Assert.Equal(root, ((TextBox)view.FindName("FolderPath")).Text);
@@ -132,7 +139,6 @@ public sealed partial class DesktopTests
 
         // Explicit discovery retries saved-folder reads, retaining useful
         // listing/pages and blocking writes while the durable file is unreadable.
-        string settings = Path.Join(window.ExtensionDataRoot!, entry.Id, "folders.json");
         Assert.StartsWith(Path.GetFullPath(window.ExtensionDataRoot!) + Path.DirectorySeparatorChar, settings, StringComparison.OrdinalIgnoreCase);
         byte[] savedFolders = File.ReadAllBytes(settings);
         Finish(Invoke("BrowseAsync", pagedRoot));

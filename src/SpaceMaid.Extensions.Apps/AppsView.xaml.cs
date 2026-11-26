@@ -83,6 +83,7 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
             await previous;
             if (!Current()) return;
             Busy(true); _discovered = true;
+            UpdateEmptyState();
             await ReloadSavedFoldersAsync(work.Token);
             if (!Current()) return;
             added = _addedFolders.ToArray();
@@ -122,16 +123,15 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
             StatusText.ToolTip = string.Join("\n", discovered.Warnings);
             CoverageText.Text = "Install folders only. App data and caches elsewhere are excluded. Windows Store packages and apps outside known locations may need Add app folder."
                 + (discovered.Warnings.Count > 0 ? "\n" + string.Join("\n", discovered.Warnings) : "");
-            EmptyText.Text = "No apps found. Add an app folder.";
             _host.Log("apps-discovery", new { Drive = drive, Apps = _rows.Count, Measured = measured, Milliseconds = timer.ElapsedMilliseconds, Warnings = discovered.Warnings });
         }
         catch (OperationCanceledException) when (work.IsCancellationRequested)
-        { if (Current()) { StatusText.Text = $"Cancelled · {_rows.Count:N0} apps · {measured:N0} measured"; UpdateList(); } }
+        { if (Current()) { StatusText.Text = $"Cancelled · {_rows.Count:N0} apps · {measured:N0} measured"; _discovered = _rows.Count > 0; UpdateList(); } }
         catch (Exception error)
-        { if (Current()) { StatusText.Text = "Couldn't find apps. Try Find apps again."; StatusText.ToolTip = error.Message; _discovered = false; } }
+        { if (Current()) { StatusText.Text = "Couldn't find apps. Select Refresh to try again."; StatusText.ToolTip = error.Message; _discovered = false; } }
         finally
         {
-            if (ReferenceEquals(_work, work)) { _work = null; Busy(false); }
+            if (ReferenceEquals(_work, work)) { _work = null; Busy(false); UpdateEmptyState(); }
             work.Dispose();
         }
         bool Current() => !_shutdown && revision == _revision;
@@ -160,8 +160,15 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         if (AppList.ItemsSource is null) return;
         CollectionViewSource.GetDefaultView(_rows).Refresh();
         UpdateBars();
+        UpdateEmptyState();
+    }
+    private void UpdateEmptyState()
+    {
         EmptyPanel.Visibility = AppList.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (_rows.Count > 0 && AppList.Items.Count == 0) EmptyText.Text = "No apps match your search.";
+        if (AppList.Items.Count == 0)
+            EmptyText.Text = _rows.Count > 0 ? "No apps match your search."
+                : _work is not null ? "Finding apps…"
+                : _discovered ? "No apps found. Add an app folder." : "Select Refresh to look for apps.";
     }
     private void UpdateBars()
     { long max = _rows.Select(row => row.SizeBytes ?? 0).DefaultIfEmpty().Max(); foreach (var row in _rows) row.SetLargest(max); }
@@ -171,7 +178,6 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         AddButton.IsEnabled = !busy && !_settingsBusy && _settingsWritable;
         RetryFoldersButton.IsEnabled = SavedFolderList.IsEnabled = !busy && !_settingsBusy;
         RemoveSavedFolderButton.IsEnabled = !busy && !_settingsBusy && SavedFolderList.SelectedItem is string && _settingsWritable;
-        RefreshButton.Content = "Refresh";
         CancelButton.Visibility = busy && _work is not null ? Visibility.Visible : Visibility.Collapsed;
         WorkProgress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
     }
@@ -261,7 +267,7 @@ public partial class AppsView : UserControl, IDriveExtensionView, IExtensionCont
         try
         {
             await ReloadSavedFoldersAsync(_lifetime);
-            if (!_shutdown) StatusText.Text = _settingsError ?? "Saved app folders reloaded. Find apps to refresh discovery.";
+            if (!_shutdown) StatusText.Text = _settingsError ?? "Saved app folders reloaded. Select Refresh to look for apps.";
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         finally { _settingsBusy = false; if (!_shutdown) Busy(_work is not null); }

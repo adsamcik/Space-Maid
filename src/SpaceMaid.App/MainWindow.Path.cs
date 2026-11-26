@@ -62,7 +62,7 @@ public partial class MainWindow
         }
         PathBar.ToolTip = path;
         if (!string.Equals(previousRoot, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase))
-        { RefreshPathDriveSpace(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
+        { RefreshPathDriveSpace(); if (_initialized) _ = RefreshRecycleBinAsync(); }
     }
 
     private void UpdateDriveLocation()

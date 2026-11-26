@@ -300,12 +300,17 @@ public sealed partial class DesktopTests
         var selected = collectionProperty.GetValue(photosView)!;
         string original = (string)selected.GetType().GetProperty("Root")!.GetValue(selected)!;
         string moved = Path.Join(fixture.Path, "photo-collection-repaired"); Directory.Move(original, moved);
+        string recoveredPhoto = Path.Join(moved, "recovered.png");
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(BitmapSource.Create(1, 1, 96, 96, PixelFormats.Bgra32, null, new byte[] { 100, 120, 170, 255 }, 4)));
+        using (var output = File.Create(recoveredPhoto)) encoder.Save(output);
+        ((RadioButton)photosView.FindName("BrowseTab")).IsChecked = true;
         Assert.True(((Button)photosView.FindName("CollectionOptionsButton")).IsEnabled);
         var repair = (Task)photosView.GetType().GetMethod("ChangeCollectionLocationAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(photosView, [selected, moved])!;
         PumpUntil(() => repair.IsCompleted, TimeSpan.FromSeconds(10)); repair.GetAwaiter().GetResult();
         Assert.Equal(moved, ((TextBlock)photosView.FindName("CollectionPathText")).Text);
-        Assert.Equal("Photos haven't been checked", ((TextBlock)photosView.FindName("EmptyTitle")).Text);
+        Assert.Single(((DataGrid)photosView.FindName("FileList")).Items.Cast<object>());
         Assert.True(Directory.Exists(moved)); Assert.False(Directory.Exists(original));
         Render(window, Path.Join(artifactRoot, "artifacts", "ui", "photos-collection-repaired.png"), 1220, 940);
         selected = collectionProperty.GetValue(photosView)!;
@@ -313,7 +318,7 @@ public sealed partial class DesktopTests
             .Invoke(photosView, [selected])!;
         PumpUntil(() => remove.IsCompleted, TimeSpan.FromSeconds(10)); remove.GetAwaiter().GetResult();
         Assert.Empty(((ComboBox)photosView.FindName("CollectionList")).Items);
-        Assert.True(Directory.Exists(moved)); Assert.Equal("Add folder", ((Button)photosView.FindName("EmptyActionButton")).Content);
+        Assert.True(File.Exists(recoveredPhoto)); Assert.Equal("Add folder", ((Button)photosView.FindName("EmptyActionButton")).Content);
     }
 
     private static void CheckPhotoDiscoveryUnavailableEmpty(MainWindow window, FrameworkElement photosView, TestDirectory fixture,

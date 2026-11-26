@@ -29,7 +29,7 @@ public partial class CloudView : UserControl, IExtensionContextView
     private CancellationTokenSource? _work;
     private Task _pending = Task.CompletedTask;
     private string? _currentPath;
-    private bool _hostBusy, _settingsLoaded;
+    private bool _hostBusy, _settingsLoaded, _initialFindStarted;
     private string? _settingsError;
     private string SettingsPath => Path.Join(_host.DataDirectory, "folders.json");
     private CloudRoot? Root => RootList.SelectedItem as CloudRoot;
@@ -41,19 +41,35 @@ public partial class CloudView : UserControl, IExtensionContextView
         _storage = (host as ICloudStorageHost)?.CloudStorage;
         InitializeComponent();
         if (_storage is null) StatusText.Text = "Cloud storage services are unavailable. Update Space Maid to use this extension.";
+        IsVisibleChanged += (_, _) => FindOnFirstVisit();
     }
 
-    public void SetContext(ExtensionViewContext context) { _hostBusy = context.IsBusy; UpdateActions(); }
+    public void SetContext(ExtensionViewContext context)
+    {
+        _hostBusy = context.IsBusy;
+        UpdateActions();
+        FindOnFirstVisit();
+    }
+
+    private void FindOnFirstVisit()
+    {
+        if (_initialFindStarted || !IsVisible || _hostBusy || _storage is null || _lifetime.IsCancellationRequested) return;
+        _initialFindStarted = true;
+        _pending = FindAsync();
+    }
 
     internal async Task FindAsync()
     {
         await RunAsync(async token =>
         {
+            StatusText.Text = "Finding connected folders…";
             var result = await Task.Run(() => CloudDiscovery.Find(token, _host.Files), token);
             await ReloadSavedAsync(token);
             _discovered = result.Roots;
             UpdateRoots();
-            StatusText.Text = RootList.Items.Count == 0 ? "No connected folders found. Add a folder from your provider’s desktop app." : $"{RootList.Items.Count:N0} cloud folders · Select one to browse.";
+            StatusText.Text = RootList.Items.Count == 0 ? "No connected folders found. Add a folder from your provider’s desktop app."
+                : _currentPath is null ? $"{RootList.Items.Count:N0} cloud folders · Select one to browse."
+                : $"{RootList.Items.Count:N0} connected folders";
             DetailsText.Text = string.Join("\n", result.Warnings.Append(_settingsError).Where(w => w is not null));
             if (result.Warnings.Count > 0 || _settingsError is not null)
             {
@@ -165,7 +181,7 @@ public partial class CloudView : UserControl, IExtensionContextView
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
         {
             _settingsLoaded = false;
-            _settingsError = "Saved folders could not be read; earlier shortcuts are retained. Restore access or repair folders.json, then choose Find drives or Refresh to retry. Saved folders have not been changed.";
+            _settingsError = "Saved folders could not be read. Restore access or repair folders.json, then select Refresh drives. Earlier shortcuts are retained.";
         }
     }
 

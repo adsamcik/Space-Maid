@@ -279,10 +279,12 @@ public partial class OptimizationWindow : Window
         if (RunButton is null) return;
         bool generated = SelectedAction?.Rule is not null;
         PreviewText.Visibility = ActionsTab.IsSelected && generated ? Visibility.Visible : Visibility.Collapsed;
-        RunButton.Visibility = ActionsTab.IsSelected && generated ? Visibility.Visible : Visibility.Collapsed;
-        RunButton.IsEnabled = _work is null && ActionsTab.IsSelected && generated && GeneratedFilesTab.IsSelected && _preview?.Files.Count > 0;
-        KeepFileButton.Visibility = KeepFolderButton.Visibility = generated ? Visibility.Visible : Visibility.Collapsed;
-        KeepFileButton.IsEnabled = KeepFolderButton.IsEnabled = _work is null && generated && FileList.SelectedItem is DisplayFile;
+        bool hasReview = ActionsTab.IsSelected && generated && GeneratedFilesTab.IsSelected && _preview?.Files.Count > 0;
+        RunButton.Visibility = hasReview ? Visibility.Visible : Visibility.Collapsed;
+        RunButton.IsEnabled = hasReview && _work is null;
+        bool hasFile = generated && FileList.SelectedItem is DisplayFile;
+        KeepFileButton.Visibility = KeepFolderButton.Visibility = hasFile ? Visibility.Visible : Visibility.Collapsed;
+        KeepFileButton.IsEnabled = KeepFolderButton.IsEnabled = hasFile && _work is null;
         SaveButton.Visibility = AutomaticTab.IsSelected || ExclusionsTab.IsSelected ? Visibility.Visible : Visibility.Collapsed;
         SaveButton.Content = AutomaticTab.IsSelected ? "Save automatic settings" : "Save exclusions";
         ReviewNativeButton.IsEnabled = _work is null && SelectedAction is { Observation.CanPrepare: true, NeedsInspection: false } && _integration?.ExecuteNative is not null;

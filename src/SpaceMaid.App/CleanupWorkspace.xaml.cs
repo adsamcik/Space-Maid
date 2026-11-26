@@ -326,6 +326,10 @@ internal partial class CleanupWorkspace : UserControl
     {
         if (BuildFields is null || OptionsSummary is null || WeeklyFields is null) return;
         BuildFields.Visibility = BuildCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        BuildSummaryText.Visibility = BuildFields.Visibility;
+        BuildSummaryText.Text = int.TryParse(DaysBox.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int days) && days is >= 1 and <= 365
+            ? $"Verified rebuildable folders · {days}+ days inactive"
+            : "Choose an inactivity period from 1 to 365 days in More cleanup options.";
         UseCurrentScanButton.Visibility = _latestScan is not null && !string.Equals(_latestScan.RootPath, _definition.DiscoveryRootPath, StringComparison.OrdinalIgnoreCase)
             ? Visibility.Visible : Visibility.Collapsed;
         WorktreeFields.Visibility = WorktreeCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
@@ -462,8 +466,19 @@ internal partial class CleanupWorkspace : UserControl
         catch (Exception error) when (CleanupBatch.IsExpected(error)) { ShowNotice(error.Message); }
     }
     private async void UpdateEstimate_Click(object sender, RoutedEventArgs e) => await RefreshPreviewAsync(true);
-    private void Inspect_Click(object sender, RoutedEventArgs e) { _inspecting = !_inspecting; UpdateInspector(); }
-    private void Kept_Click(object sender, RoutedEventArgs e) { _inspecting = true; UpdateInspector(); _inspector.ShowKept(); }
+    private void Inspect_Click(object sender, RoutedEventArgs e)
+    {
+        _inspecting = !_inspecting;
+        UpdateInspector();
+        if (_inspecting) _inspector.FocusCurrentTab();
+    }
+    private void Kept_Click(object sender, RoutedEventArgs e)
+    {
+        _inspecting = true;
+        UpdateInspector();
+        _inspector.ShowKept();
+        _inspector.FocusCurrentTab();
+    }
     private void Browse_Click(object sender, RoutedEventArgs e) => BrowseRequested?.Invoke();
 
     private void UpdateInspector()

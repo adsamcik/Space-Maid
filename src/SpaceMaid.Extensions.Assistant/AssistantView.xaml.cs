@@ -87,7 +87,7 @@ public partial class AssistantView : UserControl
         var picker = new OpenFileDialog { Title = "Choose a local GGUF instruction model", Filter = "GGUF models (*.gguf)|*.gguf|All files (*.*)|*.*", CheckFileExists = true };
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
         Invalidate(); ModelPathBox.Text = picker.FileName;
-        try { SaveSettings(); StatusText.Text = _root is null ? "Model selected. Choose a scanned folder." : "Model selected. Refresh to continue."; }
+        try { SaveSettings(); StatusText.Text = _root is null ? "Model selected. Choose a scanned folder." : "Model selected."; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { StatusText.Text = "Settings could not be saved: " + error.Message; }
         UpdateActions();
     }
@@ -102,7 +102,7 @@ public partial class AssistantView : UserControl
     private void Exclusions_Changed(object sender, TextChangedEventArgs e)
     {
         if (!_initialized) return;
-        Invalidate(); StatusText.Text = "Exclusions changed. Refresh to continue."; UpdateActions();
+        Invalidate(); StatusText.Text = "Exclusions changed."; UpdateActions();
     }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await StartAsync(RefreshSummaryAsync);
     private async void Run_Click(object sender, RoutedEventArgs e) => await StartAsync(async token =>
@@ -200,7 +200,7 @@ public partial class AssistantView : UserControl
         RevokeAuthority(cancel);
         _hasCompletedSuggestions = false; _contextNotice = null;
         SuggestionList.ItemsSource = null; EmptyText.Visibility = Visibility.Visible; EvidenceText.Text = "";
-        EmptyText.Text = _root is null ? "Choose a scanned folder to begin." : "Refresh to find suggestions.";
+        EmptyText.Text = _root is null ? "Choose a scanned folder to begin." : "Find suggestions to check the latest folder evidence.";
         UpdateActions();
     }
     private void RevokeAuthority(bool cancel = true)
@@ -220,7 +220,7 @@ public partial class AssistantView : UserControl
         bool retry = _session is null && HasRetainedContext;
         RunButton.Content = retry ? "Refresh and retry" : "Find suggestions";
         RunButton.ToolTip = retry ? "Refresh this folder's evidence, then retry the retained question. Previous suggestions remain for reference until replaced." : "Investigate the current folder evidence with the local model.";
-        RunButton.IsEnabled = !_busy && EnabledBox.IsChecked == true && _root is not null && (_session is not null || retry) && !string.IsNullOrEmpty(ModelPathBox.Text);
+        RunButton.IsEnabled = !_busy && EnabledBox.IsChecked == true && _root is not null && !string.IsNullOrEmpty(ModelPathBox.Text);
         CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
         ProgressStrip.Visibility = _busy ? Visibility.Visible : Visibility.Hidden;
         ContextText.Text = _contextNotice ?? "";

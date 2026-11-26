@@ -130,8 +130,8 @@ public sealed partial class DesktopTests
             Assert.Equal(4, Directory.GetFiles(content, "*", SearchOption.AllDirectories).Length);
             refresh = view.RefreshSummaryAsync(default); PumpUntil(() => refresh.IsCompleted, TimeSpan.FromSeconds(3)); refresh.GetAwaiter().GetResult();
             ((TextBox)view.FindName("ExclusionsBox")).Text = Path.Join(content, "Personal photos");
-            Assert.False(((Button)view.FindName("RunButton")).IsEnabled); Assert.Empty(((TextBlock)view.FindName("EvidenceText")).Text);
-            refresh = view.RefreshSummaryAsync(default); PumpUntil(() => refresh.IsCompleted, TimeSpan.FromSeconds(3)); refresh.GetAwaiter().GetResult();
+            Assert.True(((Button)view.FindName("RunButton")).IsEnabled); Assert.Empty(((TextBlock)view.FindName("EvidenceText")).Text);
+            Assert.False(((Button)view.FindName("ReviewButton")).IsEnabled);
             waitForCancellation = true;
             ((Button)view.FindName("RunButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             PumpUntil(() => client!.Calls.Count > 0 && ((Button)view.FindName("CancelButton")).IsVisible, TimeSpan.FromSeconds(3));

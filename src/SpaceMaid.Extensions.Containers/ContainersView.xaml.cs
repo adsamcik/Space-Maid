@@ -98,6 +98,7 @@ public partial class ContainersView : UserControl, SpaceMaid.Extensions.Contract
         if (_work is not null || StorageList.SelectedItem is not DockerStorageItem { CanClean: true } target) return;
         using var work = CancellationTokenSource.CreateLinkedTokenSource(_lifetime); _work = work;
         InspectButton.IsEnabled = false; CleanupButton.IsEnabled = false; CancelButton.Visibility = Visibility.Visible;
+        string previousStatus = StatusText.Text;
         DockerCleanupResult? result = null;
         try
         {
@@ -110,8 +111,9 @@ public partial class ContainersView : UserControl, SpaceMaid.Extensions.Contract
         catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or OperationCanceledException or InvalidOperationException or JsonException)
         { result = new(false, "Cleanup did not start: " + error.Message); }
         finally { _work = null; InspectButton.IsEnabled = true; CancelButton.Visibility = Visibility.Collapsed; UpdateSelection(); }
+        if (result is null) { StatusText.Text = previousStatus; return; }
         await InspectAsync();
-        if (result is not null) StatusText.Text = result.Message;
+        StatusText.Text = result.Message;
     }
     private void Guide_Navigate(object sender, RequestNavigateEventArgs e)
     {

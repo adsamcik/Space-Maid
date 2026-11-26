@@ -41,9 +41,16 @@ public sealed partial class DesktopTests
             var generated = actions.Items.Cast<OptimizationActionRow>().Single(row => row.Rule is not null);
             Assert.Empty(native.Commands); Assert.False(((CheckBox)window.FindName("AutomaticBox")).IsChecked);
             actions.SelectedItem = generated;
+            Assert.Equal(Visibility.Collapsed, run.Visibility);
             preview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); PumpUntil(() => preview.IsEnabled, TimeSpan.FromSeconds(10));
-            Assert.Equal(2, files.Items.Count); Assert.True(run.IsEnabled);
+            Assert.Equal(2, files.Items.Count); Assert.True(run.IsVisible && run.IsEnabled);
             ((TabItem)window.FindName("AutomaticTab")).IsSelected = true;
+            var limits = (Expander)window.FindName("PolicyControls");
+            Assert.False(limits.IsExpanded);
+            limits.IsExpanded = true;
+            window.UpdateLayout();
+            Assert.True(((TextBox)window.FindName("DaysBox")).IsVisible);
+            limits.IsExpanded = false;
             Assert.Equal(Visibility.Collapsed, ((TextBlock)window.FindName("PreviewText")).Visibility);
             ((Button)window.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var consent = OptimizationSettings.Load(saved).Policy; Assert.False(consent.Enabled); Assert.Empty(consent.EnabledRules);

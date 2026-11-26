@@ -21,7 +21,7 @@ Release binaries are currently unsigned.
 
 Release builds check this repository's GitHub Releases daily when enabled, including while the app stays open. In **More → Updates**, enable **Download updates automatically** to prepare updates in the background, or download them manually. Automatic downloads wait until both the release publication and the update package's last change are at least 24 hours old; manual downloads remain available during this protection period. Choose **Restart and update** when ready; active jobs must finish first, and settings and photo catalogs are retained. Downloads use HTTPS, stay on GitHub's release hosts and are checked against the release's SHA-256 and size before installation. Older versions are rejected; stable builds ignore prereleases. Source builds do not check for updates.
 
-Enable fast scanning when prompted to authorize the read-only NTFS helper. The app stays unelevated; standard scanning remains available if you decline.
+Space Maid opens ready to scan. To authorize the read-only NTFS helper, choose **More → Enable fast scanning**. The app stays unelevated.
 
 The same helper accelerates folder scans, cleanup review, rechecks and app-size refreshes with scoped NTFS metadata queries. Rechecks use cached file identities and the NTFS change journal to reread changed folders and new branches, while checking current sizes in batches. A verified move to the Recycle Bin can reuse the folder's existing tree. Journal gaps, hard-link changes and unsupported queries fall back to focused metadata reads; cleanup safeguards remain live. No background rescanning is required.
 

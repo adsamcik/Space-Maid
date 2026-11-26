@@ -28,13 +28,12 @@ public sealed partial class DesktopTests
         var window = new DuplicateWindow(scan, [], paths => changed.AddRange(paths), _ => { }, default, new FileOperations(), (_, _) => { });
         try
         {
+            var readLimit = (TextBox)window.FindName("ReadLimitBox"); readLimit.Text = "1";
             window.ShowActivated = false; window.ShowInTaskbar = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -10000; window.Top = -10000; window.Show();
-            var readLimit = (TextBox)window.FindName("ReadLimitBox"); readLimit.Text = "1";
             var find = (Button)window.FindName("FindButton");
-            find.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            PumpUntil(() => find.IsEnabled, TimeSpan.FromSeconds(10));
             var groups = (DataGrid)window.FindName("GroupList"); var files = (DataGrid)window.FindName("FileList");
+            PumpUntil(() => find.IsEnabled && groups.Items.Count > 0, TimeSpan.FromSeconds(10));
             Assert.Single(groups.Items.Cast<object>()); Assert.Equal(2, files.Items.Count);
             string selectedPath = (string)files.SelectedItem.GetType().GetProperty("Path")!.GetValue(files.SelectedItem)!;
             var retry = (Button)window.FindName("RetryButton"); Assert.True(retry.IsEnabled);
