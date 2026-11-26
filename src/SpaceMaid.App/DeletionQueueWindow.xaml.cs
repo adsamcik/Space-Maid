@@ -81,6 +81,7 @@ internal sealed class EntryDeletionJob(string path, bool permanent) : INotifyPro
     internal EntryDeletionState State { get; private set; }
     internal DeletionTarget? Target { get; init; }
     internal WeakReference<ScanSnapshot>? Source { get; init; }
+    internal FileIdentity? InventoryIdentity { get; init; }
     internal TaskCompletionSource<RecycleResult?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public event PropertyChangedEventHandler? PropertyChanged;

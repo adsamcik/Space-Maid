@@ -6,6 +6,9 @@
         WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="14"
         Background="{DynamicResource WindowBackground}" Foreground="{DynamicResource WindowForeground}"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PathKeyDown">
+    <Window.Resources>
+        <local:ExplorerDeletionStatus x:Key="ExploreDeletionStatus" />
+    </Window.Resources>
     <Grid Margin="8,16">
         <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
@@ -177,7 +180,18 @@
                                ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Folder and file tree. Use Left and Right to collapse and expand folders. Delete moves the selection to the Recycle Bin. Shift+Delete asks before permanent deletion. Shift+F10 opens its actions.">
                           <ListView.ContextMenu><ContextMenu /></ListView.ContextMenu>
                           <ListView.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
-                          <ListView.ItemContainerStyle><Style TargetType="ListViewItem" BasedOn="{StaticResource TreeRow}" /></ListView.ItemContainerStyle>
+                          <ListView.ItemContainerStyle>
+                              <Style TargetType="ListViewItem" BasedOn="{StaticResource TreeRow}">
+                                  <Setter Property="AutomationProperties.ItemStatus">
+                                      <Setter.Value>
+                                          <MultiBinding Converter="{StaticResource ExploreDeletionStatus}">
+                                              <Binding />
+                                              <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ListView}" />
+                                          </MultiBinding>
+                                      </Setter.Value>
+                                  </Setter>
+                              </Style>
+                          </ListView.ItemContainerStyle>
                           <ListView.View>
                               <GridView x:Name="TreeColumns" ColumnHeaderContainerStyle="{StaticResource TreeColumnHeader}" AllowsColumnReorder="True">
                                   <GridViewColumn x:Name="NameColumn" Width="260">
@@ -192,7 +206,15 @@
                                                       <DataTrigger Binding="{Binding IsRemoved}" Value="True"><Setter Property="TextDecorations" Value="Strikethrough" /></DataTrigger>
                                                   </Style.Triggers></Style></TextBlock.Style>
                                               </TextBlock>
-                                              <TextBlock Text="{Binding Flags}" FontSize="11" Opacity="0.65"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Flags}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+                                              <TextBlock FontSize="11" Opacity="0.8" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
+                                                  <TextBlock.Text>
+                                                      <MultiBinding Converter="{StaticResource ExploreDeletionStatus}" ConverterParameter="Flags">
+                                                          <Binding />
+                                                          <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ListView}" />
+                                                      </MultiBinding>
+                                                  </TextBlock.Text>
+                                                  <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                                              </TextBlock>
                                           </StackPanel>
                                       </Grid></DataTemplate></GridViewColumn.CellTemplate>
                                   </GridViewColumn>
@@ -255,6 +277,16 @@
                       <StackPanel Grid.Row="2" x:Name="EntryDetail" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
                           <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,7" />
                           <TextBox x:Name="SelectedEntryPath" Text="{Binding Path, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" BorderThickness="0" Background="Transparent" FontSize="12" Padding="0" ToolTip="{Binding Path}" AutomationProperties.Name="Selected entry path" />
+                          <TextBlock x:Name="SelectedDeletionStatus" FontSize="12" FontWeight="SemiBold" Margin="0,4,0,0"
+                                     TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite">
+                              <TextBlock.Text>
+                                  <MultiBinding Converter="{StaticResource ExploreDeletionStatus}">
+                                      <Binding />
+                                      <Binding Path="Tag" ElementName="SpaceTree" />
+                                  </MultiBinding>
+                              </TextBlock.Text>
+                              <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger></Style.Triggers></Style></TextBlock.Style>
+                          </TextBlock>
                           <TextBlock x:Name="EntryTypeText" Text="{Binding TypeDescription}" TextWrapping="Wrap" Opacity="0.7" FontSize="12" Margin="0,4,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding TypeDescription}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
                           <WrapPanel Margin="0,4,0,0"><TextBlock Text="Allocated" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Allocated}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Logical" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Logical}" FontWeight="SemiBold" FontSize="12" Margin="0,0,16,0" /><TextBlock Text="Of parent" Opacity="0.65" FontSize="12" Margin="0,0,5,0" /><TextBlock Text="{Binding Share}" FontWeight="SemiBold" FontSize="12" /></WrapPanel>
                           <TextBlock Text="{Binding SizeNote}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="32" ToolTip="{Binding SizeNote}" Opacity="0.65" FontSize="11" Margin="0,5,0,0"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding SizeNote}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>

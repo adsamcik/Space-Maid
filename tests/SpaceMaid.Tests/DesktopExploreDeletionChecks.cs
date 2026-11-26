@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -125,9 +126,12 @@ public sealed partial class DesktopTests
                 queue = OpenQueue();
                 Select(stopped);
                 _ = window.DeleteSelectedEntryAsync();
+                Assert.NotEmpty(((TextBlock)window.FindName("SelectedDeletionStatus")).Text);
                 PumpUntil(() => HasState(stopped, EntryDeletionState.Running), TimeSpan.FromSeconds(5));
+                AssertDeletionFeedback("Moving to Recycle Bin…", "Recycling…");
                 JobAction(stopped)();
                 PumpUntil(() => HasState(stopped, EntryDeletionState.Cancelled), TimeSpan.FromSeconds(5));
+                AssertDeletionFeedback("");
                 Assert.Equal("owned", File.ReadAllText(stopped));
                 Select(folder);
                 recycleFolder = window.DeleteSelectedEntryAsync();
@@ -141,12 +145,15 @@ public sealed partial class DesktopTests
                 Select(replaced);
                 _ = window.DeleteSelectedEntryAsync();
                 PumpUntil(() => HasState(replaced, EntryDeletionState.Queued), TimeSpan.FromSeconds(5));
+                AssertDeletionFeedback("Recycle Bin move queued", "Recycle queued");
                 File.Move(replaced, replaced + ".original");
                 File.WriteAllText(replaced, "replacement");
 
                 Select(forever);
                 RunDeletion(forever, approve: true, binUnavailable: false, () => _ = window.DeleteSelectedEntryAsync(permanent: true),
                     () => HasState(forever, EntryDeletionState.Queued));
+                AssertDeletionFeedback("Permanent deletion queued", "Delete queued");
+                Assert.True(File.Exists(forever));
                 Assert.Null(window.DeleteSelectedEntryAsync(permanent: true).GetAwaiter().GetResult());
                 Assert.Contains("already queued for permanent deletion", status.Text);
                 Select(cancelled);
@@ -154,12 +161,20 @@ public sealed partial class DesktopTests
                 PumpUntil(() => HasState(cancelled, EntryDeletionState.Queued), TimeSpan.FromSeconds(5));
                 Assert.Same(Job(folder), ((ListBox)queue.FindName("Jobs")).Items[0]);
                 RenderMenu((FrameworkElement)queue.Content, Path.Join(artifactRoot, "artifacts", "ui", "deletion-queue.png"), queue.Background);
+                RenderMenu((FrameworkElement)window.FindName("ExplorePanel"),
+                    Path.Join(artifactRoot, "artifacts", "ui", "explore-deletion-feedback.png"), window.Background);
                 JobAction(cancelled)();
                 Assert.Equal(EntryDeletionState.Cancelled, Job(cancelled).State);
+                AssertDeletionFeedback("");
                 var rescan = window.NavigatePathAsync(enteredPath, forceScan: true);
                 PumpUntil(() => rescan.IsCompleted, TimeSpan.FromSeconds(15));
                 Assert.True(rescan.GetAwaiter().GetResult());
+                Select(forever);
+                AssertDeletionFeedback("Permanent deletion queued", "Delete queued");
+                Select(replaced);
+                AssertDeletionFeedback("");
                 Select(keep);
+                AssertDeletionFeedback("");
                 Assert.True(scanButton.IsEnabled);
             }
             finally
@@ -184,6 +199,18 @@ public sealed partial class DesktopTests
                 Assert.NotNull(current.FindEntry(cancelled));
             }
             finally { DeletionTests.RestoreFixture(recycledFolder, folder); queue.Close(); }
+        }
+
+        void AssertDeletionFeedback(string expected, string? label = null)
+        {
+            window.UpdateLayout();
+            var row = Assert.IsType<ExplorerRow>(tree.SelectedItem);
+            Assert.False(row.IsRemoved);
+            Assert.Equal(expected, ((TextBlock)window.FindName("SelectedDeletionStatus")).Text);
+            var item = Assert.IsType<ListViewItem>(tree.ItemContainerGenerator.ContainerFromItem(row));
+            Assert.Equal(expected, AutomationProperties.GetItemStatus(item));
+            if (label is not null)
+                Assert.Contains(Descendants(item).OfType<TextBlock>(), text => text.IsVisible && text.Text == label);
         }
 
         DeletionQueueWindow OpenQueue()

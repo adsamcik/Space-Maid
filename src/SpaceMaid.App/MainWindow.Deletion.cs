@@ -15,6 +15,7 @@ public partial class MainWindow
     private readonly CancellationTokenSource _deletionLifetime = new();
     private readonly SemaphoreSlim _deletionConfirmation = new(1);
     private readonly List<RemovalChange> _removalChanges = [];
+    private readonly List<string> _checkingDeletionPaths = [];
     private EntryDeletionJob? _activeDeletion;
     private CancellationTokenSource? _activeDeletionCancellation, _deletionRefreshCancellation;
     private Task? _deletionWorker, _deletionRefresh;
@@ -52,6 +53,7 @@ public partial class MainWindow
         if (!CanUseEntryMenu(scan, link) || scan.EntryPath(link) is not { } path) return null;
         if (DeletionAlreadyQueued(path, permanent)) return null;
         _deletionAdmissions++;
+        _checkingDeletionPaths.Add(path);
         UpdateDeletionQueue();
         try
         {
@@ -71,7 +73,12 @@ public partial class MainWindow
                 _deletionJobs.Insert(RunningAndWaitingDeletions, failed);
             }
         }
-        finally { _deletionAdmissions--; UpdateDeletionQueue(); }
+        finally
+        {
+            _checkingDeletionPaths.Remove(path);
+            _deletionAdmissions--;
+            UpdateDeletionQueue();
+        }
         return null;
     }
 
@@ -106,7 +113,9 @@ public partial class MainWindow
 
     private EntryDeletionJob EnqueueDeletion(DeletionTarget target, bool permanent, WeakReference<ScanSnapshot>? source)
     {
-        var job = new EntryDeletionJob(target.Path, permanent) { Target = target, Source = source };
+        FileIdentity? identity = source?.TryGetTarget(out var scan) == true && scan.FindEntry(target.Path) is { } link
+            ? ExplorerDeletionFeedback.NativeIdentity(scan, link) : null;
+        var job = new EntryDeletionJob(target.Path, permanent) { Target = target, Source = source, InventoryIdentity = identity };
         int index = RunningAndWaitingDeletions;
         _pendingDeletions.AddLast(job);
         _deletionJobs.Insert(index, job);
@@ -267,6 +276,7 @@ public partial class MainWindow
     private void UpdateDeletionQueue()
     {
         if (_closing) return;
+        UpdateExplorerDeletionFeedback();
         int active = RunningAndWaitingDeletions + _deletionAdmissions;
         int attention = _deletionJobs.Count(job => job.State is EntryDeletionState.Failed or EntryDeletionState.RecycleRefused);
         DeletionQueueButton.Visibility = active > 0 || _deletionJobs.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -276,6 +286,28 @@ public partial class MainWindow
         _deletionWindow?.UpdateSummary(_pendingDeletions.Count, _activeDeletion is not null, _deletionAdmissions,
             _deletionJobs.Any(job => job.CanClear));
         UpdateUpdateButton();
+    }
+
+    private void UpdateExplorerDeletionFeedback()
+    {
+        var feedback = new Dictionary<string, ExplorerDeletionFeedback>(StringComparer.Ordinal);
+        foreach (var change in _removalChanges)
+            if (change.Removed is { } removed && change.Source is { } source)
+                feedback[change.Path] = removed == EntryRemoval.Deleted
+                    ? new("Deleted", "Permanently deleted", RemovedFrom: source)
+                    : new("Recycled", "Moved to Recycle Bin", RemovedFrom: source);
+        foreach (string path in _checkingDeletionPaths)
+            feedback[path] = new("Checking…", "Checking deletion request…");
+        foreach (var job in _pendingDeletions)
+            feedback[job.Path] = job.Permanent
+                ? new("Delete queued", "Permanent deletion queued", job.InventoryIdentity)
+                : new("Recycle queued", "Recycle Bin move queued", job.InventoryIdentity);
+        if (_activeDeletion is { } active)
+            feedback[active.Path] = active.State == EntryDeletionState.Stopping
+                ? new("Stopping…", "Stopping deletion…", active.InventoryIdentity)
+                : active.Permanent ? new("Deleting…", "Deleting permanently…", active.InventoryIdentity)
+                : new("Recycling…", "Moving to Recycle Bin…", active.InventoryIdentity);
+        SpaceTree.Tag = feedback;
     }
 
     private bool ConfirmDeletionShutdown() => !HasDeletionWork || MessageBox.Show(this,
@@ -360,7 +392,11 @@ public partial class MainWindow
         catch (OperationCanceledException) when (work.IsCancellationRequested) { }
         finally
         {
-            if (!work.IsCancellationRequested) _removalChanges.RemoveRange(0, changes.Length);
+            if (!work.IsCancellationRequested)
+            {
+                _removalChanges.RemoveRange(0, changes.Length);
+                if (!_closing) UpdateExplorerDeletionFeedback();
+            }
             _deletionRefreshCancellation = null;
             _deletionRefresh = null;
             TryRefreshAfterDeletions();
