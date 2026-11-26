@@ -168,7 +168,12 @@ public partial class MainWindow
         finally
         {
             _openingPath = false;
-            if (!_closing) { UpdatePathAvailability(_work is not null); DrainExplorerRecheck(); }
+            if (!_closing)
+            {
+                UpdatePathAvailability(_work is not null);
+                DrainExplorerRecheck();
+                TryRefreshAfterDeletions();
+            }
         }
     }
 

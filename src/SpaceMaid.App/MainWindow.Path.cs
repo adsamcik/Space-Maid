@@ -219,6 +219,7 @@ public partial class MainWindow
                 UpdatePathAvailability(_work is not null);
                 if (_editingPath) PathEditor.Focus();
                 DrainExplorerRecheck();
+                TryRefreshAfterDeletions();
             }
         }
     }

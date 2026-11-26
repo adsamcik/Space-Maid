@@ -70,11 +70,11 @@ public partial class MainWindow
 
     private async Task RefreshAffectedAsync(ScanSnapshot scan, IReadOnlyList<ScanRecheckRequest> requests,
         string note, CancellationToken token, ScanLog log, ScanSnapshot? prechecked = null,
-        IReadOnlyList<Opportunity>? findings = null)
+        IReadOnlyList<Opportunity>? findings = null, bool background = false)
     {
-        var selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
-        string? detailPath = OpportunityBrowser?.Detail?.Path;
-        if (!_removingEntry) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
+        var selectedOpportunities = background ? null : _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
+        string? detailPath = background ? null : OpportunityBrowser?.Detail?.Path;
+        if (!background) StatusText.Text = prechecked is null ? "Rechecking affected metadata…" : "Updating checked results…";
         foreach (var request in requests) _staleScopes.Add(request);
         var dirty = _staleScopes.ToArray();
         var timer = Stopwatch.StartNew();
@@ -101,7 +101,8 @@ public partial class MainWindow
             var column = _treeSortColumn;
             bool descending = _treeDescending;
             var explorer = await PrepareExplorerRefreshAsync(updated, analysis.Opportunities,
-                expanded, selected, column, descending, retainedRemoved, _removingEntry ? token : CancellationToken.None);
+                expanded, selected, column, descending, retainedRemoved, background ? token : CancellationToken.None);
+            if (background) token.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_snapshot, scan)) return;
             // A browse completed against the earlier inventory while the tree
             // was prepared. Build its presentation from the user's latest view.
@@ -111,6 +112,11 @@ public partial class MainWindow
             break;
         }
         _staleScopes.UnionWith(dirty);
+        if (background)
+        {
+            selectedOpportunities = _rows.Where(row => row.Selected).Select(row => row.SelectionIdentity).ToHashSet();
+            detailPath = OpportunityBrowser?.Detail?.Path;
+        }
         PublishOpportunities(updated, analysis.Opportunities, analysis.Groups, selectedOpportunities, detailPath, preserveScope: true);
         OpportunitiesTab.Content = $"Opportunities · {_rows.Count:N0}";
         CandidateText.Text = SizeText.Format(analysis.Total.EstimatedBytes);
@@ -135,7 +141,7 @@ public partial class MainWindow
             updated.IncompleteRecheckScopes, updated.WarningCount, updated.Warnings, updated.AllocatedBytes, updated.LogicalBytes, Opportunities = _rows.Count });
         if (updated.IncompleteRecheckScopes.Count > 0)
         {
-            string result = _removingEntry ? note + " " : "";
+            string result = background ? note + " " : "";
             MarkScanStale(result + "Readable items refreshed. Some locations are unavailable; earlier values kept where available. See scan details.");
             TreeNote.Text = "Partial refresh · Some locations unavailable";
         }

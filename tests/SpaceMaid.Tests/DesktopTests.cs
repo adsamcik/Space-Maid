@@ -620,7 +620,7 @@ public sealed partial class DesktopTests
                             Assert.Equal(bin, removed.Path);
                             Assert.Equal("—", removed.Allocated);
                             Assert.True(tree.IsEnabled);
-                            Assert.False(scanButton.IsEnabled);
+                            Assert.True(scanButton.IsEnabled);
                             Assert.Same(originalRows, tree.ItemsSource);
                             window.UpdateLayout();
                             var row = Assert.IsType<ListViewItem>(tree.ItemContainerGenerator.ContainerFromItem(removed));
@@ -642,7 +642,7 @@ public sealed partial class DesktopTests
                     dialog.Close();
                 }, Dispatcher.CurrentDispatcher);
                 var recycleTask = window.DeleteSelectedEntryAsync();
-                PumpUntil(() => recycleTask.IsCompleted, TimeSpan.FromSeconds(10));
+                PumpUntil(() => recycleTask.IsCompleted && window.ExploreDeletionsIdle, TimeSpan.FromSeconds(10));
                 warningTimer.Stop();
                 originalRows.CollectionChanged -= observeRecycle;
                 var recycled = Assert.IsType<RecycleResult>(recycleTask.GetAwaiter().GetResult());

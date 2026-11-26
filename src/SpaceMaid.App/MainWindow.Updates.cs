@@ -49,7 +49,8 @@ public partial class MainWindow
         if (_closing) return;
         if (_updates is null) InitializeUpdates();
         if (_updatesWindow is not null) { _updatesWindow.Activate(); return; }
-        _updatesWindow = new(_updates!, CanRestartForUpdate, () => { if (CanRestartForUpdate()) { _restartForUpdate = true; Close(); } }) { Owner = this };
+        bool CanRestart() => CanRestartForUpdate() && !HasDeletionWork;
+        _updatesWindow = new(_updates!, CanRestart, () => { if (CanRestart()) { _restartForUpdate = true; Close(); } }) { Owner = this };
         _updatesWindow.Closed += (_, _) => _updatesWindow = null;
         _updatesWindow.Show();
     }

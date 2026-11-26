@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using SpaceMaid.App;
+using SpaceMaid.Core.Analysis;
 using Xunit;
 
 namespace SpaceMaid.Tests;
@@ -36,15 +37,18 @@ public sealed partial class DesktopTests
         var tree = (ListView)window.FindName("SpaceTree");
         var status = (TextBlock)window.FindName("StatusText");
         var scanButton = (Button)window.FindName("ScanButton");
+        var queueButton = (Button)window.FindName("DeletionQueueButton");
 
         Select(large);
-        RunDeletion(large, approve: false, binUnavailable: true, () => _ = window.DeleteSelectedEntryAsync());
+        RunDeletion(large, approve: null, binUnavailable: false, () => _ = window.DeleteSelectedEntryAsync());
+        var queue = OpenQueue();
+        Assert.Equal(EntryDeletionState.RecycleRefused, Job(large).State);
+        RunDeletion(large, approve: false, binUnavailable: true, JobAction(large));
         Assert.Equal(length, new FileInfo(sparse).Length);
-        Assert.True(status.Text is "Deletion cancelled." or
-            "Recycling stopped. Some contents may already have moved. Recheck or rescan to update results.", status.Text);
+        Assert.Equal(EntryDeletionState.RecycleRefused, Job(large).State);
         Assert.False(Assert.IsType<ExplorerRow>(tree.SelectedItem).IsRemoved);
 
-        RunDeletion(large, approve: true, binUnavailable: true, () => _ = window.DeleteSelectedEntryAsync());
+        RunDeletion(large, approve: true, binUnavailable: true, JobAction(large));
         Assert.False(Directory.Exists(large));
         Assert.Contains("Permanently deleted Camera originals.", status.Text);
         Assert.DoesNotContain("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
@@ -59,11 +63,12 @@ public sealed partial class DesktopTests
         Select(largeFile);
         var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(tree), Environment.TickCount, Key.Delete)
             { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-        RunDeletion(largeFile, approve: false, binUnavailable: true, () => tree.RaiseEvent(key));
+        RunDeletion(largeFile, approve: null, binUnavailable: false, () => tree.RaiseEvent(key));
         Assert.True(key.Handled);
         Assert.Equal(fileLength, new FileInfo(largeFile).Length);
         Assert.Equal(Path.Join(enteredPath, Path.GetFileName(largeFile)), Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
-        RunDeletion(largeFile, approve: true, binUnavailable: true, MenuAction("Move to Recycle Bin"));
+        Assert.Equal(EntryDeletionState.RecycleRefused, Job(largeFile).State);
+        RunDeletion(largeFile, approve: true, binUnavailable: true, JobAction(largeFile));
         Assert.False(File.Exists(largeFile));
         Assert.Contains("Permanently deleted Camera archive.zip.", status.Text);
         Assert.DoesNotContain("OUT OF DATE", ((TextBlock)window.FindName("TreeNote")).Text);
@@ -94,6 +99,115 @@ public sealed partial class DesktopTests
         }
         finally { DeletionTests.RestoreFixture(recycled, recycleFile); }
         Assert.Equal("keep", File.ReadAllText(keep));
+        queue.Close();
+        CheckMixedQueue();
+
+        void CheckMixedQueue()
+        {
+            string folder = Directory.CreateDirectory(Path.Join(fixture.Path, "Batch folder")).FullName;
+            string child = Path.Join(folder, "child.txt");
+            string forever = Path.Join(fixture.Path, "batch-delete.txt");
+            string cancelled = Path.Join(fixture.Path, "batch-cancel.txt");
+            string replaced = Path.Join(fixture.Path, "batch-replaced.txt");
+            string stopped = Path.Join(fixture.Path, "batch-stop.txt");
+            foreach (string path in new[] { child, forever, cancelled, replaced, stopped }) File.WriteAllText(path, "owned");
+            var refreshed = window.InitializeExplorerAsync(window.Operations.ScanAsync(enteredPath).GetAwaiter().GetResult(), [], default);
+            PumpUntil(() => refreshed.IsCompleted, TimeSpan.FromSeconds(10));
+            refreshed.GetAwaiter().GetResult();
+
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var blocker = CleanupMutationLease.RunAsync(async () => { entered.SetResult(); await release.Task; });
+            Task<RecycleResult?>? recycleFolder = null;
+            try
+            {
+                PumpUntil(() => entered.Task.IsCompleted, TimeSpan.FromSeconds(5));
+                queue = OpenQueue();
+                Select(stopped);
+                _ = window.DeleteSelectedEntryAsync();
+                PumpUntil(() => HasState(stopped, EntryDeletionState.Running), TimeSpan.FromSeconds(5));
+                JobAction(stopped)();
+                PumpUntil(() => HasState(stopped, EntryDeletionState.Cancelled), TimeSpan.FromSeconds(5));
+                Assert.Equal("owned", File.ReadAllText(stopped));
+                Select(folder);
+                recycleFolder = window.DeleteSelectedEntryAsync();
+                PumpUntil(() => HasState(folder, EntryDeletionState.Running), TimeSpan.FromSeconds(5));
+                Assert.True(scanButton.IsEnabled);
+                Assert.True(tree.IsEnabled);
+                Select(child);
+                Assert.Null(window.DeleteSelectedEntryAsync().GetAwaiter().GetResult());
+                Assert.Contains("covered by the queued folder", status.Text);
+
+                Select(replaced);
+                _ = window.DeleteSelectedEntryAsync();
+                PumpUntil(() => HasState(replaced, EntryDeletionState.Queued), TimeSpan.FromSeconds(5));
+                File.Move(replaced, replaced + ".original");
+                File.WriteAllText(replaced, "replacement");
+
+                Select(forever);
+                RunDeletion(forever, approve: true, binUnavailable: false, () => _ = window.DeleteSelectedEntryAsync(permanent: true),
+                    () => HasState(forever, EntryDeletionState.Queued));
+                Assert.Null(window.DeleteSelectedEntryAsync(permanent: true).GetAwaiter().GetResult());
+                Assert.Contains("already queued for permanent deletion", status.Text);
+                Select(cancelled);
+                _ = window.DeleteSelectedEntryAsync();
+                PumpUntil(() => HasState(cancelled, EntryDeletionState.Queued), TimeSpan.FromSeconds(5));
+                Assert.Same(Job(folder), ((ListBox)queue.FindName("Jobs")).Items[0]);
+                RenderMenu((FrameworkElement)queue.Content, Path.Join(artifactRoot, "artifacts", "ui", "deletion-queue.png"), queue.Background);
+                JobAction(cancelled)();
+                Assert.Equal(EntryDeletionState.Cancelled, Job(cancelled).State);
+                var rescan = window.NavigatePathAsync(enteredPath, forceScan: true);
+                PumpUntil(() => rescan.IsCompleted, TimeSpan.FromSeconds(15));
+                Assert.True(rescan.GetAwaiter().GetResult());
+                Select(keep);
+                Assert.True(scanButton.IsEnabled);
+            }
+            finally
+            {
+                release.TrySetResult();
+                PumpUntil(() => window.ExploreDeletionsIdle, TimeSpan.FromSeconds(15));
+                blocker.GetAwaiter().GetResult();
+            }
+            var recycledFolder = Assert.IsType<string>(recycleFolder!.GetAwaiter().GetResult()?.RecycledPath);
+            try
+            {
+                Assert.Equal("owned", File.ReadAllText(Path.Join(recycledFolder, "child.txt")));
+                Assert.False(File.Exists(forever));
+                Assert.Equal(EntryDeletionState.Completed, Job(forever).State);
+                Assert.Equal(EntryDeletionState.Failed, Job(replaced).State);
+                Assert.Equal("replacement", File.ReadAllText(replaced));
+                Assert.Equal("owned", File.ReadAllText(cancelled));
+                Assert.Equal(keep, Assert.IsType<ExplorerRow>(tree.SelectedItem).Path, ignoreCase: true);
+                var current = Assert.IsType<ExplorerRows>(tree.ItemsSource).Scan;
+                Assert.Null(current.FindEntry(folder));
+                Assert.Null(current.FindEntry(forever));
+                Assert.NotNull(current.FindEntry(cancelled));
+            }
+            finally { DeletionTests.RestoreFixture(recycledFolder, folder); queue.Close(); }
+        }
+
+        DeletionQueueWindow OpenQueue()
+        {
+            queueButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            return app.Windows.OfType<DeletionQueueWindow>().Single();
+        }
+
+        EntryDeletionJob Job(string path) => ((ListBox)queue.FindName("Jobs")).Items.OfType<EntryDeletionJob>()
+            .First(job => string.Equals(job.Path, path, StringComparison.OrdinalIgnoreCase));
+
+        bool HasState(string path, EntryDeletionState state) => ((ListBox)queue.FindName("Jobs")).Items.OfType<EntryDeletionJob>()
+            .Any(job => string.Equals(job.Path, path, StringComparison.OrdinalIgnoreCase) && job.State == state);
+
+        Action JobAction(string path)
+        {
+            var list = (ListBox)queue.FindName("Jobs");
+            var job = Job(path);
+            list.ScrollIntoView(job);
+            queue.UpdateLayout();
+            var row = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromItem(job));
+            var button = Descendants(row).OfType<Button>().Single();
+            return () => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        }
 
         Action MenuAction(string header)
         {
@@ -111,10 +225,11 @@ public sealed partial class DesktopTests
             var navigation = window.NavigateToEntryAsync(current.FindEntry(target)!.Value);
             PumpUntil(() => navigation.IsCompleted, TimeSpan.FromSeconds(10));
             navigation.GetAwaiter().GetResult();
-            Assert.Equal(Path.Join(enteredPath, Path.GetFileName(target)), Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
+            Assert.Equal(Path.Join(enteredPath, Path.GetRelativePath(fixture.Path, target)),
+                Assert.IsType<ExplorerRow>(tree.SelectedItem).Path);
         }
 
-        void RunDeletion(string path, bool? approve, bool binUnavailable, Action start)
+        void RunDeletion(string path, bool? approve, bool binUnavailable, Action start, Func<bool>? finished = null)
         {
             bool isDirectory = Directory.Exists(path);
             string kind = isDirectory ? "folder" : "file";
@@ -149,15 +264,13 @@ public sealed partial class DesktopTests
             try
             {
                 start();
-                PumpUntil(() => scanButton.IsEnabled, TimeSpan.FromSeconds(12));
+                PumpUntil(finished ?? (() => window.ExploreDeletionsIdle), TimeSpan.FromSeconds(12));
             }
             finally { timer.Stop(); }
             if (failure is not null) throw failure;
             if (warnings != (approve.HasValue ? 1 : 0))
             {
-                string? log = ((Button)window.FindName("OpenLogButton")).ToolTip as string;
-                string details = log is not null ? File.ReadAllText(log) : "";
-                Assert.Fail($"Unexpected number of permanent deletion warnings ({warnings}). Status: {status.Text}\n{details}");
+                Assert.Fail($"Unexpected number of permanent deletion warnings ({warnings}). Status: {status.Text}");
             }
         }
     }

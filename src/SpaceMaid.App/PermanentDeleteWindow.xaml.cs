@@ -12,8 +12,8 @@ public partial class PermanentDeleteWindow : Window
         string kind = target.IsDirectory ? "folder" : "file";
         Heading.Text = $"Delete this {kind} permanently?";
         Consequence.Text = target.IsDirectory
-            ? "This deletes the folder and all its current contents. This can’t be undone."
-            : "This deletes the file. This can’t be undone.";
+            ? "When this runs, it deletes the folder and everything inside it. This can’t be undone."
+            : "When this runs, it deletes the file. This can’t be undone.";
         if (recycleWarning is not null)
         {
             RecycleWarning.Text = recycleWarning;

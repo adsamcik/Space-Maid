@@ -19,7 +19,7 @@ public partial class MainWindow
     private int _browseVersion;
     private bool _browsing, _syncTree, _selectionIsGroup;
     private int _selectedLink = -1;
-    private bool CanBrowseExplorer => !_closing && (_work is null || _removingEntry);
+    private bool CanBrowseExplorer => !_closing && _work is null;
 
     private void ClearExplorer()
     {
@@ -239,6 +239,7 @@ public partial class MainWindow
                 ExplorePanel.IsEnabled = CanBrowseExplorer;
                 if (!failed && _work is null && _snapshot is not null) StatusText.Text = _scanStatus;
                 DrainExplorerRecheck();
+                TryRefreshAfterDeletions();
             }
         }
     }
@@ -353,7 +354,7 @@ public partial class MainWindow
             if (modifiers is not (ModifierKeys.None or ModifierKeys.Shift) || e.IsRepeat
                 || container is { IsSelected: false } || ExploreTab.IsChecked != true) return;
             e.Handled = true;
-            await DeleteSelectedEntryAsync(permanent: modifiers == ModifierKeys.Shift);
+            _ = DeleteSelectedEntryAsync(permanent: modifiers == ModifierKeys.Shift);
         }
         else if (e.Key == Key.Right)
         {

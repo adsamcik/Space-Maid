@@ -55,7 +55,7 @@ public partial class MainWindow
         {
             if (!CanUseEntryMenu(scan, link)) return;
             if (recycleRoot is not null) await EmptyRecycleBinAsync(recycleRoot);
-            else await DeleteEntryAsync(scan, link);
+            else _ = DeleteEntryAsync(scan, link);
         };
         menu.Items.Add(recycle);
         if (recycleRoot is null)
@@ -66,7 +66,7 @@ public partial class MainWindow
                 IsEnabled = blocked is null, ToolTip = blocked
             };
             ToolTipService.SetShowOnDisabled(delete, true);
-            delete.Click += async (_, _) => await DeleteEntryAsync(scan, link, permanent: true);
+            delete.Click += (_, _) => _ = DeleteEntryAsync(scan, link, permanent: true);
             menu.Items.Add(delete);
         }
         if (entry.IsDirectory)

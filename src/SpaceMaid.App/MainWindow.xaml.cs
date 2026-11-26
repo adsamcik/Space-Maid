@@ -99,6 +99,7 @@ public partial class MainWindow : Window
 
     internal void SetBusy(bool busy)
     {
+        if (busy) _deletionRefreshCancellation?.Cancel();
         UpdateExtensionWorkspace();
         _extensions?.SetDiscoveryBusy(busy);
         UpdatePathAvailability(busy);
@@ -108,10 +109,11 @@ public partial class MainWindow : Window
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ScanProgressBar.IsIndeterminate = true;
         OpportunityBrowser?.SetBusy(busy);
-        ExplorePanel.IsEnabled = (!busy || _removingEntry) && !_browsing;
+        ExplorePanel.IsEnabled = !busy && !_browsing;
         UpdateSelection();
         UpdateUpdateButton();
         if (!busy) { DrainExplorerRecheck(); if (_startupOffered) _ = RefreshRecycleBinAsync(); }
+        if (!busy) TryRefreshAfterDeletions();
     }
 
     private void UpdateFastScanButton(bool busy)
@@ -168,6 +170,7 @@ public partial class MainWindow : Window
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (_closing) { e.Cancel = !_shutdownComplete; return; }
+        if (!ConfirmDeletionShutdown()) { e.Cancel = true; return; }
         var scanHelper = _scanHelper;
         SaveColumnLayout();
         _closing = true; _optimizationTimer?.Stop(); _worktreeLifecycleTimer?.Stop(); _updateTimer?.Stop(); _work?.Cancel(); _browseWork?.Cancel(); _scanHelper?.Dispose(); _extensionLifetime.Cancel();
@@ -175,6 +178,8 @@ public partial class MainWindow : Window
         bool workersStopped = true;
         try
         {
+            try { await StopDeletionsAsync(); }
+            catch (Exception error) { workersStopped = false; Debug.WriteLine($"Explore deletion shutdown: {error}"); }
             if (_cleanupWorkspace is not null) await _cleanupWorkspace.StopAsync();
             if (_updates is not null) await _updates.StopAsync();
             if (_duplicateWindow is not null)
@@ -192,11 +197,6 @@ public partial class MainWindow : Window
             if (_cleanupTask is not null)
                 try { await _cleanupTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Cleanup shutdown: {error}"); }
-            if (_entryRemovalTask is not null)
-                try { await _entryRemovalTask; }
-                catch (OperationCanceledException) { }
-                catch (RecycleUnavailableException) { }
-                catch (Exception error) { workersStopped = false; Debug.WriteLine($"Explore removal shutdown: {error}"); }
             if (_worktreeCheckTask is not null)
                 try { await _worktreeCheckTask; }
                 catch (Exception error) { workersStopped = false; Debug.WriteLine($"Worktree check shutdown: {error}"); }
